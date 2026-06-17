@@ -1,0 +1,27 @@
+{
+  "name": "hao-stock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hao Stock — Wholesale Distribution ERP (Vercel deploy root: builds the client SPA and runs the Express API as a serverless function).",
+  "scripts": {
+    "build": "npm --prefix client install && npm --prefix client run build",
+    "postinstall": "prisma generate --schema=server/prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "pdfkit": "^0.15.1",
+    "prisma": "^5.22.0",
+    "zod": "^3.23.8"
+  }
+}

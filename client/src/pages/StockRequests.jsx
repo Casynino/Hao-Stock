@@ -92,34 +92,36 @@ function CartOrderSheet({ onClose }) {
       transition={{ type: 'spring', damping: 30, stiffness: 280 }}
       className="fixed inset-0 z-50 flex flex-col bg-[#09090b] text-white"
     >
-      {/* Header */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-white/8 px-4 py-3.5">
-        <button
-          onClick={onClose}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/50 hover:text-white"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <h1 className="flex-1 text-[15px] font-semibold">New stock request</h1>
-        {cartCount > 0 && (
-          <span className="flex h-6 min-w-[24px] items-center justify-center rounded-full bg-brand-500 px-2 text-[11px] font-bold text-slate-950">
-            {cartCount}
-          </span>
-        )}
-      </div>
-
-      {/* Search */}
-      <div className="shrink-0 border-b border-white/6 px-4 py-3">
+      {/* Header + search — one unified block */}
+      <div className="shrink-0 border-b border-white/8 px-4 pb-3 pt-3.5">
+        <div className="mb-3 flex items-center gap-3">
+          <button
+            onClick={onClose}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/40 hover:text-white"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <span className="flex-1 text-[15px] font-semibold text-white">New stock request</span>
+          {cartCount > 0 && (
+            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-slate-950">
+              {cartCount}
+            </span>
+          )}
+        </div>
+        {/* Search inline under header */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/25" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search products…"
-            className="w-full rounded-lg border border-white/8 bg-white/5 py-2.5 pl-9 pr-8 text-[13px] text-white placeholder-white/25 outline-none focus:border-brand-500/40 focus:bg-white/7"
+            className="w-full rounded-lg border border-white/10 bg-[#141416] py-2.5 pl-9 pr-8 text-[13px] text-white placeholder-white/25 outline-none transition focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/10"
           />
           {search && (
-            <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30">
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
+            >
               <X className="h-3.5 w-3.5" />
             </button>
           )}
@@ -133,7 +135,7 @@ function CartOrderSheet({ onClose }) {
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
         ) : (
-          <ul className="divide-y divide-white/5">
+          <ul className="divide-y divide-white/[0.05]">
             {filtered.map((product) => {
               const pkg = defaultPkg(product);
               const price = pkgPrice(product, pkg);
@@ -143,46 +145,41 @@ function CartOrderSheet({ onClose }) {
               return (
                 <li
                   key={product.id}
-                  className={`flex items-center gap-3 px-4 py-3.5 transition-colors ${inCart ? 'bg-brand-500/6' : ''}`}
+                  className={`flex items-center gap-3 px-4 py-3 transition-colors ${inCart ? 'bg-brand-500/5' : 'hover:bg-white/[0.02]'}`}
                 >
-                  {/* Check / dot */}
-                  <div className="flex w-5 shrink-0 items-center justify-center">
+                  <div className="flex w-4 shrink-0 items-center justify-center">
                     {inCart
                       ? <CheckCircle2 className="h-4 w-4 text-brand-400" />
-                      : <span className="h-1.5 w-1.5 rounded-full bg-white/15" />
+                      : <span className="h-1 w-1 rounded-full bg-white/15" />
                     }
                   </div>
 
-                  {/* Name + price */}
                   <div className="min-w-0 flex-1">
-                    <div className={`text-[13px] font-medium leading-snug ${inCart ? 'text-white' : 'text-white/75'}`}>
+                    <div className={`text-[13px] font-medium ${inCart ? 'text-white' : 'text-white/70'}`}>
                       {product.name}
                     </div>
-                    <div className="mt-0.5 text-[11px] text-white/35">
+                    <div className="text-[11px] text-white/30">
                       {formatCurrency(price)} / {pkg?.packagingUnit?.name || 'box'}
                     </div>
                   </div>
 
-                  {/* Qty controls */}
                   <div className="flex shrink-0 items-center gap-2">
                     <button
                       onClick={() => dec(product.id)}
                       disabled={qty === 0}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 transition active:scale-90 disabled:opacity-20 hover:border-white/20 hover:text-white"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/50 transition active:scale-90 disabled:opacity-20 hover:border-white/25 hover:text-white"
                     >
                       <Minus className="h-3.5 w-3.5" />
                     </button>
-
                     <motion.span
                       key={qty}
-                      initial={qty > 0 ? { scale: 1.25 } : false}
+                      initial={qty > 0 ? { scale: 1.3 } : false}
                       animate={{ scale: 1 }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                      className={`w-7 text-center text-[15px] font-bold tabular-nums ${qty > 0 ? 'text-brand-400' : 'text-white/20'}`}
+                      transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                      className={`w-6 text-center text-[14px] font-bold tabular-nums ${qty > 0 ? 'text-brand-400' : 'text-white/20'}`}
                     >
                       {qty}
                     </motion.span>
-
                     <button
                       onClick={() => inc(product.id)}
                       className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-slate-950 transition active:scale-90 hover:bg-brand-400"
@@ -193,38 +190,47 @@ function CartOrderSheet({ onClose }) {
                 </li>
               );
             })}
-
             {filtered.length === 0 && (
-              <li className="py-12 text-center text-sm text-white/25">No products found</li>
+              <li className="py-12 text-center text-[13px] text-white/25">No products found</li>
             )}
           </ul>
         )}
 
-        {/* Notes */}
-        <div className="border-t border-white/6 px-4 py-4">
+        {/* Notes — always dark, never white */}
+        <div className="border-t border-white/[0.05] px-4 py-3">
+          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-white/25">Notes (optional)</p>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Notes (optional)…"
+            placeholder="e.g. restock for next week…"
             rows={2}
-            className="w-full resize-none rounded-lg border border-white/8 bg-white/4 px-3 py-2.5 text-[13px] text-white placeholder-white/20 outline-none focus:border-brand-500/40 focus:bg-white/6"
+            style={{ backgroundColor: '#141416', colorScheme: 'dark' }}
+            className="w-full resize-none rounded-lg border border-white/10 px-3 py-2.5 text-[13px] text-white placeholder-white/20 outline-none transition focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/10"
           />
         </div>
-        <div className="h-24" />
       </div>
 
       {/* Sticky footer */}
       <div className="shrink-0 border-t border-white/8 bg-[#09090b] px-4 pb-8 pt-3">
-        {cartCount > 0 && (
-          <div className="mb-2.5 flex items-baseline justify-between">
-            <span className="text-xs text-white/40">{formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {cartCount} product{cartCount !== 1 ? 's' : ''}</span>
-            <span className="text-base font-bold text-white">{formatCurrency(totalAmount)}</span>
-          </div>
-        )}
+        <AnimatePresence>
+          {cartCount > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
+              className="mb-2 flex items-baseline justify-between"
+            >
+              <span className="text-[12px] text-white/35">
+                {formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {cartCount} product{cartCount !== 1 ? 's' : ''}
+              </span>
+              <span className="text-[15px] font-bold text-white">{formatCurrency(totalAmount)}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <button
           disabled={cartCount === 0 || create.isPending}
           onClick={() => create.mutate()}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-500 py-3.5 text-[15px] font-bold text-slate-950 transition active:scale-[0.98] disabled:opacity-30"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-500 py-3.5 text-[15px] font-bold text-slate-950 transition active:scale-[0.98] disabled:opacity-25"
         >
           {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />}
           {cartCount === 0 ? 'Select products above' : 'Submit for approval'}

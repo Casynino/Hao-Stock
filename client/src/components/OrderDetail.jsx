@@ -161,6 +161,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
   const active = order && order.status !== 'SETTLED';
   const remaining = order?.order?.totals?.remainingBoxes ?? 0;
   const overdue = order?.status === 'OVERDUE';
+  const canFlag = staff; // only staff/admin can flag corrections; reps no longer request these
 
   return (
     <>
@@ -168,7 +169,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
         footer={order && (
           <>
             <Button variant="secondary" onClick={onClose}>Close</Button>
-            {canAct && <Button variant="ghost" onClick={() => setSub('flag')}><Flag className="h-4 w-4" /> Flag issue</Button>}
+            {canFlag && <Button variant="ghost" onClick={() => setSub('flag')}><Flag className="h-4 w-4" /> Flag issue</Button>}
             {canAct && active && remaining > 0 && <Button variant="secondary" onClick={() => setSub('return')}><Undo2 className="h-4 w-4" /> Return</Button>}
             {canAct && active && remaining > 0 && <Button onClick={() => setSub('settle')}><Wallet className="h-4 w-4" /> Settle boxes</Button>}
             {staff && active && (remaining <= 0
@@ -236,8 +237,8 @@ export default function OrderDetailModal({ settlementId, onClose }) {
               )}
             </div>
 
-            {/* Correction requests raised on this order */}
-            {corrections.length > 0 && (
+            {/* Correction requests raised on this order — staff view only */}
+            {staff && corrections.length > 0 && (
               <div>
                 <div className="mb-2 text-sm font-semibold text-foreground">Correction requests</div>
                 <ul className="space-y-2 text-sm">

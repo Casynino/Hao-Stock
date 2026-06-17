@@ -31,7 +31,7 @@ export const NAV = [
   { to: '/purchases', label: 'Imports & POs', icon: 'Ship', roles: STAFF, group: 'advanced' },
   { to: '/transfers', label: 'Transfers', icon: 'Truck', roles: STAFF, group: 'advanced' },
   { to: '/settlements', label: 'Settlements (72h)', icon: 'Timer', roles: ALL, group: 'advanced' },
-  { to: '/corrections', label: 'Corrections', icon: 'Flag', roles: ALL, group: 'advanced' },
+  { to: '/corrections', label: 'Corrections', icon: 'Flag', roles: STAFF, group: 'advanced' },
   { to: '/online-orders', label: 'Online Orders', icon: 'Globe', roles: STAFF, group: 'advanced' },
   { to: '/returns', label: 'Returns', icon: 'Undo2', roles: ALL, group: 'advanced' },
   { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'advanced' },

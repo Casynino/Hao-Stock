@@ -30,7 +30,7 @@ async function create(salesRepId, payload) {
     throw ApiError.badRequest('A stock request needs at least one item');
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const productIds = [...new Set(payload.items.map((i) => i.productId))];
     const products = await tx.product.findMany({ where: { id: { in: productIds } } });
     const pMap = new Map(products.map((p) => [p.id, p]));

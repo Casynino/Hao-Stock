@@ -198,7 +198,7 @@ async function settleBoxes(id, payload, actor) {
   if (!productId) throw ApiError.badRequest('Select a product to settle');
   if (!Number.isInteger(boxes) || boxes <= 0) throw ApiError.badRequest('Boxes settled must be a positive whole number');
 
-  return prisma.$transaction(
+  const result = await prisma.$transaction(
     async (tx) => {
       const s = await tx.settlement.findUnique({ where: { id } });
       if (!s) throw ApiError.notFound('Settlement not found');

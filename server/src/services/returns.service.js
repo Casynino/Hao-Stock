@@ -32,7 +32,7 @@ async function createReturn(payload, actor) {
     throw ApiError.badRequest('A sales return needs both salesRepId (from) and warehouseId (to)');
   }
 
-  return prisma.$transaction(
+  const result = await prisma.$transaction(
     async (tx) => {
       const productIds = [...new Set(items.map((i) => i.productId))];
       const products = await tx.product.findMany({ where: { id: { in: productIds } } });

@@ -40,15 +40,17 @@
     @apply bg-gradient-to-br from-brand-500 to-brand-700 bg-clip-text text-transparent;
   }
   .input {
-    @apply w-full rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-foreground shadow-sm outline-none transition
-      placeholder:text-faint focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 disabled:cursor-not-allowed disabled:opacity-50;
+    /* 16px (text-base) on mobile prevents iOS focus-zoom; 14px from sm: up. */
+    @apply w-full rounded-lg border border-border bg-elevated px-3 py-2.5 text-base text-foreground shadow-sm outline-none transition
+      placeholder:text-faint focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 disabled:cursor-not-allowed disabled:opacity-50 sm:py-2 sm:text-sm;
   }
   .label {
     @apply mb-1 block text-sm font-medium text-muted;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition
-      focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60;
+    /* Slightly taller on touch (mobile), compact on desktop. */
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition
+      focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 sm:py-2;
   }
   .btn-primary {
     @apply btn bg-brand-600 text-slate-950 hover:bg-brand-500 focus:ring-brand-500/40;

@@ -104,9 +104,11 @@ export function EmptyState({ title = 'Nothing here yet', message, icon: Icon = I
 }
 
 // --- Table ------------------------------------------------------------------
-export function Table({ children }) {
+// The wrapper scrolls horizontally WITHIN its card on small screens, so a wide
+// table never forces the whole page to scroll sideways. Touch momentum on iOS.
+export function Table({ children, className }) {
   return (
-    <div className="overflow-x-auto">
+    <div className={clsx('-mx-px overflow-x-auto [-webkit-overflow-scrolling:touch]', className)}>
       <table className="min-w-full divide-y divide-border">{children}</table>
     </div>
   );
@@ -162,20 +164,23 @@ export function SearchInput({ value, onChange, placeholder = 'Search…' }) {
 }
 
 // --- Modal ------------------------------------------------------------------
+// Caps to the viewport height (dvh handles mobile browser chrome); the body
+// scrolls while the header and footer stay pinned, and the footer wraps so
+// action buttons never clip off-screen on a phone.
 const SIZES = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 export function Modal({ open, onClose, title, children, footer, size = 'md' }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-sm sm:p-8">
-      <div className={clsx('card my-8 w-full', SIZES[size])} role="dialog" aria-modal="true">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-3 backdrop-blur-sm sm:p-6">
+      <div className={clsx('card my-4 flex max-h-[calc(100dvh-2rem)] w-full flex-col sm:my-8', SIZES[size])} role="dialog" aria-modal="true">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h3 className="text-base font-semibold text-foreground">{title}</h3>
-          <button onClick={onClose} className="rounded-lg p-1 text-faint hover:bg-elevated hover:text-muted">
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1 text-faint hover:bg-elevated hover:text-muted">
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-border px-5 py-4">{footer}</div>}
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4">{footer}</div>}
       </div>
     </div>
   );
@@ -229,7 +234,7 @@ export function StatCard({ label, value, icon: Icon, hint, tone = 'brand', onCli
           </span>
         )}
       </div>
-      <div className="relative mt-3 text-2xl font-bold tracking-tight text-foreground">{value}</div>
+      <div className="relative mt-3 break-words text-xl font-bold tracking-tight text-foreground sm:text-2xl">{value}</div>
       {hint && <div className="relative mt-1 text-xs text-faint">{hint}</div>}
     </motion.div>
   );

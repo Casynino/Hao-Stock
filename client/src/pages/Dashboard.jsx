@@ -17,10 +17,10 @@ import { BarChartCard } from '@/components/charts';
 
 function AlertCard({ title, count, tone, icon: Icon, items = [], render, onClick }) {
   const tones = {
-    amber: 'text-amber-600 bg-amber-50',
-    rose: 'text-rose-600 bg-rose-50',
-    sky: 'text-sky-600 bg-sky-50',
-    violet: 'text-violet-600 bg-violet-50',
+    amber: 'text-amber-400 bg-amber-500/15',
+    rose: 'text-rose-400 bg-rose-500/15',
+    sky: 'text-sky-400 bg-sky-500/15',
+    violet: 'text-violet-400 bg-violet-500/15',
   };
   return (
     <Card>

@@ -66,6 +66,10 @@ export default function Dashboard() {
 
   const { inventory, sales, profit, debt, paymentsCollected, regional, topSelling, alerts, recentActivity, counts } = data;
 
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = user?.name?.split(' ')[0] || 'there';
+
   const topSellingData = topSelling.map((p) => ({ name: p.name.replace(/CIVILLY|OHIS/, '').trim().slice(0, 22), value: p.revenue }));
   const regionalData = regional.map((r) => ({ name: r.region, value: r.revenue }));
 
@@ -85,10 +89,10 @@ export default function Dashboard() {
             <div className="text-xs font-medium uppercase tracking-wider text-white/50">
               {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
             </div>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
-              Welcome back, {user?.name?.split(' ')[0] || 'there'} 👋
+            <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">
+              {greeting}, {firstName}.
             </h1>
-            <p className="mt-1 text-sm text-white/70">Here's what's happening across your distribution business.</p>
+            <p className="mt-1.5 text-sm text-white/70 sm:text-base">Here's what's happening in The Lab today.</p>
           </div>
           <div className="flex gap-8">
             <div>

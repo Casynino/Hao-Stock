@@ -4,6 +4,7 @@ const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const commission = require('./commission.service');
 const sales = require('./sales.service');
+const notification = require('./notification.service');
 const { nextDocNumber } = require('../utils/numbering');
 const { toNumber, round2, formatCurrency } = require('../utils/money');
 const { dayjs } = require('../utils/dates');
@@ -249,6 +250,29 @@ async function settleBoxes(id, payload, actor) {
     },
     { timeout: 30000 },
   );
+
+  const repName = result.salesRep?.user?.name || 'A rep';
+  if (result.status === 'SETTLED') {
+    notification.notifyAdmins({
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: `Order closed: ${result.settlementNumber}`,
+      message: `${repName} fully settled order ${result.settlementNumber}. All boxes accounted for.`,
+      entityType: 'Settlement',
+      entityId: id,
+    }).catch(() => {});
+  } else {
+    notification.notifyAdmins({
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: `Payment received: ${result.settlementNumber}`,
+      message: `${repName} settled ${payload.boxes} box(es) on order ${result.settlementNumber}.`,
+      entityType: 'Settlement',
+      entityId: id,
+    }).catch(() => {});
+  }
+
+  return result;
 }
 
 // Close an order. Enforces the core rule: every issued box must be accounted
@@ -272,6 +296,16 @@ async function settle(id, actor, { notes } = {}) {
     data: { status: 'SETTLED', settledAt: new Date(), notes: notes || s.notes },
     include: INCLUDE,
   });
+
+  notification.notifyAdmins({
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: `Order closed: ${s.settlementNumber}`,
+    message: `${updated.salesRep?.user?.name || 'A rep'} fully settled order ${s.settlementNumber}. All boxes accounted for.`,
+    entityType: 'Settlement',
+    entityId: id,
+  }).catch(() => {});
+
   return decorate(updated);
 }
 

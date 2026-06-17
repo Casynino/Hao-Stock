@@ -4,8 +4,9 @@ const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const inventory = require('./inventory.service');
 const transfers = require('./transfers.service');
+const notification = require('./notification.service');
 const { nextDocNumber } = require('../utils/numbering');
-const { toNumber, round2 } = require('../utils/money');
+const { toNumber, round2, formatCurrency } = require('../utils/money');
 
 const INCLUDE = {
   salesRep: { include: { user: { select: { name: true } } } },
@@ -70,6 +71,17 @@ async function create(salesRepId, payload) {
       include: INCLUDE,
     });
   });
+
+  notification.notifyAdmins({
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: `New stock request: ${result.requestNumber}`,
+    message: `${result.salesRep?.user?.name || 'A rep'} requested stock worth ${formatCurrency(result.totalValue)}. Review and approve.`,
+    entityType: 'StockRequest',
+    entityId: result.id,
+  }).catch(() => {});
+
+  return result;
 }
 
 async function list(filters, pagination) {
@@ -134,7 +146,7 @@ async function approve(id, actor, approvals = []) {
     });
   }
 
-  return prisma.stockRequest.update({
+  const finalResult = await prisma.stockRequest.update({
     where: { id },
     data: {
       status: 'FULFILLED',
@@ -146,17 +158,52 @@ async function approve(id, actor, approvals = []) {
     },
     include: INCLUDE,
   });
+
+  // Notify the rep their request was approved
+  const rep = await prisma.salesRepresentative.findUnique({
+    where: { id: request.salesRepId },
+    select: { userId: true },
+  });
+  notification.notifyUser(rep?.userId, {
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: 'Stock request approved',
+    message: `Your request (${request.requestNumber}) has been approved and issued. Check your open orders.`,
+    entityType: 'StockRequest',
+    entityId: id,
+  }).catch(() => {});
+
+  // Trigger low-stock check for every product that left the warehouse
+  const productIds = [...new Set(toIssue.map((d) => d.productId))];
+  Promise.all(productIds.map((pid) => notification.checkProductLowStock(pid))).catch(() => {});
+
+  return finalResult;
 }
 
 async function reject(id, actor, notes) {
   const request = await prisma.stockRequest.findUnique({ where: { id } });
   if (!request) throw ApiError.notFound('Stock request not found');
   if (request.status !== 'PENDING') throw ApiError.badRequest(`Request is already ${request.status}`);
-  return prisma.stockRequest.update({
+  const result = await prisma.stockRequest.update({
     where: { id },
     data: { status: 'REJECTED', decidedAt: new Date(), decidedById: actor ? actor.id : null, notes: notes || request.notes },
     include: INCLUDE,
   });
+
+  const rep = await prisma.salesRepresentative.findUnique({
+    where: { id: request.salesRepId },
+    select: { userId: true },
+  });
+  notification.notifyUser(rep?.userId, {
+    type: 'GENERAL',
+    severity: 'WARNING',
+    title: 'Stock request not approved',
+    message: `Your request (${request.requestNumber}) was not approved.${notes ? ' Reason: ' + notes : ''}`,
+    entityType: 'StockRequest',
+    entityId: id,
+  }).catch(() => {});
+
+  return result;
 }
 
 async function cancel(id, actor) {

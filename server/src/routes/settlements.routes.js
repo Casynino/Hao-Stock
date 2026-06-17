@@ -18,6 +18,7 @@ router.get('/summary', staff, ctrl.summary);
 router.get('/:id', validate(idParam), ctrl.get);
 router.post('/:id/settle-boxes', settlers, validate({ ...idParam, ...settlementSettleBoxes }), ctrl.settleBoxes);
 router.post('/:id/settle', staff, validate({ ...idParam, ...settlementSettle }), ctrl.settle);
+router.post('/:id/extend-deadline', staff, validate(idParam), ctrl.extendDeadline);
 router.post('/refresh-overdue', requireAdmin, ctrl.refreshOverdue);
 
 module.exports = router;

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Wallet, Undo2, CheckCircle2, Flag } from 'lucide-react';
+import { Wallet, Undo2, CheckCircle2, Flag, Clock } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useProducts, useWarehouses } from '@/lib/hooks';
@@ -93,6 +93,82 @@ function RecordReturnModal({ order, onClose, onDone }) {
   );
 }
 
+// --- Extend deadline (staff / admin only) -----------------------------------
+function ExtendDeadlineModal({ order, onClose, onDone }) {
+  const [mode, setMode] = useState('quick'); // 'quick' | 'custom'
+  const [hours, setHours] = useState(24);
+  const [customDate, setCustomDate] = useState('');
+
+  const extend = useMutation({
+    mutationFn: () => api.post(`/settlements/${order.id}/extend-deadline`,
+      mode === 'quick'
+        ? { additionalHours: hours }
+        : { deadlineAt: new Date(customDate).toISOString() },
+    ),
+    onSuccess: () => { toast.success('Deadline extended'); onDone(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const QUICK = [
+    { label: '+24 h', h: 24 },
+    { label: '+48 h', h: 48 },
+    { label: '+72 h', h: 72 },
+  ];
+
+  return (
+    <Modal open onClose={onClose} title={`Extend deadline · ${order.settlementNumber}`}
+      footer={<>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button
+          loading={extend.isPending}
+          disabled={mode === 'custom' && !customDate}
+          onClick={() => extend.mutate()}
+        >
+          <Clock className="h-4 w-4" /> Extend deadline
+        </Button>
+      </>}
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-muted">
+          Current deadline: <span className="font-medium text-foreground">{new Date(order.deadlineAt).toLocaleString()}</span>
+          {order.status === 'OVERDUE' && <span className="ml-2 text-xs font-semibold text-rose-500">· Overdue</span>}
+        </p>
+
+        <div className="flex gap-2">
+          <button onClick={() => setMode('quick')} className={`rounded-lg border px-3 py-1.5 text-sm transition ${mode === 'quick' ? 'border-brand-500 bg-brand-500/10 text-brand-400' : 'border-border text-muted hover:bg-elevated'}`}>Quick</button>
+          <button onClick={() => setMode('custom')} className={`rounded-lg border px-3 py-1.5 text-sm transition ${mode === 'custom' ? 'border-brand-500 bg-brand-500/10 text-brand-400' : 'border-border text-muted hover:bg-elevated'}`}>Custom date</button>
+        </div>
+
+        {mode === 'quick' ? (
+          <div className="flex gap-2">
+            {QUICK.map(({ label, h }) => (
+              <button
+                key={h}
+                onClick={() => setHours(h)}
+                className={`flex-1 rounded-xl border py-3 text-sm font-semibold transition ${hours === h ? 'border-brand-500 bg-brand-500/10 text-brand-400' : 'border-border text-muted hover:bg-elevated'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <Field label="New deadline">
+            <Input type="datetime-local" value={customDate} onChange={(e) => setCustomDate(e.target.value)} />
+          </Field>
+        )}
+
+        <p className="text-xs text-faint">
+          {mode === 'quick'
+            ? `New deadline will be ${hours}h from ${order.status === 'OVERDUE' ? 'now' : 'current deadline'}.`
+            : 'Set an exact date and time for the new deadline.'
+          }
+          {order.status === 'OVERDUE' && ' The order will revert from Overdue to Open/Partial.'}
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
 // --- Flag an issue (rep/staff can't edit; admin corrects) ------------------
 function FlagModal({ order, onClose, onDone }) {
   const [message, setMessage] = useState('');
@@ -128,7 +204,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
   const qc = useQueryClient();
   const { hasRole, user } = useAuth();
   const staff = hasRole(ROLES.WAREHOUSE_STAFF);
-  const [sub, setSub] = useState(null); // 'settle' | 'return'
+  const [sub, setSub] = useState(null); // 'settle' | 'return' | 'flag' | 'extend'
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['settlement', settlementId],
@@ -169,6 +245,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
         footer={order && (
           <>
             <Button variant="secondary" onClick={onClose}>Close</Button>
+            {staff && active && <Button variant="ghost" onClick={() => setSub('extend')}><Clock className="h-4 w-4" /> Extend deadline</Button>}
             {canFlag && <Button variant="ghost" onClick={() => setSub('flag')}><Flag className="h-4 w-4" /> Flag issue</Button>}
             {canAct && active && remaining > 0 && <Button variant="secondary" onClick={() => setSub('return')}><Undo2 className="h-4 w-4" /> Return</Button>}
             {canAct && active && remaining > 0 && <Button onClick={() => setSub('settle')}><Wallet className="h-4 w-4" /> Settle boxes</Button>}
@@ -262,6 +339,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
       {order && sub === 'settle' && <SettleBoxesModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'return' && <RecordReturnModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'flag' && <FlagModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
+      {order && sub === 'extend' && <ExtendDeadlineModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
     </>
   );
 }

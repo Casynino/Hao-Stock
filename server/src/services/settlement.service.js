@@ -349,6 +349,40 @@ async function summary() {
   };
 }
 
+// Extend (or set) the deadline for an open order. Admins use this when a rep
+// needs more time. If the order is OVERDUE it reverts to OPEN/PARTIAL once
+// the new deadline is in the future.
+async function extendDeadline(id, { deadlineAt, additionalHours }) {
+  const s = await prisma.settlement.findUnique({ where: { id } });
+  if (!s) throw ApiError.notFound('Settlement not found');
+  if (s.status === 'SETTLED') throw ApiError.badRequest('This order is already closed');
+
+  let newDeadline;
+  if (deadlineAt) {
+    newDeadline = new Date(deadlineAt);
+  } else if (additionalHours) {
+    const base = new Date(s.deadlineAt) > new Date() ? new Date(s.deadlineAt) : new Date();
+    newDeadline = new Date(base.getTime() + Number(additionalHours) * 3_600_000);
+  } else {
+    throw ApiError.badRequest('Provide deadlineAt or additionalHours');
+  }
+
+  if (newDeadline <= new Date()) throw ApiError.badRequest('New deadline must be in the future');
+
+  // If it was overdue, revive it to OPEN or PARTIAL
+  let newStatus = s.status;
+  if (s.status === 'OVERDUE') {
+    newStatus = toNumber(s.settledValue) > 0 || toNumber(s.returnedValue) > 0 ? 'PARTIAL' : 'OPEN';
+  }
+
+  const updated = await prisma.settlement.update({
+    where: { id },
+    data: { deadlineAt: newDeadline, status: newStatus },
+    include: INCLUDE,
+  });
+  return decorate(updated);
+}
+
 module.exports = {
   SETTLEMENT_WINDOW_HOURS,
   createForIssuance,
@@ -360,4 +394,5 @@ module.exports = {
   refreshOverdue,
   summary,
   decorate,
+  extendDeadline,
 };

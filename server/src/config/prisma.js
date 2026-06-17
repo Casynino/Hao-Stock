@@ -1,21 +1,16 @@
 'use strict';
 
 const { PrismaClient } = require('@prisma/client');
-const env = require('./env');
 
-// Single shared PrismaClient for the whole process. In dev with nodemon the
-// module cache is cleared on reload so we attach to globalThis to avoid
-// exhausting the connection pool with duplicate clients.
+// Single shared PrismaClient. We attach it to globalThis so it is reused across
+// dev hot-reloads (nodemon) AND warm serverless invocations on Vercel — both
+// would otherwise create duplicate clients and exhaust the connection pool.
 const globalForPrisma = globalThis;
 
 const prisma =
   globalForPrisma.__haoStockPrisma ||
-  new PrismaClient({
-    log: env.isProd ? ['warn', 'error'] : ['warn', 'error'],
-  });
+  new PrismaClient({ log: ['warn', 'error'] });
 
-if (!env.isProd) {
-  globalForPrisma.__haoStockPrisma = prisma;
-}
+globalForPrisma.__haoStockPrisma = prisma;
 
 module.exports = prisma;

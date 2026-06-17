@@ -21,12 +21,18 @@ app.set('trust proxy', 1);
 
 app.use(helmet());
 
-// CORS — reflect only configured origins; allow non-browser tools (no origin).
+// CORS — allow non-browser tools (no Origin) and the configured origins. A
+// disallowed origin is denied CLEANLY (callback(null, false)) rather than
+// throwing — throwing turned every browser request into a 500. Same-origin
+// requests (the SPA + API share a domain on Vercel) always work since the
+// browser doesn't enforce CORS for them. Set CLIENT_ORIGIN to "*" to allow all.
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || env.clientOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error(`Origin ${origin} not allowed by CORS`));
+      if (!origin) return callback(null, true);
+      const allowed = env.clientOrigins;
+      if (allowed.includes('*') || allowed.includes(origin)) return callback(null, true);
+      return callback(null, false);
     },
     credentials: true,
   }),

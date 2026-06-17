@@ -1,0 +1,78 @@
+'use strict';
+
+const prisma = require('../config/prisma');
+const ApiError = require('../utils/ApiError');
+const asyncHandler = require('../utils/asyncHandler');
+const { ok } = require('../utils/response');
+const dashboard = require('../services/dashboard.service');
+const inventory = require('../services/inventory.service');
+const commission = require('../services/commission.service');
+const settlement = require('../services/settlement.service');
+const { toNumber, round2 } = require('../utils/money');
+
+const overview = asyncHandler(async (_req, res) => {
+  const data = await dashboard.overview();
+  return ok(res, data);
+});
+
+const activity = asyncHandler(async (req, res) => {
+  const limit = req.query.limit ? Math.min(Number(req.query.limit), 50) : 15;
+  const data = await dashboard.recentActivity(limit);
+  return ok(res, data);
+});
+
+// Personal dashboard for a sales representative — built around the rep's real
+// job: stock held, open orders (72h settlements), and commission on settled
+// boxes. Reps do not record customer sales, so there are no sales figures here.
+const myOverview = asyncHandler(async (req, res) => {
+  const salesRepId = req.user.salesRepId;
+  if (!salesRepId) throw ApiError.forbidden('Your account has no sales-rep profile');
+
+  const [balances, commissionData, openOrders, pendingRequests] = await Promise.all([
+    inventory.repBalances(prisma, salesRepId),
+    commission.computeForRep(salesRepId),
+    prisma.settlement.findMany({
+      where: { salesRepId, status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] } },
+      orderBy: { deadlineAt: 'asc' },
+      include: { salesRep: { include: { user: { select: { name: true } } } } },
+    }),
+    prisma.stockRequest.count({ where: { salesRepId, status: 'PENDING' } }),
+  ]);
+
+  // Value held stock at cost.
+  const positive = balances.filter((b) => b.baseQuantity > 0);
+  const products = await prisma.product.findMany({
+    where: { id: { in: positive.map((b) => b.productId) } },
+    select: { id: true, purchasePrice: true },
+  });
+  const costMap = new Map(products.map((p) => [p.id, toNumber(p.purchasePrice)]));
+  const heldValue = round2(positive.reduce((s, b) => s + b.baseQuantity * (costMap.get(b.productId) || 0), 0));
+  const heldUnits = positive.reduce((s, b) => s + b.baseQuantity, 0);
+
+  const orders = openOrders.map((s) => {
+    const dec = settlement.decorate(s);
+    return {
+      id: s.id,
+      settlementNumber: s.settlementNumber,
+      value: toNumber(s.assignedValue),
+      settled: toNumber(s.settledValue),
+      balance: dec.balance,
+      deadlineAt: s.deadlineAt,
+      hoursRemaining: dec.hoursRemaining,
+      status: dec.status,
+      approaching: dec.approaching,
+    };
+  });
+  const openSettlementsValue = round2(orders.reduce((s, o) => s + o.balance, 0));
+
+  return ok(res, {
+    heldStock: { value: heldValue, units: heldUnits, lines: positive.length },
+    commission: commissionData,
+    openSettlements: orders.length,
+    openSettlementsValue,
+    pendingRequests,
+    orders,
+  });
+});
+
+module.exports = { overview, activity, myOverview };

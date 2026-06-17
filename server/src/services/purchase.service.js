@@ -1,0 +1,205 @@
+'use strict';
+
+const prisma = require('../config/prisma');
+const ApiError = require('../utils/ApiError');
+const inventory = require('./inventory.service');
+const { nextDocNumber } = require('../utils/numbering');
+const { toNumber, round2 } = require('../utils/money');
+
+// --- Suppliers -------------------------------------------------------------
+
+async function listSuppliers(filters, pagination) {
+  const where = {};
+  if (filters.isActive !== undefined) where.isActive = filters.isActive;
+  if (filters.search) where.name = { contains: filters.search, mode: 'insensitive' };
+  const [items, total] = await Promise.all([
+    prisma.supplier.findMany({ where, include: { _count: { select: { purchaseOrders: true } } }, skip: pagination.skip, take: pagination.take, orderBy: pagination.orderBy }),
+    prisma.supplier.count({ where }),
+  ]);
+  return { items, total };
+}
+
+async function createSupplier(data) {
+  return prisma.supplier.create({ data });
+}
+async function updateSupplier(id, data) {
+  const s = await prisma.supplier.findUnique({ where: { id } });
+  if (!s) throw ApiError.notFound('Supplier not found');
+  return prisma.supplier.update({ where: { id }, data });
+}
+async function removeSupplier(id) {
+  const count = await prisma.purchaseOrder.count({ where: { supplierId: id } });
+  if (count > 0) return prisma.supplier.update({ where: { id }, data: { isActive: false } });
+  await prisma.supplier.delete({ where: { id } });
+  return { id, deleted: true };
+}
+
+// --- Purchase orders -------------------------------------------------------
+
+const PO_INCLUDE = {
+  supplier: true,
+  warehouse: { select: { id: true, name: true } },
+  createdBy: { select: { id: true, name: true } },
+  items: { include: { product: { select: { id: true, name: true, sku: true, baseUnitName: true } }, packagingUnit: true } },
+};
+
+async function createPurchaseOrder(payload, actor) {
+  if (!payload.items || payload.items.length === 0) {
+    throw ApiError.badRequest('A purchase order needs at least one item');
+  }
+  return prisma.$transaction(async (tx) => {
+    const lines = [];
+    for (const i of payload.items) {
+      const { baseQuantity } = await inventory.convertToBase(tx, i.productId, i.packagingUnitId, i.quantity);
+      lines.push({
+        productId: i.productId,
+        packagingUnitId: i.packagingUnitId,
+        quantity: i.quantity,
+        baseQuantity,
+        unitCost: round2(i.unitCost || 0), // goods cost per base unit
+      });
+    }
+    const goodsCost = round2(lines.reduce((s, l) => s + l.unitCost * l.baseQuantity, 0));
+    const shippingCost = round2(payload.shippingCost || 0);
+    const clearingCost = round2(payload.clearingCost || 0);
+    const otherCost = round2(payload.otherCost || 0);
+    const totalCost = round2(goodsCost + shippingCost + clearingCost + otherCost);
+
+    const poNumber = await nextDocNumber(tx.purchaseOrder, 'poNumber', 'PO');
+    const po = await tx.purchaseOrder.create({
+      data: {
+        poNumber,
+        supplierId: payload.supplierId,
+        status: payload.orderedAt ? 'ORDERED' : 'DRAFT',
+        currency: payload.currency || 'USD',
+        goodsCost,
+        shippingCost,
+        clearingCost,
+        otherCost,
+        totalCost,
+        warehouseId: payload.warehouseId || null,
+        orderedAt: payload.orderedAt ? new Date(payload.orderedAt) : null,
+        expectedArrival: payload.expectedArrival ? new Date(payload.expectedArrival) : null,
+        notes: payload.notes || null,
+        createdById: actor ? actor.id : null,
+        items: { create: lines },
+      },
+    });
+    return tx.purchaseOrder.findUnique({ where: { id: po.id }, include: PO_INCLUDE });
+  });
+}
+
+async function listPurchaseOrders(filters, pagination) {
+  const where = {};
+  if (filters.status) where.status = filters.status;
+  if (filters.supplierId) where.supplierId = filters.supplierId;
+  const [items, total] = await Promise.all([
+    prisma.purchaseOrder.findMany({ where, include: PO_INCLUDE, skip: pagination.skip, take: pagination.take, orderBy: pagination.orderBy }),
+    prisma.purchaseOrder.count({ where }),
+  ]);
+  return { items, total };
+}
+
+async function getPurchaseOrder(id) {
+  const po = await prisma.purchaseOrder.findUnique({ where: { id }, include: PO_INCLUDE });
+  if (!po) throw ApiError.notFound('Purchase order not found');
+  return po;
+}
+
+async function updatePurchaseOrder(id, payload) {
+  const po = await prisma.purchaseOrder.findUnique({ where: { id } });
+  if (!po) throw ApiError.notFound('Purchase order not found');
+  if (po.status === 'RECEIVED') throw ApiError.badRequest('A received purchase order cannot be edited');
+
+  const data = {};
+  ['status', 'currency', 'notes', 'warehouseId'].forEach((f) => {
+    if (payload[f] !== undefined) data[f] = payload[f];
+  });
+  ['orderedAt', 'expectedArrival'].forEach((f) => {
+    if (payload[f] !== undefined) data[f] = payload[f] ? new Date(payload[f]) : null;
+  });
+  ['shippingCost', 'clearingCost', 'otherCost'].forEach((f) => {
+    if (payload[f] !== undefined) data[f] = round2(payload[f]);
+  });
+  if (data.shippingCost != null || data.clearingCost != null || data.otherCost != null) {
+    const shipping = data.shippingCost ?? toNumber(po.shippingCost);
+    const clearing = data.clearingCost ?? toNumber(po.clearingCost);
+    const other = data.otherCost ?? toNumber(po.otherCost);
+    data.totalCost = round2(toNumber(po.goodsCost) + shipping + clearing + other);
+  }
+  return prisma.purchaseOrder.update({ where: { id }, data, include: PO_INCLUDE });
+}
+
+// Receive a PO into the warehouse: allocate shipping/clearing/other across
+// lines (by goods value) to get a landed unit cost, post PURCHASE_RECEIPT
+// ledger entries, and update each product's cost to the latest landed cost.
+async function receivePurchaseOrder(id, actor, { actualArrival } = {}) {
+  return prisma.$transaction(async (tx) => {
+    const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
+    if (!po) throw ApiError.notFound('Purchase order not found');
+    if (po.status === 'RECEIVED') throw ApiError.badRequest('Purchase order already received');
+    if (po.status === 'CANCELLED') throw ApiError.badRequest('Cancelled purchase order cannot be received');
+    if (po.items.length === 0) throw ApiError.badRequest('Purchase order has no items');
+
+    let warehouseId = po.warehouseId;
+    if (!warehouseId) {
+      const wh = await tx.warehouse.findFirst({ where: { isActive: true }, orderBy: { isPrimary: 'desc' } });
+      if (!wh) throw ApiError.badRequest('No warehouse to receive into');
+      warehouseId = wh.id;
+    }
+
+    const extraCost = toNumber(po.shippingCost) + toNumber(po.clearingCost) + toNumber(po.otherCost);
+    const goodsTotal = po.items.reduce((s, it) => s + toNumber(it.unitCost) * it.baseQuantity, 0);
+    const baseTotal = po.items.reduce((s, it) => s + it.baseQuantity, 0);
+
+    for (const it of po.items) {
+      const lineGoods = toNumber(it.unitCost) * it.baseQuantity;
+      // Allocate extra by goods value, or by quantity if goods value is zero.
+      const share = goodsTotal > 0 ? lineGoods / goodsTotal : baseTotal > 0 ? it.baseQuantity / baseTotal : 0;
+      const allocated = extraCost * share;
+      const landedUnitCost = round2(toNumber(it.unitCost) + (it.baseQuantity > 0 ? allocated / it.baseQuantity : 0));
+
+      await inventory.increaseStock(tx, {
+        productId: it.productId,
+        packagingUnitId: it.packagingUnitId,
+        quantity: it.quantity,
+        baseQuantity: it.baseQuantity,
+        type: 'PURCHASE_RECEIPT',
+        location: { type: inventory.LOCATION.WAREHOUSE, warehouseId },
+        unitCost: landedUnitCost,
+        referenceType: 'PURCHASE',
+        referenceId: po.id,
+        userId: actor ? actor.id : null,
+        notes: `Received PO ${po.poNumber}`,
+      });
+
+      await tx.purchaseOrderItem.update({ where: { id: it.id }, data: { landedUnitCost } });
+      // Latest landed cost becomes the product's current cost basis.
+      await tx.product.update({ where: { id: it.productId }, data: { purchasePrice: landedUnitCost } });
+    }
+
+    return tx.purchaseOrder.update({
+      where: { id },
+      data: {
+        status: 'RECEIVED',
+        warehouseId,
+        receivedAt: new Date(),
+        actualArrival: actualArrival ? new Date(actualArrival) : new Date(),
+      },
+      include: PO_INCLUDE,
+    });
+  });
+}
+
+module.exports = {
+  listSuppliers,
+  createSupplier,
+  updateSupplier,
+  removeSupplier,
+  createPurchaseOrder,
+  listPurchaseOrders,
+  getPurchaseOrder,
+  updatePurchaseOrder,
+  receivePurchaseOrder,
+  PO_INCLUDE,
+};

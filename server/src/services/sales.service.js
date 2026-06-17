@@ -1,0 +1,323 @@
+'use strict';
+
+const prisma = require('../config/prisma');
+const env = require('../config/env');
+const ApiError = require('../utils/ApiError');
+const inventory = require('./inventory.service');
+const { nextDocNumber } = require('../utils/numbering');
+const { round2, toNumber } = require('../utils/money');
+const { dayjs } = require('../utils/dates');
+
+const SALE_INCLUDE = {
+  items: { include: { product: true, packagingUnit: true } },
+  customer: true,
+  salesRep: { include: { user: { select: { name: true } } } },
+  warehouse: true,
+  creditSale: { include: { payments: true } },
+  createdBy: { select: { id: true, name: true } },
+};
+
+// Resolve the source stock location for a sale. A rep sells from their van
+// stock; otherwise the goods leave a warehouse.
+function resolveSource({ salesRepId, warehouseId }) {
+  if (salesRepId) return { type: inventory.LOCATION.SALES_REP, salesRepId };
+  if (warehouseId) return { type: inventory.LOCATION.WAREHOUSE, warehouseId };
+  throw ApiError.badRequest('A sale needs a source: provide salesRepId or warehouseId');
+}
+
+// Compute a priced line from raw input + product/packaging data.
+function priceLine(input, product, packaging) {
+  const factor = packaging.baseQuantity;
+  const baseQuantity = input.quantity * factor;
+
+  // Price for ONE unit of the chosen packaging.
+  const packagingUnitPrice =
+    input.unitPrice != null
+      ? Number(input.unitPrice)
+      : packaging.unitPrice != null
+        ? toNumber(packaging.unitPrice)
+        : round2(toNumber(product.sellingPrice) * factor);
+
+  const perBasePrice = round2(packagingUnitPrice / factor);
+  const lineDiscount = round2(input.lineDiscount || 0);
+  const lineTotal = round2(packagingUnitPrice * input.quantity - lineDiscount);
+  const unitCost = toNumber(product.purchasePrice);
+
+  return {
+    productId: product.id,
+    packagingUnitId: input.packagingUnitId,
+    quantity: input.quantity,
+    baseQuantity,
+    unitPrice: perBasePrice,
+    lineDiscount,
+    lineTotal,
+    unitCost,
+    costTotal: round2(baseQuantity * unitCost),
+  };
+}
+
+function deriveStatus(total, amountPaid) {
+  const balance = round2(total - amountPaid);
+  if (balance <= 0) return { status: 'PAID', balanceDue: 0 };
+  if (amountPaid > 0) return { status: 'PARTIAL', balanceDue: balance };
+  return { status: 'UNPAID', balanceDue: balance };
+}
+
+// Core sale creation that runs inside a caller-provided transaction. Settlement
+// reuses this so each settled box becomes a CASH sale — meaning revenue,
+// product performance, analytics and inventory all flow through one path.
+async function createSaleTx(tx, payload, actor) {
+  const {
+    type,
+    customerId = null,
+    salesRepId = null,
+    settlementId = null,
+    warehouseId = null,
+    items,
+    discount = 0,
+    amountPaid,
+    dueDate,
+    region,
+    notes,
+    soldAt,
+  } = payload;
+
+  if (!items || items.length === 0) {
+    throw ApiError.badRequest('A sale must contain at least one item');
+  }
+  if (type === 'CREDIT' && !customerId) {
+    throw ApiError.badRequest('Credit sales require a customer');
+  }
+
+  const source = resolveSource({ salesRepId, warehouseId });
+
+  // Load products referenced by the items.
+  const productIds = [...new Set(items.map((i) => i.productId))];
+  const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  if (productMap.size !== productIds.length) {
+    throw ApiError.badRequest('One or more products were not found');
+  }
+
+  // Price each line and resolve packaging conversions.
+  const lines = [];
+  for (const input of items) {
+    const product = productMap.get(input.productId);
+    if (!product.isActive) {
+      throw ApiError.badRequest(`Product "${product.name}" is inactive`);
+    }
+    const { packaging } = await inventory.convertToBase(
+      tx,
+      input.productId,
+      input.packagingUnitId,
+      input.quantity,
+    );
+    lines.push(priceLine(input, product, packaging));
+  }
+
+  const subtotal = round2(lines.reduce((s, l) => s + l.lineTotal, 0));
+  const saleDiscount = round2(discount);
+  const total = round2(subtotal - saleDiscount);
+  if (total < 0) throw ApiError.badRequest('Discount cannot exceed the sale subtotal');
+  const costTotal = round2(lines.reduce((s, l) => s + l.costTotal, 0));
+
+  const paid =
+    type === 'CASH'
+      ? amountPaid != null
+        ? round2(amountPaid)
+        : total
+      : round2(amountPaid || 0);
+  const { status, balanceDue } = deriveStatus(total, paid);
+
+  const saleNumber = await nextDocNumber(tx.sale, 'saleNumber', 'SALE');
+
+  // Resolve a region for reporting: explicit > customer > rep.
+  let resolvedRegion = region || null;
+  if (!resolvedRegion && customerId) {
+    const c = await tx.customer.findUnique({ where: { id: customerId }, select: { region: true } });
+    resolvedRegion = c?.region || null;
+  }
+  if (!resolvedRegion && salesRepId) {
+    const r = await tx.salesRepresentative.findUnique({ where: { id: salesRepId }, select: { region: true } });
+    resolvedRegion = r?.region || null;
+  }
+
+  const sale = await tx.sale.create({
+    data: {
+      saleNumber,
+      type,
+      status,
+      customerId,
+      salesRepId,
+      settlementId,
+      warehouseId,
+      region: resolvedRegion,
+      subtotal,
+      discount: saleDiscount,
+      total,
+      amountPaid: paid,
+      balanceDue,
+      costTotal,
+      notes: notes || null,
+      soldAt: soldAt ? new Date(soldAt) : new Date(),
+      createdById: actor ? actor.id : null,
+      items: {
+        create: lines.map((l) => ({
+          productId: l.productId,
+          packagingUnitId: l.packagingUnitId,
+          quantity: l.quantity,
+          baseQuantity: l.baseQuantity,
+          unitPrice: l.unitPrice,
+          lineDiscount: l.lineDiscount,
+          lineTotal: l.lineTotal,
+          unitCost: l.unitCost,
+        })),
+      },
+    },
+  });
+
+  // Post the inventory ledger movements (out of the source location).
+  const movementType = type === 'CASH' ? 'CASH_SALE' : 'CREDIT_SALE';
+  for (const l of lines) {
+    await inventory.decreaseStock(tx, {
+      productId: l.productId,
+      packagingUnitId: l.packagingUnitId,
+      quantity: l.quantity,
+      baseQuantity: l.baseQuantity,
+      type: movementType,
+      location: source,
+      referenceType: 'SALE',
+      referenceId: sale.id,
+      userId: actor ? actor.id : null,
+      unitCost: l.unitCost,
+      notes: notes || `Sale ${saleNumber}`,
+      occurredAt: sale.soldAt,
+    });
+  }
+
+  // Credit bookkeeping.
+  if (type === 'CREDIT') {
+    const due = dueDate
+      ? new Date(dueDate)
+      : dayjs().add(env.business.defaultCreditTermDays, 'day').toDate();
+    const creditStatus = balanceDue <= 0 ? 'PAID' : paid > 0 ? 'PARTIAL' : 'OPEN';
+    const creditSale = await tx.creditSale.create({
+      data: {
+        saleId: sale.id,
+        customerId,
+        salesRepId,
+        principal: total,
+        amountPaid: paid,
+        balance: balanceDue,
+        dueDate: due,
+        status: creditStatus,
+      },
+    });
+    if (paid > 0) {
+      await tx.creditPayment.create({
+        data: {
+          creditSaleId: creditSale.id,
+          amount: paid,
+          method: 'CASH',
+          reference: `Down payment on ${saleNumber}`,
+          receivedById: actor ? actor.id : null,
+        },
+      });
+    }
+  }
+
+  return tx.sale.findUnique({ where: { id: sale.id }, include: SALE_INCLUDE });
+}
+
+async function createSale(payload, actor) {
+  return prisma.$transaction((tx) => createSaleTx(tx, payload, actor), { timeout: 30000 });
+}
+
+async function listSales(filters, pagination) {
+  const where = {};
+  if (filters.type) where.type = filters.type;
+  if (filters.status) where.status = filters.status;
+  if (filters.salesRepId) where.salesRepId = filters.salesRepId;
+  if (filters.customerId) where.customerId = filters.customerId;
+  if (filters.warehouseId) where.warehouseId = filters.warehouseId;
+  if (filters.region) where.region = filters.region;
+  if (filters.from || filters.to) {
+    where.soldAt = {};
+    if (filters.from) where.soldAt.gte = new Date(filters.from);
+    if (filters.to) where.soldAt.lte = new Date(filters.to);
+  }
+  if (filters.search) {
+    where.OR = [
+      { saleNumber: { contains: filters.search, mode: 'insensitive' } },
+      { customer: { name: { contains: filters.search, mode: 'insensitive' } } },
+    ];
+  }
+
+  const [items, total] = await Promise.all([
+    prisma.sale.findMany({
+      where,
+      include: {
+        customer: { select: { id: true, name: true, region: true } },
+        salesRep: { include: { user: { select: { name: true } } } },
+        items: { select: { id: true } },
+      },
+      skip: pagination.skip,
+      take: pagination.take,
+      orderBy: pagination.orderBy,
+    }),
+    prisma.sale.count({ where }),
+  ]);
+
+  return { items, total };
+}
+
+async function getSale(id) {
+  const sale = await prisma.sale.findUnique({ where: { id }, include: SALE_INCLUDE });
+  if (!sale) throw ApiError.notFound('Sale not found');
+  return sale;
+}
+
+// Cancel a sale, restoring stock to its source location via CORRECTION rows.
+async function cancelSale(id, actor, reason) {
+  return prisma.$transaction(async (tx) => {
+    const sale = await tx.sale.findUnique({
+      where: { id },
+      include: { items: true, creditSale: { include: { payments: true } } },
+    });
+    if (!sale) throw ApiError.notFound('Sale not found');
+    if (sale.status === 'CANCELLED') throw ApiError.badRequest('Sale is already cancelled');
+
+    const source = resolveSource({ salesRepId: sale.salesRepId, warehouseId: sale.warehouseId });
+
+    for (const item of sale.items) {
+      await inventory.increaseStock(tx, {
+        productId: item.productId,
+        packagingUnitId: item.packagingUnitId,
+        quantity: item.quantity,
+        baseQuantity: item.baseQuantity,
+        type: 'CORRECTION',
+        location: source,
+        referenceType: 'SALE',
+        referenceId: sale.id,
+        userId: actor ? actor.id : null,
+        unitCost: toNumber(item.unitCost),
+        notes: `Reversal of cancelled sale ${sale.saleNumber}${reason ? ` — ${reason}` : ''}`,
+      });
+    }
+
+    if (sale.creditSale) {
+      await tx.creditSale.update({
+        where: { id: sale.creditSale.id },
+        data: { status: 'WRITTEN_OFF', balance: 0 },
+      });
+    }
+
+    return tx.sale.update({
+      where: { id: sale.id },
+      data: { status: 'CANCELLED', balanceDue: 0, notes: reason ? `${sale.notes || ''}\nCancelled: ${reason}`.trim() : sale.notes },
+      include: SALE_INCLUDE,
+    });
+  });
+}
+
+module.exports = { createSale, createSaleTx, listSales, getSale, cancelSale, SALE_INCLUDE };

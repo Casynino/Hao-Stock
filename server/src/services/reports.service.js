@@ -1,0 +1,354 @@
+'use strict';
+
+const prisma = require('../config/prisma');
+const inventory = require('./inventory.service');
+const credit = require('./credit.service');
+const { toNumber, round2 } = require('../utils/money');
+const { dayjs, resolveRange } = require('../utils/dates');
+
+const NON_CANCELLED = { status: { not: 'CANCELLED' } };
+
+function bucketKey(date, granularity) {
+  const d = dayjs(date);
+  switch (granularity) {
+    case 'month':
+      return d.format('YYYY-MM');
+    case 'week':
+      return `${d.isoWeekYear()}-W${String(d.isoWeek()).padStart(2, '0')}`;
+    case 'day':
+    default:
+      return d.format('YYYY-MM-DD');
+  }
+}
+
+function pickGranularity(range, requested) {
+  if (requested) return requested;
+  const days = dayjs(range.end).diff(dayjs(range.start), 'day');
+  if (days <= 1) return 'day';
+  if (days <= 92) return 'day';
+  if (days <= 366) return 'week';
+  return 'month';
+}
+
+// Time-bucketed sales with revenue, cost and profit. Powers daily/weekly/
+// monthly/annual reports depending on the period + granularity supplied.
+async function salesReport(params = {}) {
+  const range = resolveRange(params);
+  const granularity = pickGranularity(range, params.groupBy);
+
+  const where = { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } };
+  if (params.salesRepId) where.salesRepId = params.salesRepId;
+  if (params.region) where.region = params.region;
+  if (params.type) where.type = params.type;
+
+  const sales = await prisma.sale.findMany({
+    where,
+    select: { soldAt: true, total: true, costTotal: true, discount: true, type: true },
+    orderBy: { soldAt: 'asc' },
+  });
+
+  const buckets = new Map();
+  let revenue = 0;
+  let cost = 0;
+  let discounts = 0;
+  let cashRevenue = 0;
+  let creditRevenue = 0;
+
+  for (const s of sales) {
+    const key = bucketKey(s.soldAt, granularity);
+    const tot = toNumber(s.total);
+    const cst = toNumber(s.costTotal);
+    revenue += tot;
+    cost += cst;
+    discounts += toNumber(s.discount);
+    if (s.type === 'CASH') cashRevenue += tot;
+    else creditRevenue += tot;
+
+    const b = buckets.get(key) || { period: key, revenue: 0, cost: 0, profit: 0, orders: 0 };
+    b.revenue = round2(b.revenue + tot);
+    b.cost = round2(b.cost + cst);
+    b.profit = round2(b.revenue - b.cost);
+    b.orders += 1;
+    buckets.set(key, b);
+  }
+
+  const series = [...buckets.values()].sort((a, b) => a.period.localeCompare(b.period));
+
+  return {
+    range: { start: range.start, end: range.end, label: range.label, granularity },
+    totals: {
+      revenue: round2(revenue),
+      cost: round2(cost),
+      grossProfit: round2(revenue - cost),
+      margin: revenue > 0 ? round2(((revenue - cost) / revenue) * 100) : 0,
+      discounts: round2(discounts),
+      orders: sales.length,
+      cashRevenue: round2(cashRevenue),
+      creditRevenue: round2(creditRevenue),
+      averageOrderValue: sales.length ? round2(revenue / sales.length) : 0,
+    },
+    series,
+  };
+}
+
+// Per-product units sold, revenue and profit. Returns both top sellers and the
+// slowest movers (active products ranked by units sold ascending).
+async function productPerformance(params = {}) {
+  const range = resolveRange(params);
+  const limit = params.limit || 10;
+
+  const items = await prisma.saleItem.findMany({
+    where: { sale: { is: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } } } },
+    select: {
+      productId: true,
+      baseQuantity: true,
+      lineTotal: true,
+      unitCost: true,
+      product: { select: { name: true, sku: true, baseUnitName: true, brand: { select: { name: true } } } },
+    },
+  });
+
+  const agg = new Map();
+  for (const it of items) {
+    const cur =
+      agg.get(it.productId) ||
+      {
+        productId: it.productId,
+        name: it.product.name,
+        sku: it.product.sku,
+        brand: it.product.brand?.name,
+        baseUnitName: it.product.baseUnitName,
+        unitsSold: 0,
+        revenue: 0,
+        cost: 0,
+      };
+    cur.unitsSold += it.baseQuantity;
+    cur.revenue = round2(cur.revenue + toNumber(it.lineTotal));
+    cur.cost = round2(cur.cost + it.baseQuantity * toNumber(it.unitCost));
+    agg.set(it.productId, cur);
+  }
+
+  const ranked = [...agg.values()].map((r) => ({
+    ...r,
+    profit: round2(r.revenue - r.cost),
+    margin: r.revenue > 0 ? round2(((r.revenue - r.cost) / r.revenue) * 100) : 0,
+  }));
+
+  const topSelling = [...ranked].sort((a, b) => b.unitsSold - a.unitsSold).slice(0, limit);
+
+  // Slow movers: every active product, including those with zero sales.
+  const activeProducts = await prisma.product.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true, sku: true, baseUnitName: true, brand: { select: { name: true } } },
+  });
+  const slowMoving = activeProducts
+    .map((p) => {
+      const sold = agg.get(p.id);
+      return {
+        productId: p.id,
+        name: p.name,
+        sku: p.sku,
+        brand: p.brand?.name,
+        baseUnitName: p.baseUnitName,
+        unitsSold: sold ? sold.unitsSold : 0,
+        revenue: sold ? sold.revenue : 0,
+      };
+    })
+    .sort((a, b) => a.unitsSold - b.unitsSold)
+    .slice(0, limit);
+
+  return {
+    range: { start: range.start, end: range.end, label: range.label },
+    topSelling,
+    slowMoving,
+    all: ranked.sort((a, b) => b.revenue - a.revenue),
+  };
+}
+
+async function regionalPerformance(params = {}) {
+  const range = resolveRange(params);
+  const grouped = await prisma.sale.groupBy({
+    by: ['region'],
+    where: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } },
+    _sum: { total: true, costTotal: true },
+    _count: true,
+  });
+
+  const items = grouped
+    .map((g) => {
+      const revenue = round2(toNumber(g._sum.total));
+      const cost = round2(toNumber(g._sum.costTotal));
+      return {
+        region: g.region || 'Unspecified',
+        revenue,
+        cost,
+        profit: round2(revenue - cost),
+        orders: g._count,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue);
+
+  return { range: { start: range.start, end: range.end, label: range.label }, items };
+}
+
+async function salesRepPerformance(params = {}) {
+  const range = resolveRange(params);
+
+  const [grouped, reps, debtBySalesRep] = await Promise.all([
+    prisma.sale.groupBy({
+      by: ['salesRepId'],
+      where: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } },
+      _sum: { total: true, costTotal: true },
+      _count: true,
+    }),
+    prisma.salesRepresentative.findMany({
+      where: { isActive: true },
+      include: { user: { select: { name: true } } },
+    }),
+    prisma.creditSale.groupBy({
+      by: ['salesRepId'],
+      where: { balance: { gt: 0 } },
+      _sum: { balance: true },
+    }),
+  ]);
+
+  const salesMap = new Map(grouped.map((g) => [g.salesRepId, g]));
+  const debtMap = new Map(debtBySalesRep.map((d) => [d.salesRepId, toNumber(d._sum.balance)]));
+
+  const items = reps.map((rep) => {
+    const s = salesMap.get(rep.id);
+    const revenue = s ? round2(toNumber(s._sum.total)) : 0;
+    const cost = s ? round2(toNumber(s._sum.costTotal)) : 0;
+    const target = toNumber(rep.monthlyTarget);
+    return {
+      salesRepId: rep.id,
+      name: rep.user?.name,
+      code: rep.code,
+      region: rep.region,
+      revenue,
+      cost,
+      profit: round2(revenue - cost),
+      orders: s ? s._count : 0,
+      outstandingDebt: round2(debtMap.get(rep.id) || 0),
+      monthlyTarget: target,
+      attainment: target > 0 ? round2((revenue / target) * 100) : null,
+    };
+  });
+
+  items.sort((a, b) => b.revenue - a.revenue);
+  return { range: { start: range.start, end: range.end, label: range.label }, items };
+}
+
+// Gross & net profit. Net subtracts the cost value of shrinkage/damage in the
+// window (the only "loss" the system tracks today).
+async function profitReport(params = {}) {
+  const range = resolveRange(params);
+
+  const [salesAgg, lossRows] = await Promise.all([
+    prisma.sale.aggregate({
+      where: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } },
+      _sum: { total: true, costTotal: true, discount: true },
+      _count: true,
+    }),
+    prisma.inventoryTransaction.findMany({
+      where: {
+        type: { in: ['DAMAGE', 'STOCK_COUNT'] },
+        baseQuantity: { lt: 0 },
+        occurredAt: { gte: range.start, lte: range.end },
+      },
+      select: { baseQuantity: true, unitCost: true },
+    }),
+  ]);
+
+  const revenue = round2(toNumber(salesAgg._sum.total));
+  const cogs = round2(toNumber(salesAgg._sum.costTotal));
+  const grossProfit = round2(revenue - cogs);
+  const lossValue = round2(
+    lossRows.reduce((s, r) => s + Math.abs(r.baseQuantity) * toNumber(r.unitCost), 0),
+  );
+
+  return {
+    range: { start: range.start, end: range.end, label: range.label },
+    revenue,
+    cogs,
+    grossProfit,
+    grossMargin: revenue > 0 ? round2((grossProfit / revenue) * 100) : 0,
+    discounts: round2(toNumber(salesAgg._sum.discount)),
+    shrinkageAndDamageValue: lossValue,
+    netProfit: round2(grossProfit - lossValue),
+    orders: salesAgg._count,
+  };
+}
+
+async function inventoryMovementReport(params = {}) {
+  const range = resolveRange(params);
+  const where = { occurredAt: { gte: range.start, lte: range.end } };
+  if (params.productId) where.productId = params.productId;
+  if (params.type) where.type = params.type;
+  if (params.warehouseId) where.warehouseId = params.warehouseId;
+  if (params.salesRepId) where.salesRepId = params.salesRepId;
+
+  const [rows, byType] = await Promise.all([
+    prisma.inventoryTransaction.findMany({
+      where,
+      include: {
+        product: { select: { name: true, sku: true, baseUnitName: true } },
+        packagingUnit: { select: { name: true } },
+        warehouse: { select: { name: true } },
+        salesRep: { include: { user: { select: { name: true } } } },
+        user: { select: { name: true } },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: params.limit || 500,
+    }),
+    prisma.inventoryTransaction.groupBy({
+      by: ['type'],
+      where,
+      _sum: { baseQuantity: true },
+      _count: true,
+    }),
+  ]);
+
+  return {
+    range: { start: range.start, end: range.end, label: range.label },
+    summaryByType: byType.map((t) => ({
+      type: t.type,
+      netBase: t._sum.baseQuantity || 0,
+      count: t._count,
+    })),
+    movements: rows.map((r) => ({
+      id: r.id,
+      occurredAt: r.occurredAt,
+      type: r.type,
+      product: r.product.name,
+      sku: r.product.sku,
+      quantity: r.quantity,
+      unit: r.packagingUnit?.name,
+      baseQuantity: r.baseQuantity,
+      location:
+        r.locationType === 'WAREHOUSE' ? r.warehouse?.name : r.salesRep?.user?.name,
+      user: r.user?.name,
+      notes: r.notes,
+    })),
+  };
+}
+
+// Convenience bundle for the debt report screen / export.
+async function debtReport() {
+  return credit.debtSummary();
+}
+
+async function inventoryValuationReport() {
+  return inventory.valuation(prisma);
+}
+
+module.exports = {
+  salesReport,
+  productPerformance,
+  regionalPerformance,
+  salesRepPerformance,
+  profitReport,
+  inventoryMovementReport,
+  debtReport,
+  inventoryValuationReport,
+};

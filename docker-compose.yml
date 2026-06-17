@@ -1,0 +1,66 @@
+# Hao Stock — full local stack: Postgres + API + web.
+# Usage:
+#   docker compose up --build
+# Then open http://localhost:8080 and log in with the seeded admin account
+# (admin@haostock.co.tz / Admin@12345).
+#
+# For production, point the API's DATABASE_URL/DIRECT_URL at your Neon database
+# instead of the bundled `db` service and remove the `db` service.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: haostock-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hao_stock
+    ports:
+      - '5432:5432'
+    volumes:
+      - haostock_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d hao_stock']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build: ./server
+    container_name: haostock-server
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: '4000'
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/hao_stock?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@db:5432/hao_stock?schema=public
+      JWT_SECRET: change-me-in-production-to-a-long-random-string
+      JWT_REFRESH_SECRET: change-me-too-in-production-to-a-long-random-string
+      CLIENT_ORIGIN: http://localhost:8080
+      CURRENCY: TZS
+      LOCALE: en-TZ
+      # Seed reference + demo data the first time the DB comes up.
+      SEED_ON_START: 'true'
+      SEED_ADMIN_EMAIL: admin@haostock.co.tz
+      SEED_ADMIN_PASSWORD: Admin@12345
+    ports:
+      - '4000:4000'
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: /api
+    container_name: haostock-web
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - '8080:80'
+
+volumes:
+  haostock_pgdata:

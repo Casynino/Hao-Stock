@@ -1,0 +1,1277 @@
+// ===========================================================================
+// Hao Stock — Ledger-based Wholesale Distribution ERP
+// Prisma schema
+//
+// ARCHITECTURE NOTE (read this first):
+// Inventory is NEVER stored as a mutable `quantity` field that is decremented
+// in place. Every physical movement of stock creates an immutable row in
+// `InventoryTransaction` (the ledger). The on-hand balance for any
+// (product, location) pair is the SUM of `baseQuantity` over its ledger rows.
+//
+// `WarehouseStock` and `RepStock` are *materialized cache* tables. They are
+// recomputed from the ledger inside the same DB transaction that writes the
+// ledger row, purely to make "current balance" reads fast. They are never the
+// source of truth — `recomputeBalance()` can rebuild them from the ledger at
+// any time.
+// ===========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum InventoryTxType {
+  STOCK_IN // Opening / manual stock-in to a warehouse
+  PURCHASE_RECEIPT // Goods received against a purchase
+  TRANSFER_OUT // Leaving a location (warehouse) toward another
+  TRANSFER_IN // Arriving at a location (rep or warehouse)
+  CASH_SALE // Sold for cash (leaves the seller's location)
+  CREDIT_SALE // Sold on credit (leaves the seller's location)
+  CUSTOMER_RETURN // Customer returns goods to a rep/warehouse (+)
+  SALES_RETURN // Rep returns unsold goods to a warehouse
+  DAMAGE // Written off as damaged (-)
+  ADJUSTMENT // Manual correction (+/-) with reason
+  CORRECTION // Reversal/correction of a prior entry
+  STOCK_COUNT // Physical count reconciliation entry (+/-)
+}
+
+enum LocationType {
+  WAREHOUSE
+  SALES_REP
+}
+
+enum ReferenceType {
+  SALE
+  STOCK_TRANSFER
+  RETURN
+  STOCK_COUNT
+  PURCHASE
+  ADJUSTMENT
+  SETTLEMENT
+  MANUAL
+}
+
+enum SaleType {
+  CASH
+  CREDIT
+}
+
+enum SaleStatus {
+  PAID
+  PARTIAL
+  UNPAID
+  CANCELLED
+}
+
+enum CreditStatus {
+  OPEN
+  PARTIAL
+  PAID
+  OVERDUE
+  WRITTEN_OFF
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE_MONEY
+  BANK
+  OTHER
+}
+
+enum TransferDirection {
+  WAREHOUSE_TO_REP
+  REP_TO_WAREHOUSE
+  WAREHOUSE_TO_WAREHOUSE
+}
+
+enum TransferStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum ReturnType {
+  CUSTOMER_RETURN // From a customer back into stock
+  SALES_RETURN // From a rep back into a warehouse
+}
+
+enum ReturnStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum ItemCondition {
+  GOOD
+  DAMAGED
+}
+
+enum NotificationType {
+  LOW_STOCK
+  REORDER
+  OVERDUE_DEBT
+  MISSING_INVENTORY
+  OUTSTANDING_REP_STOCK
+  GENERAL
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum StockCountStatus {
+  DRAFT
+  COMPLETED
+  CANCELLED
+}
+
+enum SettingType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+// ---------------------------------------------------------------------------
+// Auth / RBAC
+// ---------------------------------------------------------------------------
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique // ADMIN, SALES_REP, WAREHOUSE_STAFF
+  description String?
+  isSystem    Boolean  @default(false) // system roles cannot be deleted
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  permissions Permission[] @relation("RolePermissions")
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique // e.g. "product:create", "report:view"
+  description String?
+  createdAt   DateTime @default(now())
+
+  roles Role[] @relation("RolePermissions")
+
+  @@map("permissions")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  phone        String?
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  roleId       String
+  role         Role      @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  // Warehouse staff are usually attached to a home warehouse.
+  warehouseId String?
+  warehouse   Warehouse? @relation("WarehouseStaff", fields: [warehouseId], references: [id], onDelete: SetNull)
+
+  // A user who is a sales representative has a 1-1 SalesRepresentative profile.
+  salesRep SalesRepresentative?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Audit / actor back-references
+  inventoryTransactions      InventoryTransaction[] @relation("TxActor")
+  auditLogs                  AuditLog[]
+  notifications              Notification[]
+  createdCustomers           Customer[]             @relation("CustomerCreatedBy")
+  createdSales               Sale[]                 @relation("SaleCreatedBy")
+  receivedPayments           CreditPayment[]        @relation("PaymentReceivedBy")
+  dispatchedTransfers        StockTransfer[]        @relation("TransferDispatchedBy")
+  processedReturns           Return[]               @relation("ReturnProcessedBy")
+  conductedCounts            StockCount[]           @relation("CountConductedBy")
+  updatedSettings            Setting[]              @relation("SettingUpdatedBy")
+  createdPurchaseOrders      PurchaseOrder[]        @relation("POCreatedBy")
+  decidedStockRequests       StockRequest[]         @relation("SRDecidedBy")
+  decidedWithdrawals         CommissionWithdrawal[] @relation("CWDecidedBy")
+  createdOnlineOrders        OnlineOrder[]          @relation("OOCreatedBy")
+  receivedSettlementPayments SettlementPayment[]    @relation("SettlementPaymentReceivedBy")
+  correctionsRaised          CorrectionRequest[]    @relation("CorrectionRaisedBy")
+  correctionsResolved        CorrectionRequest[]    @relation("CorrectionResolvedBy")
+
+  @@index([roleId])
+  @@index([warehouseId])
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog: brands, categories, products, packaging
+// ---------------------------------------------------------------------------
+
+model Brand {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products Product[]
+
+  @@map("brands")
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products Product[]
+
+  @@map("categories")
+}
+
+// A globally-defined packaging unit (Pack, Box, Carton, ...). The actual
+// conversion factor lives per-product on ProductPackaging, because the same
+// "Box" can mean 50 packs for one product and 24 for another.
+model PackagingUnit {
+  id          String   @id @default(cuid())
+  name        String   @unique // Pack, Box, Carton
+  shortCode   String   @unique // PK, BX, CT
+  description String?
+  // Ordering hint for UI (Pack=0, Box=1, Carton=2). Larger = bigger unit.
+  level       Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  productPackagings     ProductPackaging[]
+  inventoryTransactions InventoryTransaction[]
+  saleItems             SaleItem[]
+  transferItems         StockTransferItem[]
+  returnItems           ReturnItem[]
+  stockCountItems       StockCountItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  stockRequestItems     StockRequestItem[]
+  onlineOrderItems      OnlineOrderItem[]
+
+  @@map("packaging_units")
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  name        String
+  sku         String  @unique
+  barcode     String? @unique
+  description String?
+  imageUrl    String?
+
+  brandId    String
+  brand      Brand    @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  // The smallest sellable unit's display name (e.g. "Pack"). All prices and
+  // ledger balances are expressed in this base unit.
+  baseUnitName String @default("Pack")
+
+  // Money is per BASE unit. TZS has no minor units in practice, but we keep 2dp.
+  purchasePrice Decimal @db.Decimal(14, 2) // cost per base unit
+  sellingPrice  Decimal @db.Decimal(14, 2) // default sell price per base unit
+
+  // Reorder controls, expressed in BASE units.
+  minStockLevel   Int @default(0)
+  reorderQuantity Int @default(0)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  packagings            ProductPackaging[]
+  inventoryTransactions InventoryTransaction[]
+  warehouseStocks       WarehouseStock[]
+  repStocks             RepStock[]
+  saleItems             SaleItem[]
+  transferItems         StockTransferItem[]
+  returnItems           ReturnItem[]
+  stockCountItems       StockCountItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  stockRequestItems     StockRequestItem[]
+  onlineOrderItems      OnlineOrderItem[]
+  settlementPayments    SettlementPayment[]
+
+  @@index([brandId])
+  @@index([categoryId])
+  @@index([isActive])
+  @@map("products")
+}
+
+// Per-product packaging definition. `baseQuantity` is how many BASE units this
+// packaging contains. The base unit itself is stored with baseQuantity = 1 and
+// isBaseUnit = true. `unitPrice` overrides the derived price (sellingPrice *
+// baseQuantity) when a custom box/carton price is desired.
+model ProductPackaging {
+  id              String        @id @default(cuid())
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  packagingUnitId String
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  baseQuantity Int      @db.Integer // base units contained in one of this packaging
+  unitPrice    Decimal? @db.Decimal(14, 2) // optional custom sell price for this unit
+  isBaseUnit   Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([productId, packagingUnitId])
+  @@index([productId])
+  @@map("product_packagings")
+}
+
+// ---------------------------------------------------------------------------
+// Locations: warehouses & sales representatives
+// ---------------------------------------------------------------------------
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  region    String?
+  address   String?
+  isPrimary Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff                 User[]                 @relation("WarehouseStaff")
+  stocks                WarehouseStock[]
+  inventoryTransactions InventoryTransaction[] @relation("TxWarehouse")
+  counterpartTxns       InventoryTransaction[] @relation("TxCounterpartyWarehouse")
+  transfersFrom         StockTransfer[]        @relation("TransferFromWarehouse")
+  transfersTo           StockTransfer[]        @relation("TransferToWarehouse")
+  returns               Return[]
+  stockCounts           StockCount[]
+  Sale                  Sale[]
+  purchaseOrders        PurchaseOrder[]
+  stockRequests         StockRequest[]
+  onlineOrders          OnlineOrder[]
+
+  @@map("warehouses")
+}
+
+model SalesRepresentative {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code          String   @unique // e.g. REP-001
+  region        String?
+  phone         String?
+  // Optional monthly sales target for performance tracking.
+  monthlyTarget Decimal? @db.Decimal(14, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customers             Customer[]
+  sales                 Sale[]
+  creditSales           CreditSale[]
+  inventoryTransactions InventoryTransaction[] @relation("TxSalesRep")
+  counterpartTxns       InventoryTransaction[] @relation("TxCounterpartyRep")
+  stocks                RepStock[]
+  transfersTo           StockTransfer[]        @relation("TransferToRep")
+  transfersFrom         StockTransfer[]        @relation("TransferFromRep")
+  returns               Return[]
+  stockRequests         StockRequest[]
+  settlements           Settlement[]
+  commissionWithdrawals CommissionWithdrawal[]
+  dailyReports          DailyReport[]
+  corrections           CorrectionRequest[]
+
+  @@index([region])
+  @@map("sales_representatives")
+}
+
+// ---------------------------------------------------------------------------
+// THE LEDGER — immutable inventory movements
+// ---------------------------------------------------------------------------
+
+model InventoryTransaction {
+  id   String          @id @default(cuid())
+  type InventoryTxType
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // The packaging unit chosen for the movement, plus the count in that unit.
+  packagingUnitId String?
+  packagingUnit   PackagingUnit? @relation(fields: [packagingUnitId], references: [id], onDelete: SetNull)
+  quantity        Int // count in the chosen packaging unit (always positive)
+
+  // SIGNED delta in BASE units. + adds to the location, - removes from it.
+  baseQuantity Int
+
+  // Cost per base unit captured at movement time (for valuation / COGS).
+  unitCost Decimal @default(0) @db.Decimal(14, 2)
+
+  // WHERE the movement happened.
+  locationType LocationType
+  warehouseId  String?
+  warehouse    Warehouse?           @relation("TxWarehouse", fields: [warehouseId], references: [id], onDelete: Restrict)
+  salesRepId   String?
+  salesRep     SalesRepresentative? @relation("TxSalesRep", fields: [salesRepId], references: [id], onDelete: Restrict)
+
+  // The other side of a transfer/return (optional).
+  counterpartyWarehouseId String?
+  counterpartyWarehouse   Warehouse?           @relation("TxCounterpartyWarehouse", fields: [counterpartyWarehouseId], references: [id], onDelete: SetNull)
+  counterpartyRepId       String?
+  counterpartyRep         SalesRepresentative? @relation("TxCounterpartyRep", fields: [counterpartyRepId], references: [id], onDelete: SetNull)
+
+  // What document produced this entry.
+  referenceType ReferenceType @default(MANUAL)
+  referenceId   String?
+
+  userId String?
+  user   User?   @relation("TxActor", fields: [userId], references: [id], onDelete: SetNull)
+
+  notes      String?
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([productId])
+  @@index([type])
+  @@index([occurredAt])
+  @@index([productId, warehouseId])
+  @@index([productId, salesRepId])
+  @@index([referenceType, referenceId])
+  @@map("inventory_transactions")
+}
+
+// Materialized cache of on-hand balance per (product, warehouse). Rebuilt from
+// the ledger. NOT the source of truth.
+model WarehouseStock {
+  id           String    @id @default(cuid())
+  productId    String
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseId  String
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  baseQuantity Int       @default(0) // cached on-hand, in base units
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([productId, warehouseId])
+  @@index([warehouseId])
+  @@map("warehouse_stocks")
+}
+
+// Materialized cache of on-hand balance per (product, sales rep).
+model RepStock {
+  id           String              @id @default(cuid())
+  productId    String
+  product      Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  salesRepId   String
+  salesRep     SalesRepresentative @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
+  baseQuantity Int                 @default(0)
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([productId, salesRepId])
+  @@index([salesRepId])
+  @@map("rep_stocks")
+}
+
+// ---------------------------------------------------------------------------
+// Customers
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id      String  @id @default(cuid())
+  name    String
+  phone   String?
+  region  String?
+  address String?
+  notes   String?
+
+  salesRepId String?
+  salesRep   SalesRepresentative? @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales        Sale[]
+  creditSales  CreditSale[]
+  returns      Return[]
+  onlineOrders OnlineOrder[]
+
+  @@index([salesRepId])
+  @@index([region])
+  @@index([phone])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// Sales
+// ---------------------------------------------------------------------------
+
+model Sale {
+  id         String     @id @default(cuid())
+  saleNumber String     @unique
+  type       SaleType
+  status     SaleStatus @default(PAID)
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  salesRepId String?
+  salesRep   SalesRepresentative? @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
+
+  // The order (settlement) this sale belongs to, when a rep sells from an order.
+  settlementId String?
+  settlement   Settlement? @relation("OrderSales", fields: [settlementId], references: [id], onDelete: SetNull)
+
+  // Source location the goods left from.
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+
+  region String?
+
+  subtotal   Decimal @db.Decimal(14, 2) // sum of line totals before sale discount
+  discount   Decimal @default(0) @db.Decimal(14, 2) // whole-sale discount
+  total      Decimal @db.Decimal(14, 2) // subtotal - discount
+  amountPaid Decimal @default(0) @db.Decimal(14, 2)
+  balanceDue Decimal @default(0) @db.Decimal(14, 2)
+
+  // COGS captured at sale time for fast profit reporting.
+  costTotal Decimal @default(0) @db.Decimal(14, 2)
+
+  notes  String?
+  soldAt DateTime @default(now())
+
+  createdById String?
+  createdBy   User?   @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items      SaleItem[]
+  creditSale CreditSale?
+
+  @@index([type])
+  @@index([status])
+  @@index([salesRepId])
+  @@index([customerId])
+  @@index([soldAt])
+  @@index([region])
+  @@map("sales")
+}
+
+model SaleItem {
+  id     String @id @default(cuid())
+  saleId String
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  packagingUnitId String
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  quantity     Int // count in chosen packaging unit
+  baseQuantity Int // total base units sold (quantity * factor)
+
+  unitPrice    Decimal @db.Decimal(14, 2) // price per BASE unit at sale time
+  lineDiscount Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal    Decimal @db.Decimal(14, 2)
+  unitCost     Decimal @default(0) @db.Decimal(14, 2) // cost per base unit at sale time
+
+  createdAt DateTime @default(now())
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model CreditSale {
+  id     String @id @default(cuid())
+  saleId String @unique
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  salesRepId String?
+  salesRep   SalesRepresentative? @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
+
+  principal  Decimal      @db.Decimal(14, 2) // original credit amount
+  amountPaid Decimal      @default(0) @db.Decimal(14, 2)
+  balance    Decimal      @db.Decimal(14, 2) // principal - amountPaid
+  dueDate    DateTime
+  status     CreditStatus @default(OPEN)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments CreditPayment[]
+
+  @@index([customerId])
+  @@index([salesRepId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("credit_sales")
+}
+
+model CreditPayment {
+  id           String     @id @default(cuid())
+  creditSaleId String
+  creditSale   CreditSale @relation(fields: [creditSaleId], references: [id], onDelete: Cascade)
+
+  amount    Decimal       @db.Decimal(14, 2)
+  method    PaymentMethod @default(CASH)
+  reference String?
+  notes     String?
+  paidAt    DateTime      @default(now())
+
+  receivedById String?
+  receivedBy   User?   @relation("PaymentReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([creditSaleId])
+  @@index([paidAt])
+  @@map("credit_payments")
+}
+
+// ---------------------------------------------------------------------------
+// Stock transfers (warehouse <-> rep, warehouse <-> warehouse)
+// ---------------------------------------------------------------------------
+
+model StockTransfer {
+  id             String            @id @default(cuid())
+  transferNumber String            @unique
+  direction      TransferDirection
+  status         TransferStatus    @default(COMPLETED)
+
+  fromWarehouseId String?
+  fromWarehouse   Warehouse?           @relation("TransferFromWarehouse", fields: [fromWarehouseId], references: [id], onDelete: SetNull)
+  fromRepId       String?
+  fromRep         SalesRepresentative? @relation("TransferFromRep", fields: [fromRepId], references: [id], onDelete: SetNull)
+
+  toWarehouseId String?
+  toWarehouse   Warehouse?           @relation("TransferToWarehouse", fields: [toWarehouseId], references: [id], onDelete: SetNull)
+  toRepId       String?
+  toRep         SalesRepresentative? @relation("TransferToRep", fields: [toRepId], references: [id], onDelete: SetNull)
+
+  notes          String?
+  dispatchedAt   DateTime @default(now())
+  dispatchedById String?
+  dispatchedBy   User?    @relation("TransferDispatchedBy", fields: [dispatchedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items StockTransferItem[]
+
+  @@index([direction])
+  @@index([status])
+  @@index([dispatchedAt])
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id         String        @id @default(cuid())
+  transferId String
+  transfer   StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  packagingUnitId String
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  quantity     Int
+  baseQuantity Int
+
+  @@index([transferId])
+  @@map("stock_transfer_items")
+}
+
+// ---------------------------------------------------------------------------
+// Returns
+// ---------------------------------------------------------------------------
+
+model Return {
+  id           String       @id @default(cuid())
+  returnNumber String       @unique
+  type         ReturnType
+  status       ReturnStatus @default(COMPLETED)
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  salesRepId String?
+  salesRep   SalesRepresentative? @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
+
+  // The order (settlement) this return belongs to, when a rep returns from an order.
+  settlementId String?
+  settlement   Settlement? @relation("OrderReturns", fields: [settlementId], references: [id], onDelete: SetNull)
+
+  // The warehouse the goods return into (for SALES_RETURN, and for customer
+  // returns processed at the warehouse).
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+
+  reason        String?
+  notes         String?
+  processedAt   DateTime @default(now())
+  processedById String?
+  processedBy   User?    @relation("ReturnProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items ReturnItem[]
+
+  @@index([type])
+  @@index([status])
+  @@index([processedAt])
+  @@map("returns")
+}
+
+model ReturnItem {
+  id       String @id @default(cuid())
+  returnId String
+  return   Return @relation(fields: [returnId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  packagingUnitId String
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  quantity     Int
+  baseQuantity Int
+  condition    ItemCondition @default(GOOD)
+  unitPrice    Decimal       @default(0) @db.Decimal(14, 2)
+
+  @@index([returnId])
+  @@map("return_items")
+}
+
+// ---------------------------------------------------------------------------
+// Stock counts (physical reconciliation -> reveals missing stock)
+// ---------------------------------------------------------------------------
+
+model StockCount {
+  id          String           @id @default(cuid())
+  countNumber String           @unique
+  status      StockCountStatus @default(DRAFT)
+
+  // A count happens at one location: a warehouse OR a rep.
+  locationType LocationType
+  warehouseId  String?
+  warehouse    Warehouse?   @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  salesRepId   String?
+
+  notes         String?
+  countedAt     DateTime @default(now())
+  conductedById String?
+  conductedBy   User?    @relation("CountConductedBy", fields: [conductedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items StockCountItem[]
+
+  @@index([status])
+  @@index([countedAt])
+  @@map("stock_counts")
+}
+
+model StockCountItem {
+  id           String     @id @default(cuid())
+  stockCountId String
+  stockCount   StockCount @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  packagingUnitId String?
+  packagingUnit   PackagingUnit? @relation(fields: [packagingUnitId], references: [id], onDelete: SetNull)
+
+  // Snapshot of the ledger balance when the count began, the physical count,
+  // and the resulting discrepancy — all in BASE units.
+  expectedBase Int
+  countedBase  Int
+  varianceBase Int // countedBase - expectedBase (negative => missing/shrinkage)
+
+  @@index([stockCountId])
+  @@map("stock_count_items")
+}
+
+// ---------------------------------------------------------------------------
+// Audit, notifications, settings
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String // CREATE | UPDATE | DELETE | LOGIN | ...
+  entityType String
+  entityId   String?
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id         String               @id @default(cuid())
+  type       NotificationType
+  severity   NotificationSeverity @default(INFO)
+  title      String
+  message    String
+  entityType String?
+  entityId   String?
+  data       Json?
+
+  // null userId => visible to all admins (broadcast).
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  isRead Boolean   @default(false)
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model Setting {
+  id          String      @id @default(cuid())
+  key         String      @unique
+  value       String
+  type        SettingType @default(STRING)
+  group       String      @default("general")
+  description String?
+
+  updatedById String?
+  updatedBy   User?   @relation("SettingUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// ===========================================================================
+// PHASE 2 — imports, stock requests, settlements, commissions, online orders
+// ===========================================================================
+
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum StockRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FULFILLED
+  CANCELLED
+}
+
+enum SettlementStatus {
+  OPEN
+  PARTIAL
+  SETTLED
+  OVERDUE
+}
+
+enum OnlineOrderStatus {
+  PENDING
+  CONFIRMED
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum OrderPaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum DailyReportType {
+  OPENING
+  CLOSING
+}
+
+// --- Stage 1: imports from China -------------------------------------------
+
+model Supplier {
+  id          String   @id @default(cuid())
+  name        String
+  country     String   @default("China")
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id         String         @id @default(cuid())
+  poNumber   String         @unique
+  supplierId String
+  supplier   Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  status     PurchaseStatus @default(DRAFT)
+  currency   String         @default("USD")
+
+  // Import cost breakdown (TZS) used for landed-cost allocation on receipt.
+  goodsCost    Decimal @default(0) @db.Decimal(16, 2)
+  shippingCost Decimal @default(0) @db.Decimal(16, 2)
+  clearingCost Decimal @default(0) @db.Decimal(16, 2)
+  otherCost    Decimal @default(0) @db.Decimal(16, 2)
+  totalCost    Decimal @default(0) @db.Decimal(16, 2)
+
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+
+  orderedAt       DateTime?
+  expectedArrival DateTime?
+  actualArrival   DateTime?
+  receivedAt      DateTime?
+
+  notes       String?
+  createdById String?
+  createdBy   User?    @relation("POCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items PurchaseOrderItem[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  packagingUnitId String
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  quantity       Int
+  baseQuantity   Int
+  unitCost       Decimal @default(0) @db.Decimal(14, 2) // goods cost per base unit
+  landedUnitCost Decimal @default(0) @db.Decimal(14, 2) // incl. shipping/clearing, set on receipt
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_items")
+}
+
+// --- Sales-rep stock requests ----------------------------------------------
+
+model StockRequest {
+  id            String              @id @default(cuid())
+  requestNumber String              @unique
+  salesRepId    String
+  salesRep      SalesRepresentative @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
+  warehouseId   String?
+  warehouse     Warehouse?          @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  status        StockRequestStatus  @default(PENDING)
+
+  // Order value (sum of line totals at request time, selling price).
+  totalValue Decimal @default(0) @db.Decimal(16, 2)
+
+  notes        String?
+  requestedAt  DateTime  @default(now())
+  decidedAt    DateTime?
+  decidedById  String?
+  decidedBy    User?     @relation("SRDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  // Set when approved & issued (plain references to keep coupling low).
+  transferId   String?
+  settlementId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items StockRequestItem[]
+
+  @@index([salesRepId])
+  @@index([status])
+  @@map("stock_requests")
+}
+
+model StockRequestItem {
+  id              String        @id @default(cuid())
+  stockRequestId  String
+  stockRequest    StockRequest  @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  packagingUnitId String
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  quantityRequested Int
+  quantityApproved  Int?
+  baseQuantity      Int      @default(0) // approved base qty, set on approval
+  unitPrice         Decimal? @db.Decimal(14, 2) // selling price per chosen unit
+  lineTotal         Decimal? @db.Decimal(16, 2) // unitPrice * quantityRequested
+
+  @@index([stockRequestId])
+  @@map("stock_request_items")
+}
+
+// --- 72-hour settlement cycles ---------------------------------------------
+
+model Settlement {
+  id               String              @id @default(cuid())
+  settlementNumber String              @unique
+  salesRepId       String
+  salesRep         SalesRepresentative @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
+  status           SettlementStatus    @default(OPEN)
+
+  stockRequestId String?
+  transferId     String?
+
+  issuedAt   DateTime  @default(now())
+  deadlineAt DateTime // issuedAt + 72h
+  settledAt  DateTime?
+
+  assignedValue Decimal @default(0) @db.Decimal(16, 2) // order value the rep owes
+  settledValue  Decimal @default(0) @db.Decimal(16, 2) // total paid back so far
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments    SettlementPayment[]
+  sales       Sale[]              @relation("OrderSales")
+  returns     Return[]            @relation("OrderReturns")
+  corrections CorrectionRequest[]
+
+  @@index([salesRepId])
+  @@index([status])
+  @@index([deadlineAt])
+  @@map("settlements")
+}
+
+// A settlement entry: the rep accounts for `boxes` of a product by settling
+// (paying for) them. `amount` = boxes * box price. Returns are tracked
+// separately; together settled + returned must equal the boxes issued.
+model SettlementPayment {
+  id           String        @id @default(cuid())
+  settlementId String
+  settlement   Settlement    @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  productId    String?
+  product      Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  boxes        Int           @default(0)
+  amount       Decimal       @db.Decimal(16, 2)
+  method       PaymentMethod @default(CASH)
+  reference    String?
+  notes        String?
+  paidAt       DateTime      @default(now())
+  receivedById String?
+  receivedBy   User?         @relation("SettlementPaymentReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime      @default(now())
+
+  @@index([settlementId])
+  @@index([productId])
+  @@map("settlement_payments")
+}
+
+// --- Correction requests ----------------------------------------------------
+// Reps can't edit settlements/returns/stock after submission. If they spot a
+// mistake they raise a correction request against the order; only an admin can
+// resolve it (using the admin tools), and the whole exchange is auditable.
+enum CorrectionStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+model CorrectionRequest {
+  id           String               @id @default(cuid())
+  settlementId String?
+  settlement   Settlement?          @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+  salesRepId   String?
+  salesRep     SalesRepresentative? @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
+  raisedById   String?
+  raisedBy     User?                @relation("CorrectionRaisedBy", fields: [raisedById], references: [id], onDelete: SetNull)
+  message      String
+  status       CorrectionStatus     @default(PENDING)
+  resolution   String?
+  resolvedById String?
+  resolvedBy   User?                @relation("CorrectionResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt   DateTime?
+  createdAt    DateTime             @default(now())
+
+  @@index([status])
+  @@index([settlementId])
+  @@index([salesRepId])
+  @@map("correction_requests")
+}
+
+// --- Commission withdrawals (earned commission is computed from sales) ------
+
+model CommissionWithdrawal {
+  id          String              @id @default(cuid())
+  salesRepId  String
+  salesRep    SalesRepresentative @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
+  amount      Decimal             @db.Decimal(14, 2)
+  status      WithdrawalStatus    @default(PENDING)
+  notes       String?
+  requestedAt DateTime            @default(now())
+  decidedAt   DateTime?
+  decidedById String?
+  decidedBy   User?               @relation("CWDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  paidAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([salesRepId])
+  @@index([status])
+  @@map("commission_withdrawals")
+}
+
+// --- Online orders ----------------------------------------------------------
+
+model OnlineOrder {
+  id            String             @id @default(cuid())
+  orderNumber   String             @unique
+  status        OnlineOrderStatus  @default(PENDING)
+  paymentStatus OrderPaymentStatus @default(UNPAID)
+
+  customerId    String?
+  customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String
+  customerPhone String?
+  customerEmail String?
+  region        String?
+  address       String?
+
+  courierName    String?
+  trackingNumber String?
+
+  subtotal   Decimal @default(0) @db.Decimal(14, 2)
+  discount   Decimal @default(0) @db.Decimal(14, 2)
+  total      Decimal @default(0) @db.Decimal(14, 2)
+  amountPaid Decimal @default(0) @db.Decimal(14, 2)
+
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  saleId      String? // set when fulfilled (creates a Sale that posts the ledger)
+
+  notes       String?
+  placedAt    DateTime  @default(now())
+  shippedAt   DateTime?
+  deliveredAt DateTime?
+  createdById String?
+  createdBy   User?     @relation("OOCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items OnlineOrderItem[]
+
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([placedAt])
+  @@map("online_orders")
+}
+
+model OnlineOrderItem {
+  id              String        @id @default(cuid())
+  onlineOrderId   String
+  onlineOrder     OnlineOrder   @relation(fields: [onlineOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  packagingUnitId String
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  quantity     Int
+  baseQuantity Int
+  unitPrice    Decimal @default(0) @db.Decimal(14, 2) // per base unit
+  lineTotal    Decimal @default(0) @db.Decimal(14, 2)
+
+  @@index([onlineOrderId])
+  @@map("online_order_items")
+}
+
+// --- Daily opening/closing reports -----------------------------------------
+
+model DailyReport {
+  id         String              @id @default(cuid())
+  salesRepId String
+  salesRep   SalesRepresentative @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
+  type       DailyReportType
+  reportDate DateTime            @db.Date
+
+  // Opening
+  cashOnHand       Decimal? @db.Decimal(14, 2)
+  customersToVisit Int?
+  openingNote      String?
+
+  // Closing
+  salesAmount    Decimal? @db.Decimal(14, 2)
+  cashCollected  Decimal? @db.Decimal(14, 2)
+  debtsCreated   Decimal? @db.Decimal(14, 2)
+  debtsCollected Decimal? @db.Decimal(14, 2)
+  closingNote    String?
+
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@unique([salesRepId, reportDate, type])
+  @@index([salesRepId])
+  @@map("daily_reports")
+}

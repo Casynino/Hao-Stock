@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+    /* Near-black backdrop with faint lime/emerald glows for depth. */
+    background-color: #0a0a0b;
+    background-image:
+      radial-gradient(900px circle at 12% -10%, rgba(132, 204, 22, 0.08), transparent 45%),
+      radial-gradient(800px circle at 100% 0%, rgba(16, 185, 129, 0.06), transparent 40%);
+    background-attachment: fixed;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-[#3f3f46];
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-border bg-surface shadow-card;
+  }
+  .glass {
+    @apply border-border bg-surface/70 backdrop-blur-xl;
+  }
+  .text-gradient {
+    @apply bg-gradient-to-br from-brand-500 to-brand-700 bg-clip-text text-transparent;
+  }
+  .input {
+    @apply w-full rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-foreground shadow-sm outline-none transition
+      placeholder:text-faint focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-muted;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition
+      focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-slate-950 hover:bg-brand-500 focus:ring-brand-500/40;
+  }
+  .btn-secondary {
+    @apply btn border border-border bg-elevated text-foreground hover:bg-[#26262c] focus:ring-border;
+  }
+  .btn-danger {
+    @apply btn bg-rose-600 text-white hover:bg-rose-500 focus:ring-rose-500/40;
+  }
+  .btn-ghost {
+    @apply btn text-muted hover:bg-elevated hover:text-foreground;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .th {
+    @apply whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-faint;
+  }
+  .td {
+    @apply whitespace-nowrap px-4 py-3 text-sm text-zinc-300;
+  }
+  /* Tactile card that lifts on hover — used for the card-based screens. */
+  .card-tile {
+    @apply rounded-2xl border border-border bg-surface p-5 shadow-card transition-all duration-200 hover:-translate-y-1 hover:border-brand-500/40 hover:shadow-glow;
+  }
+}
+
+@layer utilities {
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-rise {
+    animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  }
+}

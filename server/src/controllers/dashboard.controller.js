@@ -75,4 +75,27 @@ const myOverview = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { overview, activity, myOverview };
+// Aggregated activity stats for a rep's profile page.
+const myStats = asyncHandler(async (req, res) => {
+  const salesRepId = req.user.salesRepId;
+  if (!salesRepId) throw ApiError.forbidden('Your account has no sales-rep profile');
+
+  const [activeRequests, completedRequests, boxesSettled, boxesReturnedAgg] = await Promise.all([
+    prisma.stockRequest.count({ where: { salesRepId, status: { in: ['PENDING', 'APPROVED'] } } }),
+    prisma.stockRequest.count({ where: { salesRepId, status: 'FULFILLED' } }),
+    commission.boxesSettledByRep(salesRepId),
+    prisma.returnItem.aggregate({
+      where: { return: { is: { salesRepId, type: 'SALES_RETURN', status: 'COMPLETED' } } },
+      _sum: { baseQuantity: true },
+    }),
+  ]);
+
+  return ok(res, {
+    activeRequests,
+    completedRequests,
+    boxesSettled,
+    boxesReturned: boxesReturnedAgg._sum.baseQuantity || 0,
+  });
+});
+
+module.exports = { overview, activity, myOverview, myStats };

@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import {
   LayoutDashboard, Package, Boxes, Truck, ShoppingCart, Users, HandCoins, Undo2,
   ClipboardCheck, UserCog, Repeat, BarChart3, ScrollText, ShieldCheck, Settings,
-  Bell, Menu, X, LogOut, ChevronDown,
+  Bell, Menu, X, LogOut, ChevronDown, User, Lock, Eye, EyeOff, Loader2,
   Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { NAV, ROLE_LABELS } from '@/lib/constants';
+import { NAV, ROLE_LABELS, ROLES } from '@/lib/constants';
 import { initials } from '@/lib/format';
-import api, { unwrap } from '@/lib/api';
+import api, { unwrap, apiError } from '@/lib/api';
+import { Modal, Button, Field, Input } from '@/components/ui';
 
 const ICONS = {
   LayoutDashboard, Package, Boxes, Truck, ShoppingCart, Users, HandCoins, Undo2,
@@ -67,6 +69,56 @@ function NavItems({ items, onNavigate }) {
   );
 }
 
+function ChangePasswordModal({ onClose }) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+
+  const change = useMutation({
+    mutationFn: () => api.post('/auth/change-password', { currentPassword: current, newPassword: next }),
+    onSuccess: () => { toast.success('Password updated'); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const mismatch = next && confirm && next !== confirm;
+  const valid = current.length > 0 && next.length >= 6 && next === confirm;
+
+  return (
+    <Modal open onClose={onClose} title="Change password"
+      footer={<>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button disabled={!valid || change.isPending} onClick={() => change.mutate()}>
+          {change.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+          Update password
+        </Button>
+      </>}>
+      <div className="space-y-4">
+        <Field label="Current password" required>
+          <div className="relative">
+            <Input type={showCurrent ? 'text' : 'password'} value={current} onChange={(e) => setCurrent(e.target.value)} placeholder="••••••••" autoComplete="current-password" />
+            <button type="button" onClick={() => setShowCurrent((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-muted">
+              {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </Field>
+        <Field label="New password" required hint="Minimum 6 characters">
+          <div className="relative">
+            <Input type={showNext ? 'text' : 'password'} value={next} onChange={(e) => setNext(e.target.value)} placeholder="••••••••" autoComplete="new-password" />
+            <button type="button" onClick={() => setShowNext((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-muted">
+              {showNext ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </Field>
+        <Field label="Confirm new password" required error={mismatch ? 'Passwords do not match' : undefined}>
+          <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" autoComplete="new-password" />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
 function Brand() {
   return (
     <div className="flex items-center gap-2.5 px-5 py-5">
@@ -84,6 +136,7 @@ export default function Layout() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
 
   const items = NAV.filter((n) => hasRole(...n.roles));
 
@@ -156,16 +209,30 @@ export default function Layout() {
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 z-20 mt-2 w-48 rounded-lg border border-border bg-surface py-1 shadow-lg">
-                  <div className="border-b border-border px-4 py-2">
-                    <div className="truncate text-sm font-medium text-foreground">{user?.email}</div>
+                <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-border bg-surface py-1 shadow-xl">
+                  <div className="border-b border-border px-4 py-3">
+                    <div className="truncate text-sm font-semibold text-foreground">{user?.name}</div>
+                    <div className="truncate text-xs text-muted">{user?.email}</div>
                   </div>
                   <button
-                    onClick={() => { setMenuOpen(false); navigate('/settings'); }}
-                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-muted hover:bg-elevated"
+                    onClick={() => { setMenuOpen(false); navigate('/profile'); }}
+                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-muted hover:bg-elevated hover:text-foreground"
                   >
-                    <Settings className="h-4 w-4" /> Settings
+                    <User className="h-4 w-4" /> View Profile
                   </button>
+                  <button
+                    onClick={() => { setMenuOpen(false); navigate(user?.role === ROLES.ADMIN ? '/settings' : '/profile'); }}
+                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-muted hover:bg-elevated hover:text-foreground"
+                  >
+                    <Settings className="h-4 w-4" /> Account Settings
+                  </button>
+                  <button
+                    onClick={() => { setMenuOpen(false); setShowPasswordModal(true); }}
+                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-muted hover:bg-elevated hover:text-foreground"
+                  >
+                    <Lock className="h-4 w-4" /> Change Password
+                  </button>
+                  <div className="my-1 border-t border-border" />
                   <button
                     onClick={logout}
                     className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-rose-500 hover:bg-rose-500/10"
@@ -191,6 +258,8 @@ export default function Layout() {
           </motion.div>
         </main>
       </div>
+
+      {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}
     </div>
   );
 }

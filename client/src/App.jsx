@@ -30,6 +30,7 @@ import Commissions from '@/pages/Commissions';
 import OnlineOrders from '@/pages/OnlineOrders';
 import DailyReports from '@/pages/DailyReports';
 import Activity from '@/pages/Activity';
+import Profile from '@/pages/Profile';
 import NotFound from '@/pages/NotFound';
 
 // Sales reps get a personal dashboard; everyone else gets the management one.
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/reorder" element={<ProtectedRoute roles={W}><Reorder /></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute roles={W}><Reports /></ProtectedRoute>} />
         <Route path="/notifications" element={<Notifications />} />
+        <Route path="/profile" element={<Profile />} />
         <Route path="/audit" element={<ProtectedRoute roles={[ROLES.ADMIN]}><AuditLogs /></ProtectedRoute>} />
         <Route path="/users" element={<ProtectedRoute roles={[ROLES.ADMIN]}><Users /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute roles={[ROLES.ADMIN]}><Settings /></ProtectedRoute>} />

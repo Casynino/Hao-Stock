@@ -86,11 +86,28 @@ export default function RepDashboard() {
   const first = user?.name?.split(' ')[0] || 'there';
   const hasOutstanding = (openSettlementsValue || 0) > 0;
 
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  let subtitle;
+  if (heldStock.units > 0 && openSettlements > 0) {
+    subtitle = `You have ${formatNumber(heldStock.units)} boxes across ${openSettlements} open order${openSettlements === 1 ? '' : 's'} — settle them to earn commission.`;
+  } else if (heldStock.units > 0) {
+    subtitle = `${formatNumber(heldStock.units)} boxes in your hands. Settle them to earn commission.`;
+  } else if ((commission?.available || 0) > 0) {
+    subtitle = `${formatCurrency(commission.available)} commission is ready to withdraw. Keep going!`;
+  } else {
+    subtitle = "Let's move some stock today.";
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Hello, {first} 👋</h1>
-        <p className="mt-0.5 text-sm text-muted">Your stock, orders and commission at a glance.</p>
+        <p className="text-xs font-medium uppercase tracking-wider text-muted">
+          {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
+        </p>
+        <h1 className="mt-0.5 text-2xl font-bold text-foreground">{timeGreeting}, {first}.</h1>
+        <p className="mt-0.5 text-sm text-muted">{subtitle}</p>
       </div>
 
       {/* Priority actions — always above the fold */}

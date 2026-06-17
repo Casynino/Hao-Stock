@@ -26,13 +26,17 @@ function decorate(s) {
   const hoursRemaining = round2(dayjs(s.deadlineAt).diff(dayjs(), 'hour', true));
   const status = effectiveStatus(s);
   const paid = round2(toNumber(s.settledValue));
-  const balance = round2(toNumber(s.assignedValue) - paid);
+  const returned = round2(toNumber(s.returnedValue));
+  // Outstanding = order value minus what's been settled AND returned. Returns
+  // discharge the rep's liability just like settlement does.
+  const balance = round2(Math.max(0, toNumber(s.assignedValue) - paid - returned));
   return {
     ...s,
     status,
     hoursRemaining,
     approaching: status !== 'SETTLED' && status !== 'OVERDUE' && hoursRemaining <= APPROACHING_HOURS,
     paid,
+    returned,
     balance,
   };
 }
@@ -158,6 +162,31 @@ async function get(id) {
   return decorated;
 }
 
+// Recompute a settlement's stored returnedValue + status from its linked sales
+// (settled) and returns. AUTO-CLOSES (status SETTLED) the moment every issued
+// box is accounted for — settled or returned. Call after any settle or return.
+async function recomputeStatus(client, id) {
+  const s = await client.settlement.findUnique({ where: { id } });
+  if (!s) return null;
+  const bd = await orderBreakdown(s, client);
+  const fullyAccounted = bd.totals.remainingBoxes <= 0;
+  const status = fullyAccounted
+    ? 'SETTLED'
+    : new Date() > new Date(s.deadlineAt)
+      ? 'OVERDUE'
+      : toNumber(s.settledValue) > 0 || bd.totals.returnedValue > 0
+        ? 'PARTIAL'
+        : 'OPEN';
+  return client.settlement.update({
+    where: { id },
+    data: {
+      returnedValue: round2(bd.totals.returnedValue),
+      status,
+      settledAt: fullyAccounted && !s.settledAt ? new Date() : s.settledAt,
+    },
+  });
+}
+
 // Settle boxes against an order: the rep accounts for `boxes` of a product by
 // paying for them. Each settle creates a CASH sale (so the value flows into
 // revenue, today's sales and product performance), the boxes leave the rep's
@@ -207,16 +236,11 @@ async function settleBoxes(id, payload, actor) {
         actor,
       );
 
-      // Recompute settled value + status. Fully settled when nothing remains.
+      // Record the settled value, then recompute status (auto-closes the order
+      // when every issued box is now settled or returned).
       const newSettled = round2(toNumber(s.settledValue) + toNumber(sale.total));
-      const bd = await orderBreakdown({ ...s, settledValue: newSettled }, tx);
-      const fullySettled = bd.totals.remainingBoxes <= 0;
-      const status = fullySettled ? 'SETTLED' : new Date() > new Date(s.deadlineAt) ? 'OVERDUE' : 'PARTIAL';
-
-      await tx.settlement.update({
-        where: { id },
-        data: { settledValue: newSettled, status, settledAt: fullySettled ? new Date() : s.settledAt },
-      });
+      await tx.settlement.update({ where: { id }, data: { settledValue: newSettled } });
+      await recomputeStatus(tx, id);
 
       const updated = await tx.settlement.findUnique({ where: { id }, include: { ...INCLUDE, sales: SALES_INCLUDE } });
       const dec = decorate(updated);
@@ -298,6 +322,7 @@ module.exports = {
   get,
   settle,
   settleBoxes,
+  recomputeStatus,
   refreshOverdue,
   summary,
   decorate,

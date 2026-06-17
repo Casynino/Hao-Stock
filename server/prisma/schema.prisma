@@ -1090,7 +1090,8 @@ model Settlement {
   settledAt  DateTime?
 
   assignedValue Decimal @default(0) @db.Decimal(16, 2) // order value the rep owes
-  settledValue  Decimal @default(0) @db.Decimal(16, 2) // total paid back so far
+  settledValue  Decimal @default(0) @db.Decimal(16, 2) // value of boxes settled (paid)
+  returnedValue Decimal @default(0) @db.Decimal(16, 2) // value of boxes returned to warehouse
   notes         String?
 
   createdAt DateTime @default(now())

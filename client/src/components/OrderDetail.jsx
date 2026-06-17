@@ -147,6 +147,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
     qc.invalidateQueries({ queryKey: ['inventory'] });
     qc.invalidateQueries({ queryKey: ['commissions'] });
     qc.invalidateQueries({ queryKey: ['corrections'] });
+    qc.invalidateQueries({ queryKey: ['dashboard'] }); // refresh rep/admin dashboards live
   };
 
   const settle = useMutation({

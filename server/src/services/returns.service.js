@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const inventory = require('./inventory.service');
+const settlement = require('./settlement.service');
 const { nextDocNumber } = require('../utils/numbering');
 const { toNumber } = require('../utils/money');
 
@@ -195,6 +196,12 @@ async function createReturn(payload, actor) {
             });
           }
         }
+      }
+
+      // Keep the linked order in sync: a return reduces the outstanding balance
+      // and auto-closes the order once every issued box is settled or returned.
+      if (settlementId) {
+        await settlement.recomputeStatus(tx, settlementId);
       }
 
       return tx.return.findUnique({ where: { id: ret.id }, include: RETURN_INCLUDE });

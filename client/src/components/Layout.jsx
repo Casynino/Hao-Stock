@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Package, Boxes, Truck, ShoppingCart, Users, HandCoins, Undo2,
   ClipboardCheck, UserCog, Repeat, BarChart3, ScrollText, ShieldCheck, Settings,
-  Bell, Menu, X, LogOut, ChevronDown, Warehouse,
+  Bell, Menu, X, LogOut, ChevronDown,
   Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -71,9 +71,9 @@ function Brand() {
   return (
     <div className="flex items-center gap-2.5 px-5 py-5">
       <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-slate-950 shadow-[0_4px_16px_-4px_rgba(163,230,53,0.5)]">
-        <Warehouse className="h-5 w-5" />
+        <Boxes className="h-5 w-5" />
       </div>
-      <div className="text-sm font-bold uppercase tracking-wide text-white">The Warehouse</div>
+      <div className="text-sm font-bold uppercase tracking-wide text-white">The Lab</div>
     </div>
   );
 }
@@ -99,7 +99,7 @@ export default function Layout() {
       <aside className="hidden w-64 flex-col border-r border-border bg-[#0c0c0e] lg:flex">
         <Brand />
         <NavItems items={items} />
-        <div className="border-t border-white/5 p-3 text-[11px] uppercase tracking-wider text-faint">The Warehouse</div>
+        <div className="border-t border-white/5 p-3 text-[11px] text-faint"><span className="font-semibold uppercase tracking-wider">The Lab</span> · Developed by Nino</div>
       </aside>
 
       {/* Sidebar (mobile drawer) */}

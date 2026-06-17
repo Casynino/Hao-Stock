@@ -4,7 +4,7 @@
   "private": true,
   "description": "Hao Stock — Wholesale Distribution ERP (Vercel deploy root: builds the client SPA and runs the Express API as a serverless function).",
   "scripts": {
-    "build": "prisma generate --schema=server/prisma/schema.prisma && npm --prefix client install && npm --prefix client run build",
+    "build": "prisma generate --schema=server/prisma/schema.prisma && npm --prefix client install --include=dev && npm --prefix client run build",
     "postinstall": "prisma generate --schema=server/prisma/schema.prisma"
   },
   "dependencies": {

@@ -1,22 +1,72 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Boxes, Coins, Timer, ClipboardList, Wallet, Eye } from 'lucide-react';
+import { motion } from 'motion/react';
+import clsx from 'clsx';
+import { ClipboardList, Wallet, Boxes, Coins, ChevronRight, Timer } from 'lucide-react';
 import api, { unwrap } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrency, formatNumber, formatDateTime } from '@/lib/format';
 import { SETTLEMENT_STATUS_META } from '@/lib/constants';
 import OrderDetailModal from '@/components/OrderDetail';
-import {
-  PageHeader, StatCard, Card, CardHeader, PageSpinner, EmptyState, Badge,
-  Table, THead, TBody, TR, TH, TD, Button,
-} from '@/components/ui';
+import { PageSpinner, EmptyState, Badge } from '@/components/ui';
 
 function hoursLabel(h) {
   if (h == null) return '—';
   if (h < 0) return `${Math.abs(Math.round(h))}h overdue`;
   if (h < 24) return `${Math.round(h)}h left`;
   return `${Math.round(h / 24)}d left`;
+}
+
+// Big, tappable priority action with status baked in.
+function QuickAction({ icon: Icon, title, value, meta, badge, highlight, onClick }) {
+  return (
+    <motion.button
+      whileTap={{ scale: 0.985 }}
+      onClick={onClick}
+      className={clsx(
+        'flex w-full items-center gap-4 rounded-2xl border p-4 text-left shadow-card transition',
+        highlight
+          ? 'border-brand-500/50 bg-gradient-to-br from-brand-500/20 via-surface to-surface'
+          : 'border-border bg-surface hover:bg-elevated',
+      )}
+    >
+      <span
+        className={clsx(
+          'relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl',
+          highlight ? 'bg-brand-600 text-slate-950' : 'bg-elevated text-brand-500',
+        )}
+      >
+        <Icon className="h-6 w-6" />
+        {badge ? (
+          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+            {badge}
+          </span>
+        ) : null}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        <div className="mt-0.5 truncate text-lg font-bold text-foreground">{value}</div>
+        {meta && <div className="truncate text-xs text-muted">{meta}</div>}
+      </div>
+      <ChevronRight className="h-5 w-5 shrink-0 text-faint" />
+    </motion.button>
+  );
+}
+
+function MiniStat({ icon: Icon, label, value, hint, onClick }) {
+  return (
+    <motion.button
+      whileTap={{ scale: 0.98 }}
+      onClick={onClick}
+      className="flex flex-col rounded-2xl border border-border bg-surface p-4 text-left shadow-card transition hover:bg-elevated"
+    >
+      <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-elevated text-brand-500"><Icon className="h-5 w-5" /></span>
+      <span className="text-xs text-muted">{label}</span>
+      <span className="mt-0.5 break-words text-lg font-bold text-foreground">{value}</span>
+      {hint && <span className="mt-0.5 text-xs text-faint">{hint}</span>}
+    </motion.button>
+  );
 }
 
 export default function RepDashboard() {
@@ -33,53 +83,80 @@ export default function RepDashboard() {
   if (!data) return <EmptyState title="No data yet" />;
 
   const { heldStock, commission, openSettlements, openSettlementsValue, pendingRequests, orders } = data;
+  const first = user?.name?.split(' ')[0] || 'there';
+  const hasOutstanding = (openSettlementsValue || 0) > 0;
 
   return (
-    <div>
-      <PageHeader title={`Hello, ${user?.name?.split(' ')[0]}`} subtitle="Your stock, open orders and commission.">
-        <Button onClick={() => navigate('/stock-requests')}><ClipboardList className="h-4 w-4" /> Request stock</Button>
-      </PageHeader>
-
-      {/* Commission — earned on settled boxes */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Boxes settled" value={formatNumber(commission?.boxesSettled || 0)} icon={TrendingUp} tone="brand" hint={`${formatCurrency(commission?.rule?.perBox || 0)} / box`} />
-        <StatCard label="Commission earned" value={formatCurrency(commission?.earned || 0)} icon={Coins} tone="violet" />
-        <StatCard label="Commission paid" value={formatCurrency(commission?.paid || 0)} icon={Wallet} tone="emerald" />
-        <StatCard label="Commission remaining" value={formatCurrency(commission?.pending || 0)} icon={Coins} tone="amber" hint={`${formatCurrency(commission?.available || 0)} to withdraw`} onClick={() => navigate('/commissions')} />
+    <div className="mx-auto max-w-3xl space-y-5">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Hello, {first} 👋</h1>
+        <p className="mt-0.5 text-sm text-muted">Your stock, orders and commission at a glance.</p>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Stock you hold" value={formatCurrency(heldStock.value)} icon={Boxes} tone="amber" hint={`${formatNumber(heldStock.units)} boxes · ${heldStock.lines} products`} />
-        <StatCard label="Open orders (72h)" value={formatNumber(openSettlements || 0)} icon={Timer} tone="rose" hint={`${formatCurrency(openSettlementsValue || 0)} to settle`} onClick={() => navigate('/settlements')} />
-        <StatCard label="Pending stock requests" value={formatNumber(pendingRequests || 0)} icon={ClipboardList} tone="slate" onClick={() => navigate('/stock-requests')} />
+      {/* Priority actions — always above the fold */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <QuickAction
+          icon={ClipboardList}
+          title="Request stock"
+          value={pendingRequests > 0 ? `${pendingRequests} pending` : 'New request'}
+          meta={pendingRequests > 0 ? 'Awaiting admin approval' : 'Tap to order stock'}
+          badge={pendingRequests > 0 ? pendingRequests : null}
+          onClick={() => navigate('/stock-requests')}
+        />
+        <QuickAction
+          icon={Wallet}
+          title="Settlement"
+          value={hasOutstanding ? formatCurrency(openSettlementsValue) : 'All settled'}
+          meta={openSettlements > 0 ? `${openSettlements} active order${openSettlements === 1 ? '' : 's'} · to settle` : 'Nothing outstanding'}
+          badge={openSettlements > 0 ? openSettlements : null}
+          highlight={hasOutstanding}
+          onClick={() => navigate('/settlements')}
+        />
       </div>
 
-      <Card className="mt-6">
-        <CardHeader title="Your open orders" subtitle="Settle every box (pay) or return it before the 72-hour deadline." />
+      {/* Secondary: stock held + commission */}
+      <div className="grid grid-cols-2 gap-3">
+        <MiniStat icon={Boxes} label="Stock you hold" value={formatCurrency(heldStock.value)} hint={`${formatNumber(heldStock.units)} boxes`} onClick={() => navigate('/settlements')} />
+        <MiniStat icon={Coins} label="Commission earned" value={formatCurrency(commission?.earned || 0)} hint={`${formatCurrency(commission?.available || 0)} to withdraw`} onClick={() => navigate('/commissions')} />
+      </div>
+
+      {/* Open orders — the rep's action queue, as tappable cards */}
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Open orders</h2>
+          {orders?.length > 0 && <span className="text-xs text-muted">Settle or return before 72h</span>}
+        </div>
         {!orders?.length ? (
-          <EmptyState title="No open orders" message="Request stock to get started — once approved it appears here to settle." icon={Timer} />
+          <div className="rounded-2xl border border-border bg-surface">
+            <EmptyState title="No open orders" message="Request stock above — once an admin approves it, it appears here to settle." icon={Timer} />
+          </div>
         ) : (
-          <Table>
-            <THead><TR><TH>Order</TH><TH>Value</TH><TH>Settled</TH><TH>Balance</TH><TH>Deadline</TH><TH>Status</TH><TH /></TR></THead>
-            <TBody>
-              {orders.map((o) => (
-                <TR key={o.id} className="cursor-pointer" onClick={() => setViewing(o.id)}>
-                  <TD className="font-medium">{o.settlementNumber}</TD>
-                  <TD>{formatCurrency(o.value)}</TD>
-                  <TD className="text-emerald-500">{formatCurrency(o.settled)}</TD>
-                  <TD className={o.balance > 0 ? 'font-semibold text-rose-500' : 'text-faint'}>{formatCurrency(o.balance)}</TD>
-                  <TD>
-                    <div className="text-muted">{formatDateTime(o.deadlineAt)}</div>
-                    <div className={`text-xs ${o.hoursRemaining < 0 ? 'text-rose-500' : o.approaching ? 'text-amber-500' : 'text-faint'}`}>{hoursLabel(o.hoursRemaining)}</div>
-                  </TD>
-                  <TD><Badge className={SETTLEMENT_STATUS_META[o.status]?.cls}>{SETTLEMENT_STATUS_META[o.status]?.label}</Badge></TD>
-                  <TD><span className="inline-flex items-center gap-1 text-xs font-medium text-brand-600">Settle <Eye className="h-3.5 w-3.5" /></span></TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
+          <div className="space-y-2">
+            {orders.map((o) => (
+              <motion.button
+                key={o.id}
+                whileTap={{ scale: 0.99 }}
+                onClick={() => setViewing(o.id)}
+                className="flex w-full items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4 text-left shadow-card transition hover:bg-elevated"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-foreground">{o.settlementNumber}</span>
+                    <Badge className={SETTLEMENT_STATUS_META[o.status]?.cls}>{SETTLEMENT_STATUS_META[o.status]?.label}</Badge>
+                  </div>
+                  <div className="mt-1 text-sm text-muted">
+                    Balance <span className={o.balance > 0 ? 'font-semibold text-rose-400' : 'text-foreground'}>{formatCurrency(o.balance)}</span>
+                  </div>
+                  <div className={clsx('mt-0.5 text-xs', o.hoursRemaining < 0 ? 'text-rose-400' : o.approaching ? 'text-amber-400' : 'text-faint')}>
+                    {hoursLabel(o.hoursRemaining)} · {formatDateTime(o.deadlineAt)}
+                  </div>
+                </div>
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand-500">Settle <ChevronRight className="h-4 w-4" /></span>
+              </motion.button>
+            ))}
+          </div>
         )}
-      </Card>
+      </div>
 
       {viewing && <OrderDetailModal settlementId={viewing} onClose={() => setViewing(null)} />}
     </div>

@@ -55,7 +55,7 @@ function NavItems({ items, onNavigate }) {
         <div className="pt-2">
           <button
             onClick={() => setShowMore((v) => !v)}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted transition hover:bg-slate-800 hover:text-muted"
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted transition hover:bg-white/5 hover:text-foreground"
           >
             <span>More tools</span>
             <ChevronDown className={`h-4 w-4 transition-transform ${showMore ? 'rotate-180' : ''}`} />
@@ -169,7 +169,7 @@ export default function Layout() {
                   </button>
                   <button
                     onClick={logout}
-                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-rose-600 hover:bg-rose-50"
+                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-rose-500 hover:bg-rose-500/10"
                   >
                     <LogOut className="h-4 w-4" /> Sign out
                   </button>
@@ -180,11 +180,13 @@ export default function Layout() {
         </header>
 
         <main className="flex-1 p-4 lg:p-6">
+          {/* Cap width on ultra-wide monitors so content stays readable & centered. */}
           <motion.div
             key={location.pathname}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
+            className="mx-auto w-full max-w-[1600px]"
           >
             <Outlet />
           </motion.div>

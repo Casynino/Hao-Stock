@@ -24,7 +24,7 @@ function WithdrawModal({ available, onClose }) {
     <Modal open onClose={onClose} title="Request commission withdrawal"
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={req.isPending} disabled={!amount || Number(amount) <= 0} onClick={() => req.mutate()}>Request</Button></>}>
       <div className="space-y-4">
-        <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">Available to withdraw: <b>{formatCurrency(available)}</b></div>
+        <div className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">Available to withdraw: <b>{formatCurrency(available)}</b></div>
         <Field label="Amount" required hint={`Max ${formatCurrency(available)}`}><Input type="number" min="0" max={available} value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></Field>
         <Field label="Notes"><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       </div>

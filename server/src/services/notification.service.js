@@ -2,9 +2,8 @@
 
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
-const reorder = require('./reorder.service');
-const credit = require('./credit.service');
-const dashboard = require('./dashboard.service');
+// reorder / credit / dashboard are lazy-required inside generateSystemAlerts()
+// to avoid circular deps (settlement → notification → dashboard → settlement).
 
 // Visibility rule: a user sees their own notifications plus broadcasts
 // (userId = null). Admins effectively see everything via broadcasts.
@@ -67,6 +66,10 @@ async function createIfAbsent(data) {
 // Scan current business state and raise system alerts. Safe to run on a
 // schedule or on demand.
 async function generateSystemAlerts() {
+  const reorder = require('./reorder.service');
+  const credit = require('./credit.service');
+  const dashboard = require('./dashboard.service');
+
   const [reorderData, lowStock, debt, repStock] = await Promise.all([
     reorder.reorderAnalysis(),
     reorder.lowStock(),

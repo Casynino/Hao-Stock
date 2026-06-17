@@ -100,15 +100,6 @@ export default function Login() {
               Sign in
             </button>
           </form>
-
-          <div className="mt-6 rounded-lg border border-border bg-surface p-4 text-xs text-muted">
-            <div className="font-semibold text-muted">Demo accounts (from seed)</div>
-            <div className="mt-1 space-y-0.5">
-              <div>Admin · admin@haostock.co.tz · Admin@12345</div>
-              <div>Warehouse · warehouse@haostock.co.tz · Warehouse@123</div>
-              <div>Sales rep · juma@haostock.co.tz · SalesRep@123</div>
-            </div>
-          </div>
         </div>
       </div>
     </div>

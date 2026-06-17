@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
-  Loader2, Eye, EyeOff, ArrowRight, Warehouse, Package, Timer, Coins, Target,
+  Loader2, Eye, EyeOff, ArrowRight, Boxes, Package, Timer, Coins, Target,
   ClipboardList, BarChart3, Rocket,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -135,10 +135,10 @@ export default function Login() {
         {/* Brand hero */}
         <motion.div variants={item} className="text-center lg:text-left">
           <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 text-slate-950 shadow-xl">
-            <Warehouse className="h-7 w-7" />
+            <Boxes className="h-7 w-7" />
           </div>
-          <h1 className="font-black uppercase leading-[0.9] tracking-tight text-5xl sm:text-6xl lg:text-7xl">
-            The<br />Warehouse
+          <h1 className="font-black uppercase leading-[0.9] tracking-tight text-6xl sm:text-7xl lg:text-8xl">
+            The Lab
           </h1>
           <p className="mx-auto mt-5 max-w-md text-lg text-white/70 lg:mx-0 lg:text-xl">
             Take stock. Make moves. Earn more.
@@ -157,7 +157,7 @@ export default function Login() {
 
             <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-4">
               <Field label="Email" error={errors.email?.message} required>
-                <Input type="email" autoComplete="username" placeholder="you@thewarehouse.co.tz" {...register('email')} />
+                <Input type="email" autoComplete="username" placeholder="you@thelab.co.tz" {...register('email')} />
               </Field>
               <Field label="Password" error={errors.password?.message} required>
                 <div className="relative">
@@ -169,7 +169,7 @@ export default function Login() {
                 </div>
               </Field>
               <button type="submit" disabled={isSubmitting} className="btn-primary w-full py-3 text-base">
-                {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <>Access Warehouse <ArrowRight className="h-5 w-5" /></>}
+                {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <>Access The Lab <ArrowRight className="h-5 w-5" /></>}
               </button>
             </form>
           </div>
@@ -194,6 +194,11 @@ export default function Login() {
               </div>
             </motion.div>
           ))}
+        </motion.div>
+
+        {/* Developer credit */}
+        <motion.div variants={item} className="text-center text-xs text-white/40 lg:col-span-2">
+          © The Lab — Developed by Nino
         </motion.div>
       </motion.div>
     </div>

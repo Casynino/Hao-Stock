@@ -29,70 +29,48 @@ function ActiveOrderCard({ s, onClick }) {
   const overdue = s.status === 'OVERDUE';
   const approaching = s.approaching;
 
+  const accent = overdue
+    ? { border: 'border-rose-500/30', bg: 'bg-rose-500/5', text: 'text-rose-400', timeCls: 'text-rose-400' }
+    : approaching
+      ? { border: 'border-amber-500/30', bg: 'bg-amber-500/5', text: 'text-amber-400', timeCls: 'text-amber-400' }
+      : { border: 'border-border', bg: 'bg-surface', text: 'text-brand-400', timeCls: 'text-faint' };
+
   return (
     <motion.button
       whileTap={{ scale: 0.985 }}
       onClick={onClick}
-      className={clsx(
-        'w-full rounded-2xl border p-4 text-left transition',
-        overdue
-          ? 'border-rose-500/40 bg-rose-500/5'
-          : approaching
-            ? 'border-amber-500/40 bg-amber-500/5'
-            : 'border-brand-500/30 bg-brand-500/5',
-      )}
+      className={clsx('w-full rounded-2xl border p-4 text-left transition hover:bg-elevated', accent.border, accent.bg)}
     >
-      {/* Top row */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-foreground">{s.settlementNumber}</span>
-          <Badge className={SETTLEMENT_STATUS_META[s.status]?.cls}>
-            {SETTLEMENT_STATUS_META[s.status]?.label}
-          </Badge>
-        </div>
-        <span className={clsx(
-          'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
-          overdue
-            ? 'bg-rose-500/15 text-rose-400'
-            : approaching
-              ? 'bg-amber-500/15 text-amber-400'
-              : 'bg-brand-500/15 text-brand-400',
-        )}>
-          {overdue ? '⚠ Overdue' : '⚡ Action required'}
-        </span>
+      {/* Order number + status */}
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-bold text-foreground">{s.settlementNumber}</span>
+        <Badge className={SETTLEMENT_STATUS_META[s.status]?.cls}>
+          {SETTLEMENT_STATUS_META[s.status]?.label}
+        </Badge>
       </div>
 
-      {/* Money rows */}
-      <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-        <div className="text-faint">Order value</div>
-        <div className="text-right font-medium text-foreground">{formatCurrency(s.assignedValue)}</div>
-
-        <div className="text-faint">Settled</div>
-        <div className="text-right font-medium text-emerald-400">{formatCurrency(s.paid)}</div>
-
-        {s.returned > 0 && <>
-          <div className="text-faint">Returned</div>
-          <div className="text-right font-medium text-sky-400">{formatCurrency(s.returned)}</div>
-        </>}
-
-        <div className={clsx('font-semibold', overdue ? 'text-rose-400' : 'text-foreground')}>
-          Outstanding
-        </div>
-        <div className={clsx('text-right text-lg font-bold', overdue ? 'text-rose-400' : 'text-brand-400')}>
+      {/* Outstanding — hero figure */}
+      <div className="mt-3">
+        <div className="text-[11px] uppercase tracking-widest text-faint">Outstanding</div>
+        <div className={clsx('mt-0.5 text-2xl font-black tabular-nums', accent.text)}>
           {formatCurrency(s.balance)}
         </div>
       </div>
 
+      {/* Secondary money line */}
+      <div className="mt-2 flex gap-4 text-xs text-faint">
+        <span>Order {formatCurrency(s.assignedValue)}</span>
+        {s.paid > 0 && <span className="text-emerald-400">Settled {formatCurrency(s.paid)}</span>}
+        {s.returned > 0 && <span className="text-sky-400">Returned {formatCurrency(s.returned)}</span>}
+      </div>
+
       {/* Footer */}
       <div className="mt-3 flex items-center justify-between border-t border-white/8 pt-3">
-        <span className={clsx(
-          'text-xs font-medium',
-          overdue ? 'text-rose-400' : approaching ? 'text-amber-400' : 'text-faint',
-        )}>
-          {hoursLabel(s.hoursRemaining)} · deadline {formatDateTime(s.deadlineAt)}
+        <span className={clsx('text-xs font-medium', accent.timeCls)}>
+          {hoursLabel(s.hoursRemaining)} · {formatDateTime(s.deadlineAt)}
         </span>
         <span className="inline-flex items-center gap-1 text-xs font-semibold text-brand-400">
-          Open order <ChevronRight className="h-3.5 w-3.5" />
+          Open <ChevronRight className="h-3.5 w-3.5" />
         </span>
       </div>
     </motion.button>

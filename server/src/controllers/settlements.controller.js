@@ -51,4 +51,15 @@ const settleBoxes = asyncHandler(async (req, res) => {
 
 const refreshOverdue = asyncHandler(async (_req, res) => ok(res, await settlement.refreshOverdue()));
 
-module.exports = { list, summary, get, settle, settleBoxes, refreshOverdue };
+const extendDeadline = asyncHandler(async (req, res) => {
+  const result = await settlement.extendDeadline(req.params.id, req.body);
+  await audit.record(req, {
+    action: 'EXTEND_DEADLINE',
+    entityType: 'Settlement',
+    entityId: req.params.id,
+    newValues: { deadlineAt: result.deadlineAt },
+  });
+  return ok(res, result);
+});
+
+module.exports = { list, summary, get, settle, settleBoxes, refreshOverdue, extendDeadline };

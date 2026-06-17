@@ -4,6 +4,7 @@ const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const inventory = require('./inventory.service');
 const settlement = require('./settlement.service');
+const notification = require('./notification.service');
 const { nextDocNumber } = require('../utils/numbering');
 const { toNumber } = require('../utils/money');
 
@@ -208,6 +209,21 @@ async function createReturn(payload, actor) {
     },
     { timeout: 30000 },
   );
+
+  if (payload.type === 'SALES_RETURN') {
+    const totalBoxes = (result.items || []).reduce((s, i) => s + i.quantity, 0);
+    const repName = result.salesRep?.user?.name || 'A rep';
+    notification.notifyAdmins({
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: `Return received: ${result.returnNumber}`,
+      message: `${repName} returned ${totalBoxes} box(es) to the warehouse (${result.returnNumber}).`,
+      entityType: 'Return',
+      entityId: result.id,
+    }).catch(() => {});
+  }
+
+  return result;
 }
 
 async function listReturns(filters, pagination) {

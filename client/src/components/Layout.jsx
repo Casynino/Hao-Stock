@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   LayoutDashboard, Package, Boxes, Truck, ShoppingCart, Users, HandCoins, Undo2,
@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { NAV, ROLE_LABELS, ROLES } from '@/lib/constants';
-import { initials } from '@/lib/format';
+import { initials, fromNow } from '@/lib/format';
 import api, { unwrap, apiError } from '@/lib/api';
 import { Modal, Button, Field, Input } from '@/components/ui';
 
@@ -134,16 +134,35 @@ export default function Layout() {
   const { user, logout, hasRole } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const qc = useQueryClient();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
   const items = NAV.filter((n) => hasRole(...n.roles));
 
-  const { data: unread } = useQuery({
+  const { data: unread = 0 } = useQuery({
     queryKey: ['notifications', 'unread'],
     queryFn: async () => unwrap(await api.get('/notifications/unread-count')).data.unread,
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
+  });
+
+  const { data: recentNotes = [] } = useQuery({
+    queryKey: ['notifications', 'recent'],
+    queryFn: async () => unwrap(await api.get('/notifications', { params: { limit: 6, page: 1 } })).data,
+    enabled: bellOpen,
+    refetchInterval: bellOpen ? 30_000 : false,
+  });
+
+  const markAllRead = useMutation({
+    mutationFn: () => api.post('/notifications/read-all'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+
+  const markOneRead = useMutation({
+    mutationFn: (id) => api.post(`/notifications/${id}/read`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
   });
 
   return (
@@ -179,18 +198,67 @@ export default function Layout() {
           </button>
           <div className="flex-1" />
 
-          <button
-            onClick={() => navigate('/notifications')}
-            className="relative rounded-lg p-2 text-muted hover:bg-elevated"
-            aria-label="Notifications"
-          >
-            <Bell className="h-5 w-5" />
-            {unread > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
-                {unread > 99 ? '99+' : unread}
-              </span>
+          <div className="relative">
+            <button
+              onClick={() => setBellOpen((v) => !v)}
+              className="relative rounded-lg p-2 text-muted hover:bg-elevated"
+              aria-label="Notifications"
+            >
+              <Bell className="h-5 w-5" />
+              {unread > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                  {unread > 99 ? '99+' : unread}
+                </span>
+              )}
+            </button>
+            {bellOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setBellOpen(false)} />
+                <div className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-border bg-surface shadow-xl">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <span className="text-sm font-semibold text-foreground">
+                      Notifications
+                      {unread > 0 && <span className="ml-1.5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{unread}</span>}
+                    </span>
+                    {unread > 0 && (
+                      <button onClick={() => markAllRead.mutate()} className="text-xs text-brand-500 hover:underline">
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+                  {recentNotes.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-muted">You're all caught up!</div>
+                  ) : (
+                    <ul className="max-h-72 divide-y divide-border overflow-y-auto">
+                      {recentNotes.map((n) => (
+                        <li key={n.id} className={`flex items-start gap-3 px-4 py-3 ${!n.isRead ? 'bg-brand-500/5' : ''}`}>
+                          <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${!n.isRead ? 'bg-brand-500' : 'bg-transparent'}`} />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-semibold text-foreground">{n.title}</div>
+                            <div className="mt-0.5 line-clamp-2 text-xs text-muted">{n.message}</div>
+                            <div className="mt-1 text-[10px] text-faint">{fromNow(n.createdAt)}</div>
+                          </div>
+                          {!n.isRead && (
+                            <button onClick={() => markOneRead.mutate(n.id)} className="shrink-0 text-[10px] text-brand-500 hover:underline">
+                              Read
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="border-t border-border p-2 text-center">
+                    <button
+                      onClick={() => { setBellOpen(false); navigate('/notifications'); }}
+                      className="text-sm text-brand-500 hover:underline"
+                    >
+                      View all notifications →
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
-          </button>
+          </div>
 
           <div className="relative">
             <button

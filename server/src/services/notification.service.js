@@ -128,6 +128,60 @@ async function generateSystemAlerts() {
   return { created };
 }
 
+// Broadcast to all admins (userId = null means every admin sees it).
+async function notifyAdmins(data) {
+  return create({ ...data, userId: null });
+}
+
+// Notify a specific user by their User.id.
+async function notifyUser(userId, data) {
+  if (!userId) return;
+  return create({ ...data, userId });
+}
+
+// After stock leaves a warehouse, check if any product is now at or below its
+// minimum level and raise a LOW_STOCK / out-of-stock alert if needed.
+// Safe to call fire-and-forget — never throws.
+async function checkProductLowStock(productId) {
+  try {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, name: true, minStockLevel: true, baseUnitName: true },
+    });
+    if (!product || product.minStockLevel <= 0) return;
+
+    const agg = await prisma.warehouseStock.aggregate({
+      where: { productId },
+      _sum: { baseQuantity: true },
+    });
+    const onHand = agg._sum.baseQuantity || 0;
+
+    if (onHand <= 0) {
+      await createIfAbsent({
+        type: 'LOW_STOCK',
+        severity: 'CRITICAL',
+        title: `Out of stock: ${product.name}`,
+        message: `${product.name} is OUT OF STOCK across all warehouses. Immediate restock required.`,
+        entityType: 'Product',
+        entityId: productId,
+        userId: null,
+      });
+    } else if (onHand <= product.minStockLevel) {
+      await createIfAbsent({
+        type: 'LOW_STOCK',
+        severity: 'WARNING',
+        title: `Low stock: ${product.name}`,
+        message: `${product.name} has ${onHand} ${product.baseUnitName}(s) remaining — below minimum of ${product.minStockLevel}. Restock needed.`,
+        entityType: 'Product',
+        entityId: productId,
+        userId: null,
+      });
+    }
+  } catch {
+    // Never let a stock alert break the main flow.
+  }
+}
+
 module.exports = {
   list,
   unreadCount,
@@ -135,5 +189,8 @@ module.exports = {
   markAllRead,
   create,
   createIfAbsent,
+  notifyAdmins,
+  notifyUser,
+  checkProductLowStock,
   generateSystemAlerts,
 };

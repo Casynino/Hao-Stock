@@ -8,6 +8,7 @@ import { motion } from 'motion/react';
 import api, { unwrap } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrency, formatNumber, fromNow } from '@/lib/format';
+import { tzGreeting, tzDateLabel } from '@/lib/tz';
 import { MOVEMENT_META } from '@/lib/constants';
 import {
   PageHeader, StatCard, Card, CardHeader, CardBody, PageSpinner, EmptyState, Badge,
@@ -66,8 +67,7 @@ export default function Dashboard() {
 
   const { inventory, sales, profit, debt, paymentsCollected, regional, topSelling, alerts, recentActivity, counts } = data;
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const greeting = tzGreeting();
   const firstName = user?.name?.split(' ')[0] || 'there';
 
   const topSellingData = topSelling.map((p) => ({ name: p.name.replace(/CIVILLY|OHIS/, '').trim().slice(0, 22), value: p.revenue }));
@@ -87,7 +87,7 @@ export default function Dashboard() {
         <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="text-xs font-medium uppercase tracking-wider text-white/50">
-              {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
+              {tzDateLabel({ weekday: 'long', day: 'numeric', month: 'long' })}
             </div>
             <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">
               {greeting}, {firstName}.

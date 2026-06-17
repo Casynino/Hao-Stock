@@ -7,6 +7,7 @@ import { ClipboardList, Wallet, Boxes, Coins, ChevronRight, Timer } from 'lucide
 import api, { unwrap } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrency, formatNumber, formatDateTime } from '@/lib/format';
+import { tzGreeting, tzDateLabel } from '@/lib/tz';
 import { SETTLEMENT_STATUS_META } from '@/lib/constants';
 import OrderDetailModal from '@/components/OrderDetail';
 import { PageSpinner, EmptyState, Badge } from '@/components/ui';
@@ -86,8 +87,7 @@ export default function RepDashboard() {
   const first = user?.name?.split(' ')[0] || 'there';
   const hasOutstanding = (openSettlementsValue || 0) > 0;
 
-  const hour = new Date().getHours();
-  const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const timeGreeting = tzGreeting();
 
   let subtitle;
   if (heldStock.units > 0 && openSettlements > 0) {
@@ -104,7 +104,7 @@ export default function RepDashboard() {
     <div className="mx-auto max-w-3xl space-y-5">
       <div>
         <p className="text-xs font-medium uppercase tracking-wider text-muted">
-          {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
+          {tzDateLabel({ weekday: 'long', day: 'numeric', month: 'long' })}
         </p>
         <h1 className="mt-0.5 text-2xl font-bold text-foreground">{timeGreeting}, {first}.</h1>
         <p className="mt-0.5 text-sm text-muted">{subtitle}</p>

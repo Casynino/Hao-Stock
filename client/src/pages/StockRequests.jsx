@@ -1,10 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   Plus, Minus, X, Search, ShoppingCart, ClipboardList, Eye,
-  ArrowLeft, Loader2, CheckCircle2,
+  Loader2, CheckCircle2,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -84,159 +84,137 @@ function CartOrderSheet({ onClose }) {
     onError: (e) => toast.error(apiError(e)),
   });
 
+  const footerContent = (
+    <>
+      {cartCount > 0 && (
+        <div className="flex flex-1 flex-col">
+          <span className="text-sm font-semibold text-foreground">{formatCurrency(totalAmount)}</span>
+          <span className="text-xs text-muted">
+            {formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {cartCount} product{cartCount !== 1 ? 's' : ''}
+          </span>
+        </div>
+      )}
+      <Button variant="secondary" onClick={onClose}>Cancel</Button>
+      <Button
+        disabled={cartCount === 0 || create.isPending}
+        onClick={() => create.mutate()}
+      >
+        {create.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+        <ShoppingCart className="h-4 w-4" />
+        Submit for approval
+      </Button>
+    </>
+  );
+
   return (
-    <motion.div
-      initial={{ y: '100%' }}
-      animate={{ y: 0 }}
-      exit={{ y: '100%' }}
-      transition={{ type: 'spring', damping: 30, stiffness: 280 }}
-      className="fixed inset-0 z-50 flex flex-col bg-[#09090b] text-white"
-    >
-      {/* Header + search — one unified block */}
-      <div className="shrink-0 border-b border-white/8 px-4 pb-3 pt-3.5">
-        <div className="mb-3 flex items-center gap-3">
+    <Modal open onClose={onClose} title="New stock request" size="lg" footer={footerContent}>
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search products…"
+          className="input pl-9 pr-8"
+        />
+        {search && (
           <button
-            onClick={onClose}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/40 hover:text-white"
+            onClick={() => setSearch('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-muted"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <X className="h-3.5 w-3.5" />
           </button>
-          <span className="flex-1 text-[15px] font-semibold text-white">New stock request</span>
-          {cartCount > 0 && (
-            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-slate-950">
-              {cartCount}
-            </span>
-          )}
-        </div>
-        {/* Search inline under header */}
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search products…"
-            className="w-full rounded-lg border border-white/10 bg-[#141416] py-2.5 pl-9 pr-8 text-[13px] text-white placeholder-white/25 outline-none transition focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/10"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Product list */}
-      <div className="flex-1 overflow-y-auto overscroll-contain">
-        {productsLoading ? (
-          <div className="flex items-center justify-center py-16 text-white/25">
-            <Loader2 className="h-5 w-5 animate-spin" />
-          </div>
-        ) : (
-          <ul className="divide-y divide-white/[0.05]">
-            {filtered.map((product) => {
-              const pkg = defaultPkg(product);
-              const price = pkgPrice(product, pkg);
-              const qty = cart[product.id] || 0;
-              const inCart = qty > 0;
+      {productsLoading ? (
+        <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted" /></div>
+      ) : (
+        <ul className="-mx-5 divide-y divide-border">
+          {filtered.map((product) => {
+            const pkg = defaultPkg(product);
+            const price = pkgPrice(product, pkg);
+            const qty = cart[product.id] || 0;
+            const inCart = qty > 0;
 
-              return (
-                <li
-                  key={product.id}
-                  className={`flex items-center gap-3 px-4 py-3 transition-colors ${inCart ? 'bg-brand-500/5' : 'hover:bg-white/[0.02]'}`}
-                >
-                  <div className="flex w-4 shrink-0 items-center justify-center">
-                    {inCart
-                      ? <CheckCircle2 className="h-4 w-4 text-brand-400" />
-                      : <span className="h-1 w-1 rounded-full bg-white/15" />
-                    }
+            return (
+              <li
+                key={product.id}
+                className={`flex items-center gap-3 px-5 py-3 transition-colors ${inCart ? 'bg-brand-500/5' : 'hover:bg-elevated'}`}
+              >
+                {/* selected indicator */}
+                <div className="flex w-4 shrink-0 items-center justify-center">
+                  {inCart
+                    ? <CheckCircle2 className="h-4 w-4 text-brand-500" />
+                    : <span className="h-1.5 w-1.5 rounded-full bg-border" />
+                  }
+                </div>
+
+                {/* name + price */}
+                <div className="min-w-0 flex-1">
+                  <div className={`text-sm font-medium leading-tight ${inCart ? 'text-foreground' : 'text-muted'}`}>
+                    {product.name}
                   </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-[13px] font-medium ${inCart ? 'text-white' : 'text-white/70'}`}>
-                      {product.name}
-                    </div>
-                    <div className="text-[11px] text-white/30">
-                      {formatCurrency(price)} / {pkg?.packagingUnit?.name || 'box'}
-                    </div>
+                  <div className="mt-0.5 text-xs text-faint">
+                    {formatCurrency(price)} / {pkg?.packagingUnit?.name || 'box'}
                   </div>
+                </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      onClick={() => dec(product.id)}
-                      disabled={qty === 0}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/50 transition active:scale-90 disabled:opacity-20 hover:border-white/25 hover:text-white"
-                    >
-                      <Minus className="h-3.5 w-3.5" />
-                    </button>
-                    <motion.span
-                      key={qty}
-                      initial={qty > 0 ? { scale: 1.3 } : false}
-                      animate={{ scale: 1 }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 22 }}
-                      className={`w-6 text-center text-[14px] font-bold tabular-nums ${qty > 0 ? 'text-brand-400' : 'text-white/20'}`}
-                    >
-                      {qty}
-                    </motion.span>
-                    <button
-                      onClick={() => inc(product.id)}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-slate-950 transition active:scale-90 hover:bg-brand-400"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-            {filtered.length === 0 && (
-              <li className="py-12 text-center text-[13px] text-white/25">No products found</li>
-            )}
-          </ul>
-        )}
+                {/* qty controls — type directly or tap +/- */}
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    onClick={() => dec(product.id)}
+                    disabled={qty === 0}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition hover:border-brand-500/40 hover:text-foreground active:scale-90 disabled:opacity-25"
+                  >
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <input
+                    type="number"
+                    min="0"
+                    value={qty === 0 ? '' : qty}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setQty(product.id, isNaN(v) || v < 0 ? 0 : v);
+                    }}
+                    placeholder="0"
+                    className={`h-8 w-14 rounded-lg border text-center text-sm font-semibold tabular-nums outline-none transition
+                      [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none
+                      ${inCart
+                        ? 'border-brand-500/40 bg-brand-500/10 text-brand-400 focus:ring-1 focus:ring-brand-500/30'
+                        : 'border-border bg-elevated text-muted focus:border-brand-500/40 focus:text-foreground'
+                      }`}
+                  />
+                  <button
+                    onClick={() => inc(product.id)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-slate-950 transition hover:bg-brand-400 active:scale-90"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+          {filtered.length === 0 && (
+            <li className="py-10 text-center text-sm text-muted">No products match your search</li>
+          )}
+        </ul>
+      )}
 
-        {/* Notes — always dark, never white */}
-        <div className="border-t border-white/[0.05] px-4 py-3">
-          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-white/25">Notes (optional)</p>
+      {/* Notes */}
+      <div className="mt-4">
+        <Field label="Notes (optional)">
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="e.g. restock for next week…"
             rows={2}
-            style={{ backgroundColor: '#141416', colorScheme: 'dark' }}
-            className="w-full resize-none rounded-lg border border-white/10 px-3 py-2.5 text-[13px] text-white placeholder-white/20 outline-none transition focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/10"
+            className="input resize-none"
           />
-        </div>
+        </Field>
       </div>
-
-      {/* Sticky footer */}
-      <div className="shrink-0 border-t border-white/8 bg-[#09090b] px-4 pb-8 pt-3">
-        <AnimatePresence>
-          {cartCount > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              className="mb-2 flex items-baseline justify-between"
-            >
-              <span className="text-[12px] text-white/35">
-                {formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {cartCount} product{cartCount !== 1 ? 's' : ''}
-              </span>
-              <span className="text-[15px] font-bold text-white">{formatCurrency(totalAmount)}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <button
-          disabled={cartCount === 0 || create.isPending}
-          onClick={() => create.mutate()}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-500 py-3.5 text-[15px] font-bold text-slate-950 transition active:scale-[0.98] disabled:opacity-25"
-        >
-          {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />}
-          {cartCount === 0 ? 'Select products above' : 'Submit for approval'}
-        </button>
-      </div>
-    </motion.div>
+    </Modal>
   );
 }
 

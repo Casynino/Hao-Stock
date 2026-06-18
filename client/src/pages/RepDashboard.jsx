@@ -72,7 +72,7 @@ export default function RepDashboard() {
   if (isLoading) return <PageSpinner />;
   if (!data) return <EmptyState title="No data yet" />;
 
-  const { heldStock, commission, openSettlements, openSettlementsValue, pendingRequests, orders } = data;
+  const { commission, openSettlements, openSettlementsValue, pendingRequests, orders } = data;
   const first = user?.name?.split(' ')[0] || 'there';
 
   const settlementHint = openSettlements === 0
@@ -95,7 +95,7 @@ export default function RepDashboard() {
         </h1>
       </div>
 
-      {/* 4-card grid */}
+      {/* Card grid */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <DashCard
           icon={ClipboardList}
@@ -128,25 +128,16 @@ export default function RepDashboard() {
           hint={commissionHint}
           onClick={() => navigate('/commissions')}
         />
+        <div className="col-span-2 lg:col-span-4">
+          <DashCard
+            icon={Undo2}
+            label="Return stock"
+            value="Return to The Lab"
+            hint="Send back unsold boxes before the deadline"
+            onClick={() => navigate('/settlements')}
+          />
+        </div>
       </div>
-
-      {/* Return stock — secondary action */}
-      {heldStock.units > 0 && (
-        <motion.button
-          whileTap={{ scale: 0.985 }}
-          onClick={() => navigate('/settlements')}
-          className="flex w-full items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 text-left transition hover:bg-elevated"
-        >
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-elevated text-brand-500">
-            <Undo2 className="h-4 w-4" />
-          </span>
-          <div className="flex-1">
-            <div className="text-sm font-semibold text-foreground">Return Stock to The Lab</div>
-            <div className="text-xs text-faint">Return unsold boxes before the deadline</div>
-          </div>
-          <ArrowRight className="h-4 w-4 text-faint" />
-        </motion.button>
-      )}
 
       {/* Open orders */}
       {orders.length > 0 && (

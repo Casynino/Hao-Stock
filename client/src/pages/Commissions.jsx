@@ -11,7 +11,7 @@ import {
   Pagination, Table, THead, TBody, TR, TH, TD,
 } from '@/components/ui';
 
-function WithdrawModal({ available, onClose }) {
+function WithdrawModal({ available, minWithdrawal, onClose }) {
   const qc = useQueryClient();
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
@@ -20,12 +20,18 @@ function WithdrawModal({ available, onClose }) {
     onSuccess: () => { toast.success('Withdrawal requested'); qc.invalidateQueries({ queryKey: ['commissions'] }); onClose(); },
     onError: (e) => toast.error(apiError(e)),
   });
+  const amt = Number(amount);
+  const valid = amt > 0 && amt <= available;
   return (
     <Modal open onClose={onClose} title="Request commission withdrawal"
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={req.isPending} disabled={!amount || Number(amount) <= 0} onClick={() => req.mutate()}>Request</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={req.isPending} disabled={!valid} onClick={() => req.mutate()}>Request withdrawal</Button></>}>
       <div className="space-y-4">
-        <div className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">Available to withdraw: <b>{formatCurrency(available)}</b></div>
-        <Field label="Amount" required hint={`Max ${formatCurrency(available)}`}><Input type="number" min="0" max={available} value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></Field>
+        <div className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">
+          Available balance: <b>{formatCurrency(available)}</b>
+        </div>
+        <Field label="Amount" required hint={`Max ${formatCurrency(available)}`}>
+          <Input type="number" min="0" max={available} value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+        </Field>
         <Field label="Notes"><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       </div>
     </Modal>
@@ -47,8 +53,17 @@ function RepView() {
         <StatCard label="Total Paid Out" value={formatCurrency(c.paid)} icon={TrendingUp} tone="brand" />
         <StatCard label="Pending Requests" value={formatCurrency(c.pendingRequests)} icon={Clock} tone="amber" hint="Awaiting approval" />
       </div>
-      <div className="mt-4 flex justify-end">
-        <Button onClick={() => setOpen(true)} disabled={c.available < 1}><Coins className="h-4 w-4" /> Request withdrawal</Button>
+      <div className="mt-4 flex items-center justify-between gap-4">
+        {c.available < c.rule.amountPerThreshold && (
+          <p className="text-sm text-amber-400">
+            Minimum withdrawal is {formatCurrency(c.rule.amountPerThreshold)} — keep settling boxes to reach it.
+          </p>
+        )}
+        <div className="ml-auto">
+          <Button onClick={() => setOpen(true)} disabled={c.available < c.rule.amountPerThreshold}>
+            <Coins className="h-4 w-4" /> Request withdrawal
+          </Button>
+        </div>
       </div>
       <Card className="mt-4">
         <CardHeader title="My withdrawal requests" subtitle={`Rule: ${formatCurrency(c.rule.amountPerThreshold)} per ${c.rule.boxThreshold} boxes`} />
@@ -61,7 +76,7 @@ function RepView() {
           </Table>
         )}
       </Card>
-      {open && <WithdrawModal available={c.available} onClose={() => setOpen(false)} />}
+      {open && <WithdrawModal available={c.available} minWithdrawal={c.rule.amountPerThreshold} onClose={() => setOpen(false)} />}
     </>
   );
 }

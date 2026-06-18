@@ -47,7 +47,7 @@ const STATS = [
 ];
 
 const PERKS = [
-  { icon: ClipboardList, title: 'Request stock', desc: 'Order straight from the warehouse and track every box.' },
+  { icon: ClipboardList, title: 'Request stock', desc: 'Order straight from The Lab and track every sale.' },
   { icon: Coins, title: 'Track commission', desc: "See what you've earned and your next payout." },
   { icon: BarChart3, title: 'Monitor performance', desc: 'Settlements and stock movement, live.' },
   { icon: Rocket, title: 'Grow faster', desc: 'Focus on selling — the system does the math.' },

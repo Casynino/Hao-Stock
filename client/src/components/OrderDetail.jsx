@@ -7,7 +7,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useProducts, useWarehouses } from '@/lib/hooks';
 import { ROLES, SETTLEMENT_STATUS_META, CORRECTION_STATUS_META } from '@/lib/constants';
 import { formatCurrency, formatNumber, formatDateTime } from '@/lib/format';
-import ItemLines from '@/components/ItemLines';
 import {
   Modal, Button, Field, Input, Select, Badge, PageSpinner,
   Table, THead, TBody, TR, TH, TD,
@@ -63,32 +62,106 @@ function SettleBoxesModal({ order, onClose, onDone }) {
 function RecordReturnModal({ order, onClose, onDone }) {
   const { data: allProducts = [] } = useProducts();
   const { data: warehouses = [] } = useWarehouses();
-  const [items, setItems] = useState([]);
   const warehouseId = warehouses[0]?.id;
 
-  const orderProductIds = new Set(order.order.lines.map((l) => l.productId));
-  const products = allProducts.filter((p) => orderProductIds.has(p.id));
+  // Only show lines that still have boxes outstanding
+  const returnableLines = order.order.lines.filter((l) => l.remaining > 0);
+
+  // cart: { [productId]: qty }
+  const [cart, setCart] = useState({});
+  function setQty(productId, qty) {
+    const line = returnableLines.find((l) => l.productId === productId);
+    const capped = Math.min(Math.max(0, qty), line?.remaining || 0);
+    setCart((prev) => {
+      if (capped <= 0) { const n = { ...prev }; delete n[productId]; return n; }
+      return { ...prev, [productId]: capped };
+    });
+  }
+  const inc = (id) => setQty(id, (cart[id] || 0) + 1);
+  const dec = (id) => setQty(id, (cart[id] || 0) - 1);
+
+  const totalBoxes = Object.values(cart).reduce((s, q) => s + q, 0);
+  const hasCart = totalBoxes > 0;
 
   const create = useMutation({
-    mutationFn: () => api.post('/returns', {
-      type: 'SALES_RETURN',
-      salesRepId: order.salesRepId,
-      warehouseId,
-      settlementId: order.id,
-      items: items.filter((l) => l.productId && l.quantity > 0).map((l) => ({ productId: l.productId, packagingUnitId: l.packagingUnitId, quantity: Number(l.quantity), condition: l.condition })),
-      reason: `Return on order ${order.settlementNumber}`,
-    }),
-    onSuccess: () => { toast.success('Return recorded on this order'); onDone(); onClose(); },
+    mutationFn: () => {
+      const items = Object.entries(cart).map(([productId, quantity]) => {
+        const product = allProducts.find((p) => p.id === productId);
+        const pkg = product?.packagings?.find((p) => p.isBaseUnit) || product?.packagings?.[0];
+        return { productId, packagingUnitId: pkg?.packagingUnitId, quantity };
+      });
+      return api.post('/returns', {
+        type: 'SALES_RETURN',
+        salesRepId: order.salesRepId,
+        warehouseId,
+        settlementId: order.id,
+        items,
+        reason: `Return on order ${order.settlementNumber}`,
+      });
+    },
+    onSuccess: () => { toast.success('Return recorded'); onDone(); onClose(); },
     onError: (e) => toast.error(apiError(e)),
   });
 
+  const footer = (
+    <>
+      {hasCart && (
+        <div className="flex flex-1 flex-col">
+          <span className="text-sm font-semibold text-foreground">{formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} to return</span>
+        </div>
+      )}
+      <Button variant="secondary" onClick={onClose}>Cancel</Button>
+      <Button loading={create.isPending} disabled={!warehouseId || !hasCart} onClick={() => create.mutate()}>
+        <Undo2 className="h-4 w-4" /> Return to warehouse
+      </Button>
+    </>
+  );
+
   return (
-    <Modal open onClose={onClose} size="lg" title={`Return stock · ${order.settlementNumber}`}
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={create.isPending} disabled={!warehouseId || !items.some((l) => l.productId && l.quantity > 0)} onClick={() => create.mutate()}>Return to warehouse</Button></>}>
-      <div className="space-y-4">
-        <p className="text-sm text-muted">Unsold boxes the rep is handing back. Stock returns to the warehouse and the order updates.</p>
-        <ItemLines products={products} value={items} onChange={setItems} showCondition />
-      </div>
+    <Modal open onClose={onClose} size="lg" title={`Return stock · ${order.settlementNumber}`} footer={footer}>
+      {returnableLines.length === 0 ? (
+        <p className="py-4 text-center text-sm text-muted">No boxes left to return on this order.</p>
+      ) : (
+        <div className="-mx-1 divide-y divide-border">
+          {returnableLines.map((line) => {
+            const qty = cart[line.productId] || 0;
+            const inCart = qty > 0;
+            return (
+              <div key={line.productId} className={`flex items-center gap-3 px-1 py-3 transition ${inCart ? 'bg-brand-500/5' : ''}`}>
+                <div className="min-w-0 flex-1">
+                  <div className={`text-sm font-medium leading-snug ${inCart ? 'text-foreground' : 'text-muted'}`}>{line.name}</div>
+                  <div className="mt-0.5 text-xs text-faint">{formatNumber(line.remaining)} box{line.remaining !== 1 ? 'es' : ''} available to return</div>
+                </div>
+                {/* −  input  + */}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => dec(line.productId)}
+                    disabled={qty === 0}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-elevated text-lg font-bold text-muted transition hover:bg-surface disabled:opacity-30"
+                  >−</button>
+                  <input
+                    type="number"
+                    min="0"
+                    max={line.remaining}
+                    value={qty === 0 ? '' : qty}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setQty(line.productId, isNaN(v) || v < 0 ? 0 : v);
+                    }}
+                    placeholder="0"
+                    className="h-8 w-14 rounded-lg border border-border bg-elevated text-center text-sm font-semibold text-foreground [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  />
+                  <button
+                    onClick={() => inc(line.productId)}
+                    disabled={qty >= line.remaining}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-lg font-bold text-slate-950 transition hover:bg-brand-400 disabled:opacity-40"
+                  >+</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </Modal>
   );
 }

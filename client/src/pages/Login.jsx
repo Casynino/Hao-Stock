@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
-  Loader2, Eye, EyeOff, ArrowRight, Boxes, Package, Timer, Coins, Target,
+  Loader2, Eye, EyeOff, ArrowRight, Boxes, Clock, Timer, Coins, ShieldCheck,
   ClipboardList, BarChart3, Rocket,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -40,10 +40,10 @@ function CountUp({ to, duration = 1500, prefix = '', suffix = '' }) {
 
 // Honest facts about how the system works (this page is public — no live financials).
 const STATS = [
-  { icon: Package, to: 8, label: 'Product lines' },
+  { icon: Clock, to: 24, suffix: '/7', label: 'Live tracking' },
   { icon: Timer, to: 72, suffix: 'h', label: 'Settlement window' },
   { icon: Coins, to: 5000, prefix: 'TSh ', label: 'Commission / box' },
-  { icon: Target, to: 100, suffix: '%', label: 'Boxes accounted' },
+  { icon: ShieldCheck, to: 0, label: 'Losses reported' },
 ];
 
 const PERKS = [

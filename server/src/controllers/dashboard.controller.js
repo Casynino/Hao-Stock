@@ -85,7 +85,7 @@ const myStats = asyncHandler(async (req, res) => {
     prisma.stockRequest.count({ where: { salesRepId, status: 'FULFILLED' } }),
     commission.boxesSettledByRep(salesRepId),
     prisma.returnItem.aggregate({
-      where: { return: { is: { salesRepId, type: 'SALES_RETURN', status: 'COMPLETED' } } },
+      where: { return: { salesRepId, type: 'SALES_RETURN', status: 'COMPLETED' } },
       _sum: { baseQuantity: true },
     }),
   ]);

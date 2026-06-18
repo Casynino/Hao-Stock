@@ -105,7 +105,7 @@ export default function Profile() {
   const { user } = useAuth();
   const isRep = user?.role === ROLES.SALES_REP;
 
-  const { data: stats } = useQuery({
+  const { data: stats, isLoading: statsLoading, isError: statsError } = useQuery({
     queryKey: ['dashboard', 'me', 'stats'],
     queryFn: async () => unwrap(await api.get('/dashboard/me/stats')).data,
     enabled: isRep,
@@ -179,7 +179,9 @@ export default function Profile() {
           transition={{ duration: 0.45, delay: 0.08, ease: [0.2, 0.7, 0.3, 1] }}
         >
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted">Activity summary</h2>
-          {!stats ? <PageSpinner /> : (
+          {statsLoading ? <PageSpinner /> : statsError ? (
+            <p className="text-sm text-white/50">Could not load activity data.</p>
+          ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <StatCard icon={ClipboardList} label="Active requests" value={formatNumber(stats.activeRequests)} tone="amber" />
               <StatCard icon={CheckCircle} label="Completed requests" value={formatNumber(stats.completedRequests)} tone="emerald" />

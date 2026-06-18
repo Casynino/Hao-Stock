@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
-  Loader2, Eye, EyeOff, ArrowRight, Boxes, Clock, Timer, Coins, ShieldCheck,
+  Loader2, Eye, EyeOff, ArrowRight, Boxes, Package, Clock, Timer, Coins, ShieldCheck,
   ClipboardList, BarChart3, Rocket,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';

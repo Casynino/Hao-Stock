@@ -123,7 +123,7 @@ export default function RepDashboard() {
         />
         <DashCard
           icon={TrendingUp}
-          label="Your Earnings"
+          label="My Earnings"
           value={formatCurrency(commission?.earned || 0)}
           hint={commissionHint}
           onClick={() => navigate('/commissions')}

@@ -93,6 +93,10 @@ async function requestWithdrawal(salesRepId, amount, notes, actor) {
   const amt = round2(amount);
   if (amt <= 0) throw ApiError.badRequest('Amount must be greater than zero');
   const c = await computeForRep(salesRepId);
+  const minWithdrawal = c.rule.amountPerThreshold;
+  if (c.available < minWithdrawal) {
+    throw ApiError.badRequest(`Minimum withdrawal is TZS ${minWithdrawal.toLocaleString()}. Your available balance is TZS ${c.available.toLocaleString()}.`);
+  }
   if (amt > c.available + 0.001) {
     throw ApiError.badRequest(`Amount exceeds available commission (${c.available})`);
   }

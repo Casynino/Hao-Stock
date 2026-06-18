@@ -80,9 +80,7 @@ export default function RepDashboard() {
     : `${openSettlements} active order${openSettlements !== 1 ? 's' : ''} · settle now`;
 
   const available = commission?.available || 0;
-  const commissionHint = commission?.earned > 0
-    ? `Earned ${formatCurrency(commission.earned)} · Paid ${formatCurrency(commission.paid || 0)}`
-    : 'Settle boxes to earn commission';
+  const commissionHint = available > 0 ? 'Available balance' : 'Settle boxes to earn commission';
 
   return (
     <div className="space-y-6">

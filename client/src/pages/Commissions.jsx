@@ -42,10 +42,10 @@ function RepView() {
   return (
     <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Boxes settled" value={formatNumber(c.boxesSettled)} icon={TrendingUp} tone="brand" hint={`${formatCurrency(c.rule.perBox)} / box`} />
-        <StatCard label="Commission earned" value={formatCurrency(c.earned)} icon={Coins} tone="violet" />
-        <StatCard label="Paid" value={formatCurrency(c.paid)} icon={Wallet} tone="emerald" />
-        <StatCard label="Pending" value={formatCurrency(c.pending)} icon={Clock} tone="amber" hint={`${formatCurrency(c.available)} available`} />
+        <StatCard label="Available Balance" value={formatCurrency(c.available)} icon={Wallet} tone="emerald" hint="Ready to withdraw" />
+        <StatCard label="Total Earned" value={formatCurrency(c.earned)} icon={Coins} tone="violet" hint={`${formatNumber(c.boxesSettled)} boxes × ${formatCurrency(c.rule.perBox)}`} />
+        <StatCard label="Total Paid Out" value={formatCurrency(c.paid)} icon={TrendingUp} tone="brand" />
+        <StatCard label="Pending Requests" value={formatCurrency(c.pendingRequests)} icon={Clock} tone="amber" hint="Awaiting approval" />
       </div>
       <div className="mt-4 flex justify-end">
         <Button onClick={() => setOpen(true)} disabled={c.available < 1}><Coins className="h-4 w-4" /> Request withdrawal</Button>

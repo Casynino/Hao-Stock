@@ -79,8 +79,9 @@ export default function RepDashboard() {
     ? 'No open orders'
     : `${openSettlements} active order${openSettlements !== 1 ? 's' : ''} · settle now`;
 
-  const commissionHint = (commission?.available || 0) > 0
-    ? `${formatCurrency(commission.available)} ready to withdraw`
+  const available = commission?.available || 0;
+  const commissionHint = commission?.earned > 0
+    ? `Earned ${formatCurrency(commission.earned)} · Paid ${formatCurrency(commission.paid || 0)}`
     : 'Settle boxes to earn commission';
 
   return (
@@ -124,7 +125,7 @@ export default function RepDashboard() {
         <DashCard
           icon={TrendingUp}
           label="My Earnings"
-          value={formatCurrency(commission?.earned || 0)}
+          value={formatCurrency(available)}
           hint={commissionHint}
           onClick={() => navigate('/commissions')}
         />

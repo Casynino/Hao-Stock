@@ -1,25 +1,18 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import clsx from 'clsx';
 import {
-  ClipboardList, TrendingUp, Undo2, ArrowRight, Timer, Eye,
-  NotebookPen, Sun, Moon, CheckCircle2,
+  ClipboardList, TrendingUp, Undo2, ArrowRight, Timer, Eye, NotebookPen,
 } from 'lucide-react';
-import toast from 'react-hot-toast';
-import api, { unwrap, apiError } from '@/lib/api';
+import api, { unwrap } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import { tzGreeting, tzDateLabel } from '@/lib/tz';
 import { SETTLEMENT_STATUS_META } from '@/lib/constants';
 import OrderDetailModal from '@/components/OrderDetail';
-import { PageSpinner, EmptyState, Badge, Modal, Button, Field, Input, Textarea } from '@/components/ui';
-
-const TZ = 'Africa/Dar_es_Salaam';
-function todayTZ() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
-}
+import { PageSpinner, EmptyState, Badge } from '@/components/ui';
 
 function hoursLabel(h) {
   if (h == null) return '—';
@@ -63,150 +56,12 @@ function DashCard({ icon: Icon, label, value, hint, badge, highlight, onClick })
   );
 }
 
-// ── Daily Report submit modal ────────────────────────────────────────────────
-
-function ReportModal({ type, onClose }) {
-  const qc = useQueryClient();
-  const today = todayTZ();
-  const [form, setForm] = useState({});
-  const num = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value === '' ? undefined : Number(e.target.value) }));
-  const txt = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  const submit = useMutation({
-    mutationFn: () => api.post('/daily-reports', { type, reportDate: today, ...form }),
-    onSuccess: () => {
-      toast.success('Report submitted');
-      qc.invalidateQueries({ queryKey: ['daily-reports', 'today'] });
-      onClose();
-    },
-    onError: (e) => toast.error(apiError(e)),
-  });
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={type === 'OPENING' ? 'Opening Report' : 'Closing Report'}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button loading={submit.isPending} onClick={() => submit.mutate()}>Submit</Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        {type === 'OPENING' ? (
-          <>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Cash on hand"><Input type="number" min="0" onChange={num('cashOnHand')} /></Field>
-              <Field label="Customers to visit"><Input type="number" min="0" onChange={num('customersToVisit')} /></Field>
-            </div>
-            <Field label="Notes"><Textarea rows={2} onChange={txt('openingNote')} placeholder="Plan for the day…" /></Field>
-          </>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Sales made"><Input type="number" min="0" onChange={num('salesAmount')} /></Field>
-              <Field label="Cash collected"><Input type="number" min="0" onChange={num('cashCollected')} /></Field>
-              <Field label="Debts created"><Input type="number" min="0" onChange={num('debtsCreated')} /></Field>
-              <Field label="Debts collected"><Input type="number" min="0" onChange={num('debtsCollected')} /></Field>
-            </div>
-            <Field label="Notes"><Textarea rows={2} onChange={txt('closingNote')} placeholder="Remaining stock, issues…" /></Field>
-          </>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-// ── Daily Report card ────────────────────────────────────────────────────────
-
-function DailyReportCard({ onSubmit }) {
-  const navigate = useNavigate();
-  const today = todayTZ();
-
-  const { data } = useQuery({
-    queryKey: ['daily-reports', 'today', today],
-    queryFn: async () => unwrap(await api.get('/daily-reports', { params: { from: today, to: today, limit: 5 } })),
-    refetchInterval: 60_000,
-  });
-
-  const reports = data?.data || [];
-  const hasOpening = reports.some((r) => r.type === 'OPENING');
-  const hasClosing = reports.some((r) => r.type === 'CLOSING');
-  const done = (hasOpening ? 1 : 0) + (hasClosing ? 1 : 0);
-  const allDone = done === 2;
-
-  return (
-    <div className={clsx(
-      'flex w-full flex-col rounded-2xl border p-4 text-left shadow-card',
-      allDone ? 'border-emerald-500/30 bg-surface' : 'border-border bg-surface',
-    )}>
-      <div className="mb-3 flex items-center justify-between">
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-elevated text-brand-500">
-          <NotebookPen className="h-5 w-5" />
-        </span>
-        <button
-          onClick={() => navigate('/daily-reports')}
-          className="text-[11px] font-semibold text-faint transition hover:text-muted"
-        >
-          View all →
-        </button>
-      </div>
-      <span className="text-xs text-muted">Daily Report</span>
-      <span className={clsx('mt-0.5 text-xl font-bold', allDone ? 'text-emerald-400' : 'text-foreground')}>
-        {done}/2 submitted
-      </span>
-
-      <div className="mt-3 space-y-2.5 border-t border-border pt-3">
-        {/* Opening */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sun className="h-3.5 w-3.5 text-amber-400" />
-            <span className={clsx('text-xs font-medium', hasOpening ? 'text-emerald-400' : 'text-faint')}>
-              Opening
-            </span>
-            {hasOpening && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
-          </div>
-          {!hasOpening && (
-            <button
-              onClick={() => onSubmit('OPENING')}
-              className="text-[11px] font-semibold text-brand-400 transition hover:text-brand-300"
-            >
-              Submit →
-            </button>
-          )}
-        </div>
-        {/* Closing */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Moon className="h-3.5 w-3.5 text-indigo-400" />
-            <span className={clsx('text-xs font-medium', hasClosing ? 'text-emerald-400' : 'text-faint')}>
-              Closing
-            </span>
-            {hasClosing && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
-          </div>
-          {!hasClosing && (
-            <button
-              onClick={() => onSubmit('CLOSING')}
-              className="text-[11px] font-semibold text-brand-400 transition hover:text-brand-300"
-            >
-              Submit →
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RepDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [viewing, setViewing] = useState(null);
-  const [reportModal, setReportModal] = useState(null); // 'OPENING' | 'CLOSING'
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard', 'me'],
@@ -259,7 +114,13 @@ export default function RepDashboard() {
           badge={openSettlements > 0 ? openSettlements : undefined}
           onClick={() => navigate('/settlements')}
         />
-        <DailyReportCard onSubmit={setReportModal} />
+        <DashCard
+          icon={NotebookPen}
+          label="Daily Report"
+          value="Tap to Report"
+          hint="Submit your opening or closing"
+          onClick={() => navigate('/daily-reports')}
+        />
         <DashCard
           icon={TrendingUp}
           label="Your Earnings"
@@ -378,7 +239,6 @@ export default function RepDashboard() {
       )}
 
       {viewing && <OrderDetailModal settlementId={viewing} onClose={() => setViewing(null)} />}
-      {reportModal && <ReportModal type={reportModal} onClose={() => setReportModal(null)} />}
     </div>
   );
 }

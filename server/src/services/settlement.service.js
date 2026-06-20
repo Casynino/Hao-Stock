@@ -73,8 +73,19 @@ async function list(filters, pagination) {
   }
   if (filters.open === true) where.status = { in: ['OPEN', 'PARTIAL'] };
 
+  // Active orders (still owed — settledAt is null) always sit above completed
+  // ones (NULLS FIRST is independent of sort direction). Within the active
+  // group, settledAt ties so the requested sort applies — default deadline asc,
+  // surfacing overdue/approaching at the very top. Settled orders fall to the
+  // bottom, most-recently-settled first. Done at the DB level so the grouping
+  // holds across pages.
+  const orderBy = [
+    { settledAt: { sort: 'desc', nulls: 'first' } },
+    pagination.orderBy,
+  ];
+
   const [rows, total] = await Promise.all([
-    prisma.settlement.findMany({ where, include: INCLUDE, skip: pagination.skip, take: pagination.take, orderBy: pagination.orderBy }),
+    prisma.settlement.findMany({ where, include: INCLUDE, skip: pagination.skip, take: pagination.take, orderBy }),
     prisma.settlement.count({ where }),
   ]);
   return { items: rows.map(decorate), total };

@@ -11,7 +11,7 @@ const { toNumber } = require('../utils/money');
 const RETURN_INCLUDE = {
   items: { include: { product: true, packagingUnit: true } },
   customer: true,
-  salesRep: { include: { user: { select: { name: true } } } },
+  salesRep: { include: { user: { select: { id: true, name: true } } } },
   warehouse: true,
   processedBy: { select: { id: true, name: true } },
 };
@@ -213,11 +213,20 @@ async function createReturn(payload, actor) {
   if (payload.type === 'SALES_RETURN') {
     const totalBoxes = (result.items || []).reduce((s, i) => s + i.quantity, 0);
     const repName = result.salesRep?.user?.name || 'A rep';
+    const repUserId = result.salesRep?.user?.id;
     notification.notifyAdmins({
       type: 'GENERAL',
       severity: 'INFO',
       title: `Return received: ${result.returnNumber}`,
       message: `${repName} returned ${totalBoxes} box(es) to the warehouse (${result.returnNumber}).`,
+      entityType: 'Return',
+      entityId: result.id,
+    }).catch(() => {});
+    notification.notifyUser(repUserId, {
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: 'Return confirmed',
+      message: `Your return of ${totalBoxes} box(es) has been confirmed (${result.returnNumber}).`,
       entityType: 'Return',
       entityId: result.id,
     }).catch(() => {});

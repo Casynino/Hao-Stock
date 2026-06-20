@@ -13,7 +13,7 @@ const SETTLEMENT_WINDOW_HOURS = 72;
 const APPROACHING_HOURS = 12; // flag as "approaching" within this many hours of deadline
 
 const INCLUDE = {
-  salesRep: { include: { user: { select: { name: true } } } },
+  salesRep: { include: { user: { select: { id: true, name: true } } } },
 };
 
 // Effective status: stored SETTLED wins; otherwise OVERDUE once past deadline.
@@ -252,6 +252,8 @@ async function settleBoxes(id, payload, actor) {
   );
 
   const repName = result.salesRep?.user?.name || 'A rep';
+  const repUserId = result.salesRep?.user?.id;
+
   if (result.status === 'SETTLED') {
     notification.notifyAdmins({
       type: 'GENERAL',
@@ -261,12 +263,28 @@ async function settleBoxes(id, payload, actor) {
       entityType: 'Settlement',
       entityId: id,
     }).catch(() => {});
+    notification.notifyUser(repUserId, {
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: `Order closed: ${result.settlementNumber}`,
+      message: `All boxes on order ${result.settlementNumber} are accounted for. Your order is now closed.`,
+      entityType: 'Settlement',
+      entityId: id,
+    }).catch(() => {});
   } else {
     notification.notifyAdmins({
       type: 'GENERAL',
       severity: 'INFO',
       title: `Payment received: ${result.settlementNumber}`,
       message: `${repName} settled ${payload.boxes} box(es) on order ${result.settlementNumber}.`,
+      entityType: 'Settlement',
+      entityId: id,
+    }).catch(() => {});
+    notification.notifyUser(repUserId, {
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: `Settlement updated: ${result.settlementNumber}`,
+      message: `${payload.boxes} box(es) settled on order ${result.settlementNumber}.`,
       entityType: 'Settlement',
       entityId: id,
     }).catch(() => {});
@@ -302,6 +320,14 @@ async function settle(id, actor, { notes } = {}) {
     severity: 'INFO',
     title: `Order closed: ${s.settlementNumber}`,
     message: `${updated.salesRep?.user?.name || 'A rep'} fully settled order ${s.settlementNumber}. All boxes accounted for.`,
+    entityType: 'Settlement',
+    entityId: id,
+  }).catch(() => {});
+  notification.notifyUser(updated.salesRep?.user?.id, {
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: `Order closed: ${s.settlementNumber}`,
+    message: `Order ${s.settlementNumber} is fully settled. All boxes accounted for.`,
     entityType: 'Settlement',
     entityId: id,
   }).catch(() => {});

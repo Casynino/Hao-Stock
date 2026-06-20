@@ -5,6 +5,7 @@ const prisma = require('../config/prisma');
 const env = require('../config/env');
 const ApiError = require('../utils/ApiError');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../utils/tokens');
+const notification = require('./notification.service');
 
 // Shape the user object returned to clients (never leak the password hash).
 function publicUser(user) {
@@ -99,6 +100,16 @@ async function changePassword(userId, currentPassword, newPassword) {
 
   const passwordHash = await bcrypt.hash(newPassword, env.bcryptSaltRounds);
   await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+
+  notification.notifyUser(userId, {
+    type: 'GENERAL',
+    severity: 'WARNING',
+    title: 'Password changed',
+    message: 'Your account password was changed. If you did not do this, contact your administrator immediately.',
+    entityType: 'User',
+    entityId: userId,
+  }).catch(() => {});
+
   return { success: true };
 }
 

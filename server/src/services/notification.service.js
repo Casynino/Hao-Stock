@@ -5,11 +5,12 @@ const ApiError = require('../utils/ApiError');
 // reorder / credit / dashboard are lazy-required inside generateSystemAlerts()
 // to avoid circular deps (settlement → notification → dashboard → settlement).
 
-// Visibility rule: a user sees their own notifications plus broadcasts
-// (userId = null). Admins effectively see everything via broadcasts.
+// Visibility rule: admins see every notification (broadcasts + targeted).
+// All other roles see only notifications explicitly addressed to them.
 function visibilityWhere(user) {
   if (!user) return {};
-  return { OR: [{ userId: user.id }, { userId: null }] };
+  if (user.role === 'ADMIN') return {};
+  return { userId: user.id };
 }
 
 async function list(user, filters, pagination) {

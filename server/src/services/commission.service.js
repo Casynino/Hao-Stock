@@ -2,7 +2,8 @@
 
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
-const { toNumber, round2 } = require('../utils/money');
+const notification = require('./notification.service');
+const { toNumber, round2, formatCurrency } = require('../utils/money');
 
 // Commission rule is configurable via settings:
 //   commission.boxThreshold        (default 50)
@@ -100,10 +101,32 @@ async function requestWithdrawal(salesRepId, amount, notes, actor) {
   if (amt > c.available + 0.001) {
     throw ApiError.badRequest(`Amount exceeds available commission (${c.available})`);
   }
-  return prisma.commissionWithdrawal.create({
+  const w = await prisma.commissionWithdrawal.create({
     data: { salesRepId, amount: amt, notes: notes || null, status: 'PENDING' },
     include: WITHDRAWAL_INCLUDE,
   });
+
+  const repName = w.salesRep?.user?.name || 'A rep';
+  notification.notifyAdmins({
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: 'Commission withdrawal requested',
+    message: `${repName} requested a commission withdrawal of ${formatCurrency(amt)}.`,
+    entityType: 'CommissionWithdrawal',
+    entityId: w.id,
+  }).catch(() => {});
+  if (actor?.id) {
+    notification.notifyUser(actor.id, {
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: 'Withdrawal request submitted',
+      message: `Your withdrawal request of ${formatCurrency(amt)} has been submitted and is pending approval.`,
+      entityType: 'CommissionWithdrawal',
+      entityId: w.id,
+    }).catch(() => {});
+  }
+
+  return w;
 }
 
 async function listWithdrawals(filters, pagination) {
@@ -132,7 +155,7 @@ async function decideWithdrawal(id, action, actor) {
     throw ApiError.badRequest(`Cannot ${action.toLowerCase()} a ${w.status} request`);
   }
 
-  return prisma.commissionWithdrawal.update({
+  const updated = await prisma.commissionWithdrawal.update({
     where: { id },
     data: {
       status: t.to,
@@ -142,6 +165,26 @@ async function decideWithdrawal(id, action, actor) {
     },
     include: WITHDRAWAL_INCLUDE,
   });
+
+  const repUserId = updated.salesRep?.user?.id;
+  const decisionMsgs = {
+    APPROVED: { title: 'Withdrawal approved', message: `Your commission withdrawal of ${formatCurrency(updated.amount)} has been approved.`, severity: 'INFO' },
+    REJECTED: { title: 'Withdrawal rejected', message: `Your commission withdrawal of ${formatCurrency(updated.amount)} was not approved.`, severity: 'WARNING' },
+    PAID: { title: 'Commission payment received', message: `Your commission withdrawal of ${formatCurrency(updated.amount)} has been paid out.`, severity: 'INFO' },
+  };
+  const dm = decisionMsgs[t.to];
+  if (dm && repUserId) {
+    notification.notifyUser(repUserId, {
+      type: 'GENERAL',
+      severity: dm.severity,
+      title: dm.title,
+      message: dm.message,
+      entityType: 'CommissionWithdrawal',
+      entityId: id,
+    }).catch(() => {});
+  }
+
+  return updated;
 }
 
 module.exports = {

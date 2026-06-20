@@ -210,7 +210,18 @@ async function cancel(id, actor) {
   const request = await prisma.stockRequest.findUnique({ where: { id } });
   if (!request) throw ApiError.notFound('Stock request not found');
   if (request.status !== 'PENDING') throw ApiError.badRequest('Only pending requests can be cancelled');
-  return prisma.stockRequest.update({ where: { id }, data: { status: 'CANCELLED' }, include: INCLUDE });
+  const result = await prisma.stockRequest.update({ where: { id }, data: { status: 'CANCELLED' }, include: INCLUDE });
+
+  notification.notifyAdmins({
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: `Stock request cancelled: ${result.requestNumber}`,
+    message: `${result.salesRep?.user?.name || 'A rep'} cancelled stock request ${result.requestNumber}.`,
+    entityType: 'StockRequest',
+    entityId: result.id,
+  }).catch(() => {});
+
+  return result;
 }
 
 module.exports = { create, list, get, approve, reject, cancel };

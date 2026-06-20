@@ -18,6 +18,15 @@ import {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// For fulfilled orders, recompute from quantityApproved on each item so that
+// partial-approval edits are reflected correctly even on older records.
+function orderDisplayValue(r) {
+  if (r.status === 'FULFILLED') {
+    return r.items.reduce((s, i) => s + (i.quantityApproved ?? 0) * Number(i.unitPrice || 0), 0);
+  }
+  return Number(r.totalValue || 0);
+}
+
 function defaultPkg(product) {
   if (!product?.packagings?.length) return null;
   return product.packagings.find((p) => p.isBaseUnit) || product.packagings[0];
@@ -223,6 +232,7 @@ function CartOrderSheet({ onClose }) {
 function OrderDetailModal({ request, isRep, staff, onClose }) {
   const qc = useQueryClient();
   const pending = request.status === 'PENDING';
+  const fulfilled = request.status === 'FULFILLED';
   const editable = staff && pending;
   const [qtys, setQtys] = useState(() =>
     Object.fromEntries(request.items.map((i) => [i.id, i.quantityApproved ?? i.quantityRequested])),
@@ -253,9 +263,19 @@ function OrderDetailModal({ request, isRep, staff, onClose }) {
     onError: (e) => toast.error(apiError(e)),
   });
 
-  const approvedTotal = request.items.reduce(
+  // While editing: live total from the qty inputs.
+  const editingTotal = request.items.reduce(
     (s, i) => s + (Number(qtys[i.id]) || 0) * Number(i.unitPrice || 0), 0,
   );
+
+  // For fulfilled orders: always recompute from quantityApproved so stale
+  // totalValue / lineTotal on old records never appears.
+  const displayItems = fulfilled
+    ? request.items.filter((i) => (i.quantityApproved ?? 0) > 0)
+    : request.items;
+  const displayTotal = fulfilled
+    ? request.items.reduce((s, i) => s + (i.quantityApproved ?? 0) * Number(i.unitPrice || 0), 0)
+    : editable ? editingTotal : Number(request.totalValue || 0);
 
   return (
     <Modal
@@ -277,31 +297,52 @@ function OrderDetailModal({ request, isRep, staff, onClose }) {
           <div><div className="text-xs text-faint">Rep</div><div className="font-medium">{request.salesRep?.user?.name}</div></div>
           <div><div className="text-xs text-faint">Status</div><Badge className={REQUEST_STATUS_META[request.status]?.cls}>{REQUEST_STATUS_META[request.status]?.label}</Badge></div>
           <div><div className="text-xs text-faint">Requested</div><div className="font-medium">{formatDateTime(request.requestedAt)}</div></div>
-          <div><div className="text-xs text-faint">Lines</div><div className="font-medium">{request.items.length}</div></div>
+          <div><div className="text-xs text-faint">Lines</div><div className="font-medium">{displayItems.length}</div></div>
         </div>
 
         <Table>
-          <THead><TR><TH>Product</TH><TH>Requested</TH>{editable && <TH>Approve qty</TH>}<TH>Unit price</TH><TH>Line total</TH></TR></THead>
+          <THead>
+            <TR>
+              <TH>Product</TH>
+              <TH>{fulfilled ? 'Approved' : 'Requested'}</TH>
+              {editable && <TH>Approve qty</TH>}
+              <TH>Unit price</TH>
+              <TH>Line total</TH>
+            </TR>
+          </THead>
           <TBody>
-            {request.items.map((i) => (
-              <TR key={i.id}>
-                <TD className="font-medium text-foreground">{i.product.name}</TD>
-                <TD>{i.quantityRequested} {i.packagingUnit.name}</TD>
-                {editable && (
+            {displayItems.map((i) => {
+              const lineTotal = fulfilled
+                ? (i.quantityApproved ?? 0) * Number(i.unitPrice || 0)
+                : editable
+                  ? (Number(qtys[i.id]) || 0) * Number(i.unitPrice || 0)
+                  : Number(i.lineTotal || 0);
+              return (
+                <TR key={i.id}>
+                  <TD className="font-medium text-foreground">{i.product.name}</TD>
                   <TD>
-                    <Input type="number" min="0" value={qtys[i.id]} onChange={(e) => setQtys({ ...qtys, [i.id]: e.target.value })} className="w-20" />
+                    {fulfilled
+                      ? `${i.quantityApproved} ${i.packagingUnit.name}`
+                      : `${i.quantityRequested} ${i.packagingUnit.name}`}
                   </TD>
-                )}
-                <TD>{formatCurrency(i.unitPrice)}</TD>
-                <TD>{formatCurrency(editable ? (Number(qtys[i.id]) || 0) * Number(i.unitPrice || 0) : i.lineTotal)}</TD>
-              </TR>
-            ))}
+                  {editable && (
+                    <TD>
+                      <Input type="number" min="0" value={qtys[i.id]} onChange={(e) => setQtys({ ...qtys, [i.id]: e.target.value })} className="w-20" />
+                    </TD>
+                  )}
+                  <TD>{formatCurrency(i.unitPrice)}</TD>
+                  <TD>{formatCurrency(lineTotal)}</TD>
+                </TR>
+              );
+            })}
           </TBody>
         </Table>
 
         <div className="flex items-center justify-between rounded-xl bg-elevated px-4 py-3">
-          <span className="text-sm font-medium text-muted">{editable ? 'Approved order value' : 'Order value'}</span>
-          <span className="text-xl font-bold text-foreground">{formatCurrency(editable ? approvedTotal : request.totalValue)}</span>
+          <span className="text-sm font-medium text-muted">
+            {fulfilled ? 'Approved order value' : editable ? 'Approved order value' : 'Order value'}
+          </span>
+          <span className="text-xl font-bold text-foreground">{formatCurrency(displayTotal)}</span>
         </div>
 
         {request.notes && <div className="text-sm"><span className="text-faint">Notes: </span>{request.notes}</div>}
@@ -375,8 +416,8 @@ export default function StockRequests() {
                   <TR key={r.id} className="cursor-pointer" onClick={() => setViewing(r)}>
                     <TD className="font-medium">{r.requestNumber}</TD>
                     {staff && <TD>{r.salesRep?.user?.name}</TD>}
-                    <TD>{r.items.length} line(s)</TD>
-                    <TD className="font-medium">{formatCurrency(r.totalValue)}</TD>
+                    <TD>{r.items.filter((i) => r.status === 'FULFILLED' ? (i.quantityApproved ?? 0) > 0 : true).length} line(s)</TD>
+                    <TD className="font-medium">{formatCurrency(orderDisplayValue(r))}</TD>
                     <TD><Badge className={REQUEST_STATUS_META[r.status]?.cls}>{REQUEST_STATUS_META[r.status]?.label}</Badge></TD>
                     <TD className="text-faint">{formatDateTime(r.requestedAt)}</TD>
                     <TD>

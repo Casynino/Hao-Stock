@@ -242,6 +242,27 @@ function ExtendDeadlineModal({ order, onClose, onDone }) {
   );
 }
 
+// --- Reject a pending return (staff / admin) --------------------------------
+function RejectReturnModal({ ret, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const reject = useMutation({
+    mutationFn: () => api.post(`/returns/${ret.id}/reject`, { reason: reason || undefined }),
+    onSuccess: () => { toast.success('Return rejected'); onDone(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  return (
+    <Modal open onClose={onClose} title={`Reject return · ${ret.returnNumber}`}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={reject.isPending} onClick={() => reject.mutate()} className="bg-rose-600 text-white hover:bg-rose-500">Reject return</Button></>}>
+      <div className="space-y-3">
+        <p className="text-sm text-muted">Rejecting keeps these boxes outstanding on the order — the rep must still settle them or submit a new return.</p>
+        <Field label="Reason (optional)">
+          <textarea className="input min-h-[90px]" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. boxes never arrived at the warehouse" autoFocus />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
 // --- Flag an issue (rep/staff can't edit; admin corrects) ------------------
 function FlagModal({ order, onClose, onDone }) {
   const [message, setMessage] = useState('');
@@ -278,6 +299,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
   const { hasRole, user } = useAuth();
   const staff = hasRole(ROLES.WAREHOUSE_STAFF);
   const [sub, setSub] = useState(null); // 'settle' | 'return' | 'flag' | 'extend'
+  const [rejectingReturn, setRejectingReturn] = useState(null); // pending return being rejected
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['settlement', settlementId],
@@ -302,6 +324,12 @@ export default function OrderDetailModal({ settlementId, onClose }) {
   const settle = useMutation({
     mutationFn: () => api.post(`/settlements/${settlementId}/settle`, {}),
     onSuccess: () => { toast.success('Order closed'); refresh(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const approveReturn = useMutation({
+    mutationFn: (id) => api.post(`/returns/${id}/approve`),
+    onSuccess: () => { toast.success('Return approved — inventory updated'); refresh(); },
     onError: (e) => toast.error(apiError(e)),
   });
 
@@ -341,6 +369,31 @@ export default function OrderDetailModal({ settlementId, onClose }) {
               <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-400">
                 <Clock className="h-4 w-4 shrink-0" />
                 <span>{order.pendingReturns} return{order.pendingReturns !== 1 ? 's' : ''} awaiting warehouse approval — boxes remain outstanding until approved.</span>
+              </div>
+            )}
+
+            {/* Pending returns — staff/admin approve or reject inline */}
+            {staff && order.pendingReturnsList?.length > 0 && (
+              <div className="space-y-2">
+                {order.pendingReturnsList.map((r) => (
+                  <div key={r.id} className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-foreground">{r.returnNumber}</div>
+                        <div className="mt-0.5 text-xs text-faint">
+                          {r.items.map((i) => `${formatNumber(i.quantity)} ${i.unitName || 'box'}(s) ${i.productName}`).join(' · ')}
+                        </div>
+                        {r.reason && <div className="mt-0.5 text-xs text-faint">Reason: {r.reason}</div>}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button variant="ghost" className="text-rose-500" disabled={approveReturn.isPending} onClick={() => setRejectingReturn(r)}>Reject</Button>
+                        <Button loading={approveReturn.isPending && approveReturn.variables === r.id} onClick={() => approveReturn.mutate(r.id)}>
+                          <CheckCircle2 className="h-4 w-4" /> Approve return
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -421,6 +474,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
       {order && sub === 'return' && <RecordReturnModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'flag' && <FlagModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'extend' && <ExtendDeadlineModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
+      {rejectingReturn && <RejectReturnModal ret={rejectingReturn} onClose={() => setRejectingReturn(null)} onDone={refresh} />}
     </>
   );
 }

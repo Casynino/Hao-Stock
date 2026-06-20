@@ -99,7 +99,7 @@ function RecordReturnModal({ order, onClose, onDone }) {
         reason: `Return on order ${order.settlementNumber}`,
       });
     },
-    onSuccess: () => { toast.success('Return recorded'); onDone(); onClose(); },
+    onSuccess: () => { toast.success('Return submitted — awaiting warehouse approval'); onDone(); onClose(); },
     onError: (e) => toast.error(apiError(e)),
   });
 
@@ -335,6 +335,14 @@ export default function OrderDetailModal({ settlementId, onClose }) {
               <div><div className="text-xs text-faint">Deadline</div><div className="font-medium">{formatDateTime(order.deadlineAt)}</div></div>
               <div><div className="text-xs text-faint">Issued</div><div className="font-medium">{formatDateTime(order.issuedAt)}</div></div>
             </div>
+
+            {/* Pending-return warning */}
+            {order.pendingReturns > 0 && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-400">
+                <Clock className="h-4 w-4 shrink-0" />
+                <span>{order.pendingReturns} return{order.pendingReturns !== 1 ? 's' : ''} awaiting warehouse approval — boxes remain outstanding until approved.</span>
+              </div>
+            )}
 
             {/* Money picture — all derived from settled/returned boxes */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

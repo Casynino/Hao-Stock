@@ -108,8 +108,10 @@ enum ReturnType {
 }
 
 enum ReturnStatus {
-  PENDING
-  COMPLETED
+  PENDING   // submitted by rep, awaiting warehouse verification
+  APPROVED  // verified and accepted — inventory has been updated
+  REJECTED  // not accepted by warehouse
+  COMPLETED // legacy: pre-approval-flow records (treated as APPROVED)
   CANCELLED
 }
 
@@ -205,6 +207,7 @@ model User {
   receivedPayments           CreditPayment[]        @relation("PaymentReceivedBy")
   dispatchedTransfers        StockTransfer[]        @relation("TransferDispatchedBy")
   processedReturns           Return[]               @relation("ReturnProcessedBy")
+  decidedReturns             Return[]               @relation("ReturnDecidedBy")
   conductedCounts            StockCount[]           @relation("CountConductedBy")
   updatedSettings            Setting[]              @relation("SettingUpdatedBy")
   createdPurchaseOrders      PurchaseOrder[]        @relation("POCreatedBy")
@@ -722,7 +725,7 @@ model Return {
   id           String       @id @default(cuid())
   returnNumber String       @unique
   type         ReturnType
-  status       ReturnStatus @default(COMPLETED)
+  status       ReturnStatus @default(PENDING)
 
   customerId String?
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -744,6 +747,12 @@ model Return {
   processedAt   DateTime @default(now())
   processedById String?
   processedBy   User?    @relation("ReturnProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+
+  // Approval / rejection (set by admin or warehouse staff)
+  decidedById     String?
+  decidedAt       DateTime?
+  rejectionReason String?
+  decidedBy       User? @relation("ReturnDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

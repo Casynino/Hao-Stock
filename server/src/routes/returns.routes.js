@@ -9,11 +9,17 @@ const { returnCreate, returnQuery } = require('../validators/inventory.validator
 const { idParam } = require('../validators/common.validator');
 
 const router = express.Router();
-const handlers = requireRoles(ROLES.SALES_REP, ROLES.WAREHOUSE_STAFF);
+
+// Who can submit a return
+const canCreate = requireRoles(ROLES.SALES_REP, ROLES.WAREHOUSE_STAFF);
+// Who can approve or reject a return (warehouse operators and admins)
+const canDecide = requireRoles(ROLES.WAREHOUSE_STAFF);
 
 router.use(authenticate);
 router.get('/', validate(returnQuery), ctrl.list);
 router.get('/:id', validate(idParam), ctrl.get);
-router.post('/', handlers, validate(returnCreate), ctrl.create);
+router.post('/', canCreate, validate(returnCreate), ctrl.create);
+router.post('/:id/approve', canDecide, validate(idParam), ctrl.approve);
+router.post('/:id/reject', canDecide, validate(idParam), ctrl.reject);
 
 module.exports = router;

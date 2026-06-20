@@ -119,6 +119,11 @@ async function approve(id, actor, approvals = []) {
   const toIssue = decided.filter((d) => d.quantityApproved > 0);
   if (toIssue.length === 0) throw ApiError.badRequest('Nothing approved to issue');
 
+  // Compute the approved order value from actually issued lines only.
+  const approvedTotal = round2(
+    toIssue.reduce((acc, d) => acc + round2(toNumber(d.unitPrice) * d.quantityApproved), 0),
+  );
+
   // Dispatch the transfer (posts ledger + creates the 72h settlement).
   const transfer = await transfers.createTransfer(
     {
@@ -142,7 +147,11 @@ async function approve(id, actor, approvals = []) {
     }
     await prisma.stockRequestItem.update({
       where: { id: d.id },
-      data: { quantityApproved: d.quantityApproved, baseQuantity },
+      data: {
+        quantityApproved: d.quantityApproved,
+        baseQuantity,
+        lineTotal: round2(d.quantityApproved * toNumber(d.unitPrice)),
+      },
     });
   }
 
@@ -155,6 +164,7 @@ async function approve(id, actor, approvals = []) {
       warehouseId: fromWarehouseId,
       transferId: transfer.id,
       settlementId: settlement ? settlement.id : null,
+      totalValue: approvedTotal,
     },
     include: INCLUDE,
   });

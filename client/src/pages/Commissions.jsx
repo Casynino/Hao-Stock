@@ -80,11 +80,13 @@ function PenaltyPolicyCard() {
       <div className="flex gap-3 p-4">
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
         <div className="space-y-1.5 text-sm text-amber-300/80">
-          <p className="font-semibold text-amber-300">Settlement penalty policy</p>
-          <p>Every order must be fully settled within <b>72 hours</b> of stock issue.</p>
-          <p>After 72 hours, <b>TZS 10,000 is deducted per day</b> from your commission balance until the order is closed.</p>
-          <p>Penalties are suspended while a return is awaiting warehouse approval. Fully settling or returning all outstanding boxes removes the penalty.</p>
-          <p>Your commission balance can go negative — any debt must be cleared before a new withdrawal is approved.</p>
+          <p className="font-semibold text-amber-300">Settlement Penalty Policy</p>
+          <ul className="list-disc space-y-1.5 pl-4">
+            <li>Orders must be settled or returned within <b>72 hours</b> after stock is issued.</li>
+            <li>After 72 hours, <b>TZS 10,000</b> is deducted daily from your commission.</li>
+            <li>No penalty during warehouse return review.</li>
+            <li>Penalties stop once everything is settled or returned.</li>
+          </ul>
         </div>
       </div>
     </Card>

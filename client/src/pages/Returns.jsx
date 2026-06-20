@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Plus, Undo2, Search, X, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Undo2, Search, X, CheckCircle, XCircle, Eye } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useProducts, useCustomers, useSalesReps, useWarehouses } from '@/lib/hooks';
 import { ROLES, RETURN_STATUS_META } from '@/lib/constants';
-import { formatDate, formatNumber } from '@/lib/format';
+import { formatDate, formatDateTime, formatNumber, formatCurrency } from '@/lib/format';
 import {
   PageHeader, Card, PageSpinner, EmptyState, Badge, Button, Modal, Field, Select, Textarea,
   Pagination, Table, THead, TBody, TR, TH, TD,
@@ -18,7 +18,7 @@ function defaultPkg(product) {
 }
 
 // ── Reject modal ──────────────────────────────────────────────────────────────
-function RejectModal({ returnId, onClose }) {
+function RejectModal({ returnId, onClose, onRejected }) {
   const qc = useQueryClient();
   const [reason, setReason] = useState('');
   const reject = useMutation({
@@ -26,6 +26,7 @@ function RejectModal({ returnId, onClose }) {
     onSuccess: () => {
       toast.success('Return rejected');
       qc.invalidateQueries({ queryKey: ['returns'] });
+      onRejected?.();
       onClose();
     },
     onError: (e) => toast.error(apiError(e)),
@@ -37,6 +38,104 @@ function RejectModal({ returnId, onClose }) {
         <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. quantity mismatch, wrong product…" />
       </Field>
     </Modal>
+  );
+}
+
+// ── Return detail modal: open a return, review every line, then decide ────────
+function ReturnDetailModal({ returnId, canDecide, onClose }) {
+  const qc = useQueryClient();
+  const [rejecting, setRejecting] = useState(false);
+
+  const { data: ret, isLoading } = useQuery({
+    queryKey: ['return', returnId],
+    queryFn: async () => unwrap(await api.get(`/returns/${returnId}`)).data,
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['returns'] });
+    qc.invalidateQueries({ queryKey: ['return', returnId] });
+    qc.invalidateQueries({ queryKey: ['settlements'] });
+    qc.invalidateQueries({ queryKey: ['settlement'] });
+    qc.invalidateQueries({ queryKey: ['inventory'] });
+  };
+
+  const approve = useMutation({
+    mutationFn: () => api.post(`/returns/${returnId}/approve`),
+    onSuccess: () => { toast.success('Return approved — inventory updated'); invalidate(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const pending = ret?.status === 'PENDING';
+  const meta = ret ? (RETURN_STATUS_META[ret.status] || RETURN_STATUS_META.PENDING) : null;
+  const totalBoxes = ret?.items?.reduce((s, i) => s + i.quantity, 0) || 0;
+  const totalValue = ret?.items?.reduce((s, i) => s + i.quantity * Number(i.unitPrice || 0), 0) || 0;
+
+  return (
+    <>
+      <Modal open onClose={onClose} size="lg" title={ret ? `Return ${ret.returnNumber}` : 'Return'}
+        footer={ret && (
+          <>
+            <Button variant="secondary" onClick={onClose}>Close</Button>
+            {canDecide && pending && <Button variant="ghost" className="text-rose-500" onClick={() => setRejecting(true)}><XCircle className="h-4 w-4" /> Reject</Button>}
+            {canDecide && pending && <Button loading={approve.isPending} onClick={() => approve.mutate()}><CheckCircle className="h-4 w-4" /> Approve return</Button>}
+          </>
+        )}>
+        {isLoading || !ret ? <PageSpinner /> : (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <div><div className="text-xs text-faint">Type</div><div className="font-medium">{ret.type === 'CUSTOMER_RETURN' ? 'Customer return' : 'Rep → warehouse'}</div></div>
+              <div><div className="text-xs text-faint">Status</div><Badge className={meta.cls}>{meta.label}</Badge></div>
+              <div><div className="text-xs text-faint">Rep / Customer</div><div className="font-medium">{ret.salesRep?.user?.name || ret.customer?.name || '—'}</div></div>
+              <div><div className="text-xs text-faint">Warehouse</div><div className="font-medium">{ret.warehouse?.name || '—'}</div></div>
+              <div><div className="text-xs text-faint">Submitted</div><div className="font-medium">{formatDateTime(ret.processedAt)}</div></div>
+              <div><div className="text-xs text-faint">Submitted by</div><div className="font-medium">{ret.processedBy?.name || '—'}</div></div>
+              {ret.decidedAt && <div><div className="text-xs text-faint">Decided</div><div className="font-medium">{formatDateTime(ret.decidedAt)}</div></div>}
+              {ret.decidedBy?.name && <div><div className="text-xs text-faint">Decided by</div><div className="font-medium">{ret.decidedBy.name}</div></div>}
+            </div>
+
+            {ret.reason && (
+              <div className="rounded-lg border border-border bg-elevated px-3 py-2 text-sm"><span className="text-faint">Reason: </span>{ret.reason}</div>
+            )}
+            {ret.status === 'REJECTED' && ret.rejectionReason && (
+              <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-sm text-rose-400"><span className="opacity-70">Rejection reason: </span>{ret.rejectionReason}</div>
+            )}
+
+            <div>
+              <div className="mb-2 text-sm font-semibold text-foreground">Items returned</div>
+              <Table>
+                <THead><TR><TH>Product</TH><TH>Quantity</TH><TH>Condition</TH><TH>Unit price</TH><TH>Line value</TH></TR></THead>
+                <TBody>
+                  {ret.items.map((i) => (
+                    <TR key={i.id}>
+                      <TD className="font-medium text-foreground">{i.product?.name}</TD>
+                      <TD>{formatNumber(i.quantity)} {i.packagingUnit?.name || 'box'}(s)</TD>
+                      <TD className="text-muted">{i.condition}</TD>
+                      <TD>{formatCurrency(i.unitPrice)}</TD>
+                      <TD>{formatCurrency(i.quantity * Number(i.unitPrice || 0))}</TD>
+                    </TR>
+                  ))}
+                  <TR className="font-semibold">
+                    <TD>Total</TD>
+                    <TD>{formatNumber(totalBoxes)} box(es)</TD>
+                    <TD />
+                    <TD />
+                    <TD>{formatCurrency(totalValue)}</TD>
+                  </TR>
+                </TBody>
+              </Table>
+            </div>
+
+            {canDecide && pending && (
+              <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+                Approving verifies these boxes back into {ret.type === 'SALES_RETURN' ? 'warehouse' : 'rep'} stock and updates inventory — and clears them off any linked order. This can’t be undone.
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {rejecting && <RejectModal returnId={returnId} onClose={() => setRejecting(false)} onRejected={onClose} />}
+    </>
   );
 }
 
@@ -217,6 +316,7 @@ export default function Returns() {
   const [statusFilter, setStatusFilter] = useState('');
   const [open, setOpen] = useState(false);
   const [rejectingId, setRejectingId] = useState(null);
+  const [viewingId, setViewingId] = useState(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['returns', { page, type: typeFilter, status: statusFilter }],
@@ -266,14 +366,14 @@ export default function Returns() {
                   <TH>Rep / Customer</TH>
                   <TH>Items</TH>
                   <TH>Date</TH>
-                  {canDecide && <TH />}
+                  <TH />
                 </TR>
               </THead>
               <TBody>
                 {data.data.map((r) => {
                   const meta = RETURN_STATUS_META[r.status] || RETURN_STATUS_META.PENDING;
                   return (
-                    <TR key={r.id}>
+                    <TR key={r.id} className="cursor-pointer" onClick={() => setViewingId(r.id)}>
                       <TD className="font-medium">{r.returnNumber}</TD>
                       <TD>
                         <Badge className={r.type === 'CUSTOMER_RETURN' ? 'bg-teal-100 text-teal-700' : 'bg-cyan-100 text-cyan-700'}>
@@ -284,30 +384,29 @@ export default function Returns() {
                       <TD>{r.salesRep?.user?.name || r.customer?.name || '—'}</TD>
                       <TD>{r.items.length}</TD>
                       <TD className="text-faint">{formatDate(r.processedAt)}</TD>
-                      {canDecide && (
-                        <TD>
-                          {r.status === 'PENDING' && (
-                            <div className="flex justify-end gap-1">
-                              <button
-                                onClick={() => approve.mutate(r.id)}
-                                disabled={approve.isPending}
-                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-50"
-                              >
-                                <CheckCircle className="h-3.5 w-3.5" /> Approve
-                              </button>
-                              <button
-                                onClick={() => setRejectingId(r.id)}
-                                className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-500/20"
-                              >
-                                <XCircle className="h-3.5 w-3.5" /> Reject
-                              </button>
-                            </div>
-                          )}
-                          {r.status === 'REJECTED' && r.rejectionReason && (
-                            <span className="text-xs text-faint">{r.rejectionReason}</span>
-                          )}
-                        </TD>
-                      )}
+                      <TD onClick={(e) => e.stopPropagation()}>
+                        {canDecide && r.status === 'PENDING' ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => approve.mutate(r.id)}
+                              disabled={approve.isPending}
+                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                            >
+                              <CheckCircle className="h-3.5 w-3.5" /> Approve
+                            </button>
+                            <button
+                              onClick={() => setRejectingId(r.id)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-500/20"
+                            >
+                              <XCircle className="h-3.5 w-3.5" /> Reject
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center justify-end gap-1 text-xs font-medium text-brand-600">
+                            View <Eye className="h-3.5 w-3.5" />
+                          </span>
+                        )}
+                      </TD>
                     </TR>
                   );
                 })}
@@ -320,6 +419,7 @@ export default function Returns() {
 
       {open && <ReturnModal onClose={() => setOpen(false)} />}
       {rejectingId && <RejectModal returnId={rejectingId} onClose={() => setRejectingId(null)} />}
+      {viewingId && <ReturnDetailModal returnId={viewingId} canDecide={canDecide} onClose={() => setViewingId(null)} />}
     </div>
   );
 }

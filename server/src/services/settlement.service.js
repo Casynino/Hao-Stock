@@ -89,7 +89,7 @@ async function orderBreakdown(s, client = prisma) {
   const [transfer, settledRows, retRows, rule] = await Promise.all([
     s.transferId ? client.stockTransfer.findUnique({ where: { id: s.transferId }, include: { items: true } }) : null,
     client.saleItem.groupBy({ by: ['productId'], where: { sale: { settlementId: s.id, status: { not: 'CANCELLED' } } }, _sum: { baseQuantity: true } }),
-    client.returnItem.groupBy({ by: ['productId'], where: { return: { settlementId: s.id } }, _sum: { baseQuantity: true } }),
+    client.returnItem.groupBy({ by: ['productId'], where: { return: { settlementId: s.id, status: { in: ['APPROVED', 'COMPLETED'] } } }, _sum: { baseQuantity: true } }),
     commission.getRule(),
   ]);
 
@@ -160,6 +160,7 @@ async function get(id) {
   if (!s) throw ApiError.notFound('Settlement not found');
   const decorated = decorate(s);
   decorated.order = await orderBreakdown(s);
+  decorated.pendingReturns = await prisma.return.count({ where: { settlementId: id, status: 'PENDING' } });
   return decorated;
 }
 
@@ -216,7 +217,7 @@ async function settleBoxes(id, payload, actor) {
       const assigned = (transfer?.items || []).reduce((n, it) => n + it.baseQuantity, 0);
       const [settledAgg, retAgg] = await Promise.all([
         tx.saleItem.aggregate({ where: { productId, sale: { settlementId: id, status: { not: 'CANCELLED' } } }, _sum: { baseQuantity: true } }),
-        tx.returnItem.aggregate({ where: { productId, return: { settlementId: id } }, _sum: { baseQuantity: true } }),
+        tx.returnItem.aggregate({ where: { productId, return: { settlementId: id, status: { in: ['APPROVED', 'COMPLETED'] } } }, _sum: { baseQuantity: true } }),
       ]);
       const remaining = assigned - (settledAgg._sum.baseQuantity || 0) - (retAgg._sum.baseQuantity || 0);
       if (boxes > remaining) {

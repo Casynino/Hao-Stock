@@ -41,4 +41,27 @@ const get = asyncHandler(async (req, res) => {
   return ok(res, ret);
 });
 
-module.exports = { create, list, get };
+const approve = asyncHandler(async (req, res) => {
+  const ret = await returnsService.approveReturn(req.params.id, req.user);
+  await audit.record(req, {
+    action: 'APPROVE',
+    entityType: 'Return',
+    entityId: req.params.id,
+    newValues: { status: 'APPROVED' },
+  });
+  return ok(res, ret);
+});
+
+const reject = asyncHandler(async (req, res) => {
+  const reason = req.body?.reason;
+  const ret = await returnsService.rejectReturn(req.params.id, req.user, reason);
+  await audit.record(req, {
+    action: 'REJECT',
+    entityType: 'Return',
+    entityId: req.params.id,
+    newValues: { status: 'REJECTED', reason: reason || null },
+  });
+  return ok(res, ret);
+});
+
+module.exports = { create, list, get, approve, reject };

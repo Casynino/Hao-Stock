@@ -1,11 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Plus, Undo2, Search, X } from 'lucide-react';
+import { Plus, Undo2, Search, X, CheckCircle, XCircle } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useProducts, useCustomers, useSalesReps, useWarehouses } from '@/lib/hooks';
-import { ROLES } from '@/lib/constants';
+import { ROLES, RETURN_STATUS_META } from '@/lib/constants';
 import { formatDate, formatNumber } from '@/lib/format';
 import {
   PageHeader, Card, PageSpinner, EmptyState, Badge, Button, Modal, Field, Select, Textarea,
@@ -17,6 +17,30 @@ function defaultPkg(product) {
   return product.packagings.find((p) => p.isBaseUnit) || product.packagings[0];
 }
 
+// ── Reject modal ──────────────────────────────────────────────────────────────
+function RejectModal({ returnId, onClose }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('');
+  const reject = useMutation({
+    mutationFn: () => api.post(`/returns/${returnId}/reject`, { reason: reason || undefined }),
+    onSuccess: () => {
+      toast.success('Return rejected');
+      qc.invalidateQueries({ queryKey: ['returns'] });
+      onClose();
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  return (
+    <Modal open onClose={onClose} title="Reject return"
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={reject.isPending} onClick={() => reject.mutate()} className="bg-rose-600 hover:bg-rose-500 text-white">Reject return</Button></>}>
+      <Field label="Reason" hint="Optional — will be shown to the rep">
+        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. quantity mismatch, wrong product…" />
+      </Field>
+    </Modal>
+  );
+}
+
+// ── New return modal ──────────────────────────────────────────────────────────
 function ReturnModal({ onClose }) {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -32,9 +56,8 @@ function ReturnModal({ onClose }) {
   const [warehouseId, setWarehouseId] = useState('');
   const [reason, setReason] = useState('');
   const [search, setSearch] = useState('');
-
-  // cart: { [productId]: qty }
   const [cart, setCart] = useState({});
+
   function setQty(productId, qty) {
     setCart((prev) => {
       if (qty <= 0) { const n = { ...prev }; delete n[productId]; return n; }
@@ -64,7 +87,11 @@ function ReturnModal({ onClose }) {
       if (warehouseId) payload.warehouseId = warehouseId;
       return api.post('/returns', payload);
     },
-    onSuccess: () => { toast.success('Return processed'); qc.invalidateQueries({ queryKey: ['returns'] }); onClose(); },
+    onSuccess: () => {
+      toast.success('Return submitted — awaiting warehouse approval');
+      qc.invalidateQueries({ queryKey: ['returns'] });
+      onClose();
+    },
     onError: (e) => toast.error(apiError(e)),
   });
 
@@ -80,12 +107,12 @@ function ReturnModal({ onClose }) {
         </div>
       )}
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button loading={create.isPending} disabled={!valid} onClick={() => create.mutate()}>Process</Button>
+      <Button loading={create.isPending} disabled={!valid} onClick={() => create.mutate()}>Submit return</Button>
     </>
   );
 
   return (
-    <Modal open onClose={onClose} size="lg" title="Process a return" footer={footer}>
+    <Modal open onClose={onClose} size="lg" title="Submit a return" footer={footer}>
       <div className="space-y-4">
         {/* Type toggle */}
         <div className="flex gap-2">
@@ -95,6 +122,11 @@ function ReturnModal({ onClose }) {
               {label}
             </button>
           ))}
+        </div>
+
+        {/* Pending-approval notice */}
+        <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+          Returns are pending until verified by the warehouse. Inventory updates only after approval.
         </div>
 
         {/* Routing selectors */}
@@ -173,14 +205,31 @@ function ReturnModal({ onClose }) {
   );
 }
 
+// ── Page ──────────────────────────────────────────────────────────────────────
 export default function Returns() {
+  const { user } = useAuth();
+  const isRep = user?.role === ROLES.SALES_REP;
+  const canDecide = user?.role === ROLES.ADMIN || user?.role === ROLES.WAREHOUSE_STAFF;
+
+  const qc = useQueryClient();
   const [page, setPage] = useState(1);
-  const [type, setType] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [open, setOpen] = useState(false);
+  const [rejectingId, setRejectingId] = useState(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['returns', { page, type }],
-    queryFn: async () => unwrap(await api.get('/returns', { params: { page, limit: 15, type: type || undefined } })),
+    queryKey: ['returns', { page, type: typeFilter, status: statusFilter }],
+    queryFn: async () => unwrap(await api.get('/returns', { params: { page, limit: 15, type: typeFilter || undefined, status: statusFilter || undefined } })),
+  });
+
+  const approve = useMutation({
+    mutationFn: (id) => api.post(`/returns/${id}/approve`),
+    onSuccess: () => {
+      toast.success('Return approved — inventory updated');
+      qc.invalidateQueries({ queryKey: ['returns'] });
+    },
+    onError: (e) => toast.error(apiError(e)),
   });
 
   return (
@@ -188,35 +237,89 @@ export default function Returns() {
       <PageHeader title="Returns" subtitle="Customer returns and rep stock returned to the warehouse.">
         <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New return</Button>
       </PageHeader>
+
       <Card>
-        <div className="border-b border-border p-4">
-          <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1); }} className="sm:w-56">
-            <option value="">All returns</option><option value="CUSTOMER_RETURN">Customer returns</option><option value="SALES_RETURN">Sales returns</option>
+        <div className="flex flex-wrap gap-3 border-b border-border p-4">
+          <Select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }} className="sm:w-44">
+            <option value="">All types</option>
+            <option value="CUSTOMER_RETURN">Customer</option>
+            <option value="SALES_RETURN">Sales</option>
+          </Select>
+          <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="sm:w-48">
+            <option value="">All statuses</option>
+            <option value="PENDING">Pending approval</option>
+            <option value="APPROVED">Approved</option>
+            <option value="REJECTED">Rejected</option>
           </Select>
         </div>
+
         {isLoading ? <PageSpinner /> : !data?.data?.length ? (
           <EmptyState title="No returns yet" icon={Undo2} action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New return</Button>} />
         ) : (
           <>
             <Table>
-              <THead><TR><TH>Return</TH><TH>Type</TH><TH>Rep / Customer</TH><TH>Items</TH><TH>Date</TH></TR></THead>
+              <THead>
+                <TR>
+                  <TH>Return</TH>
+                  <TH>Type</TH>
+                  <TH>Status</TH>
+                  <TH>Rep / Customer</TH>
+                  <TH>Items</TH>
+                  <TH>Date</TH>
+                  {canDecide && <TH />}
+                </TR>
+              </THead>
               <TBody>
-                {data.data.map((r) => (
-                  <TR key={r.id}>
-                    <TD className="font-medium">{r.returnNumber}</TD>
-                    <TD><Badge className={r.type === 'CUSTOMER_RETURN' ? 'bg-teal-100 text-teal-700' : 'bg-cyan-100 text-cyan-700'}>{r.type === 'CUSTOMER_RETURN' ? 'Customer' : 'Sales'}</Badge></TD>
-                    <TD>{r.salesRep?.user?.name || r.customer?.name || '—'}</TD>
-                    <TD>{r.items.length}</TD>
-                    <TD className="text-faint">{formatDate(r.processedAt)}</TD>
-                  </TR>
-                ))}
+                {data.data.map((r) => {
+                  const meta = RETURN_STATUS_META[r.status] || RETURN_STATUS_META.PENDING;
+                  return (
+                    <TR key={r.id}>
+                      <TD className="font-medium">{r.returnNumber}</TD>
+                      <TD>
+                        <Badge className={r.type === 'CUSTOMER_RETURN' ? 'bg-teal-100 text-teal-700' : 'bg-cyan-100 text-cyan-700'}>
+                          {r.type === 'CUSTOMER_RETURN' ? 'Customer' : 'Sales'}
+                        </Badge>
+                      </TD>
+                      <TD><Badge className={meta.cls}>{meta.label}</Badge></TD>
+                      <TD>{r.salesRep?.user?.name || r.customer?.name || '—'}</TD>
+                      <TD>{r.items.length}</TD>
+                      <TD className="text-faint">{formatDate(r.processedAt)}</TD>
+                      {canDecide && (
+                        <TD>
+                          {r.status === 'PENDING' && (
+                            <div className="flex justify-end gap-1">
+                              <button
+                                onClick={() => approve.mutate(r.id)}
+                                disabled={approve.isPending}
+                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                              >
+                                <CheckCircle className="h-3.5 w-3.5" /> Approve
+                              </button>
+                              <button
+                                onClick={() => setRejectingId(r.id)}
+                                className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-500/20"
+                              >
+                                <XCircle className="h-3.5 w-3.5" /> Reject
+                              </button>
+                            </div>
+                          )}
+                          {r.status === 'REJECTED' && r.rejectionReason && (
+                            <span className="text-xs text-faint">{r.rejectionReason}</span>
+                          )}
+                        </TD>
+                      )}
+                    </TR>
+                  );
+                })}
               </TBody>
             </Table>
             <Pagination page={page} totalPages={data.meta?.totalPages} total={data.meta?.total} onChange={setPage} />
           </>
         )}
       </Card>
+
       {open && <ReturnModal onClose={() => setOpen(false)} />}
+      {rejectingId && <RejectModal returnId={rejectingId} onClose={() => setRejectingId(null)} />}
     </div>
   );
 }

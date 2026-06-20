@@ -131,6 +131,14 @@ export const WITHDRAWAL_STATUS_META = {
   PAID: { label: 'Paid', cls: 'bg-emerald-100 text-emerald-700' },
 };
 
+export const RETURN_STATUS_META = {
+  PENDING: { label: 'Pending Approval', cls: 'bg-amber-100 text-amber-700' },
+  APPROVED: { label: 'Approved', cls: 'bg-emerald-100 text-emerald-700' },
+  REJECTED: { label: 'Rejected', cls: 'bg-rose-100 text-rose-700' },
+  COMPLETED: { label: 'Approved', cls: 'bg-emerald-100 text-emerald-700' }, // legacy
+  CANCELLED: { label: 'Cancelled', cls: 'bg-elevated text-muted' },
+};
+
 export const CORRECTION_STATUS_META = {
   PENDING: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
   RESOLVED: { label: 'Resolved', cls: 'bg-emerald-100 text-emerald-700' },

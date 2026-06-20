@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const notification = require('./notification.service');
+const { computePenaltiesForRep } = require('./penalty.service');
 const { toNumber, round2, formatCurrency } = require('../utils/money');
 
 // Commission rule is configurable via settings:
@@ -45,14 +46,16 @@ async function withdrawalTotals(salesRepId) {
 }
 
 async function computeForRep(salesRepId) {
-  const [rule, boxes, wt] = await Promise.all([
+  const [rule, boxes, wt, penaltyData] = await Promise.all([
     getRule(),
     boxesSettledByRep(salesRepId),
     withdrawalTotals(salesRepId),
+    computePenaltiesForRep(salesRepId),
   ]);
   const earned = round2(boxes * rule.perBox);
   const pending = round2(earned - wt.paid);
-  const available = round2(earned - wt.paid - wt.pendingRequests);
+  const penalties = penaltyData.total;
+  const available = round2(earned - wt.paid - wt.pendingRequests - penalties);
   return {
     rule,
     boxesSettled: round2(boxes),
@@ -60,7 +63,9 @@ async function computeForRep(salesRepId) {
     paid: wt.paid,
     pending,
     pendingRequests: wt.pendingRequests,
-    available: available < 0 ? 0 : available,
+    penalties,
+    penaltyBreakdown: penaltyData.breakdown,
+    available, // can be negative when penalties exceed remaining balance
   };
 }
 
@@ -80,6 +85,7 @@ async function summaryAllReps() {
       earned: round2(items.reduce((s, i) => s + i.earned, 0)),
       paid: round2(items.reduce((s, i) => s + i.paid, 0)),
       pending: round2(items.reduce((s, i) => s + i.pending, 0)),
+      penalties: round2(items.reduce((s, i) => s + i.penalties, 0)),
     },
     items,
   };

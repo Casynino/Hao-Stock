@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Coins, Wallet, Clock, TrendingUp } from 'lucide-react';
+import { Coins, Wallet, Clock, TrendingUp, AlertTriangle, Info, ShieldAlert } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES, WITHDRAWAL_STATUS_META } from '@/lib/constants';
@@ -38,6 +38,59 @@ function WithdrawModal({ available, minWithdrawal, onClose }) {
   );
 }
 
+function PenaltyBreakdown({ breakdown }) {
+  if (!breakdown?.length) return null;
+  return (
+    <Card className="mt-4 border border-rose-500/20 bg-rose-500/5">
+      <CardHeader
+        title="Active overdue penalties"
+        subtitle="Penalties are deducted from your available balance until each order is settled."
+      />
+      <Table>
+        <THead>
+          <TR>
+            <TH>Order</TH>
+            <TH>Days overdue</TH>
+            <TH>Daily rate</TH>
+            <TH className="text-right">Total deducted</TH>
+            <TH>Note</TH>
+          </TR>
+        </THead>
+        <TBody>
+          {breakdown.map((p) => (
+            <TR key={p.settlementId}>
+              <TD className="font-medium">{p.settlementNumber}</TD>
+              <TD className="text-rose-400">{p.daysOverdue}</TD>
+              <TD>{formatCurrency(p.penaltyPerDay)}</TD>
+              <TD className="text-right font-semibold text-rose-400">{formatCurrency(p.totalPenalty)}</TD>
+              <TD className="text-xs text-faint">
+                {p.exemptPendingReturn ? 'Exempt — return pending' : ''}
+              </TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+    </Card>
+  );
+}
+
+function PenaltyPolicyCard() {
+  return (
+    <Card className="mt-4 border border-amber-500/20 bg-amber-500/5">
+      <div className="flex gap-3 p-4">
+        <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+        <div className="space-y-1.5 text-sm text-amber-300/80">
+          <p className="font-semibold text-amber-300">Settlement penalty policy</p>
+          <p>Every order must be fully settled within <b>72 hours</b> of stock issue.</p>
+          <p>After 72 hours, <b>TZS 10,000 is deducted per day</b> from your commission balance until the order is closed.</p>
+          <p>Penalties are suspended while a return is awaiting warehouse approval. Fully settling or returning all outstanding boxes removes the penalty.</p>
+          <p>Your commission balance can go negative — any debt must be cleared before a new withdrawal is approved.</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function RepView() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -45,26 +98,48 @@ function RepView() {
   const { data: wd } = useQuery({ queryKey: ['commissions', 'withdrawals', 'mine'], queryFn: async () => unwrap(await api.get('/commissions/withdrawals', { params: { limit: 20 } })) });
 
   if (isLoading || !c) return <PageSpinner />;
+
+  const hasPenalties = c.penalties > 0;
+  const balanceNegative = c.available < 0;
+  const canWithdraw = c.available >= c.rule.amountPerThreshold;
+
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Available Balance" value={formatCurrency(c.available)} icon={Wallet} tone="emerald" hint="Ready to withdraw" />
+      <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${hasPenalties ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
+        <StatCard
+          label="Available Balance"
+          value={formatCurrency(c.available)}
+          icon={balanceNegative ? ShieldAlert : Wallet}
+          tone={balanceNegative ? 'rose' : 'emerald'}
+          hint={balanceNegative ? 'Penalty debt — settle overdue orders' : 'Ready to withdraw'}
+        />
         <StatCard label="Total Earned" value={formatCurrency(c.earned)} icon={Coins} tone="violet" hint={`${formatNumber(c.boxesSettled)} boxes × ${formatCurrency(c.rule.perBox)}`} />
         <StatCard label="Total Paid Out" value={formatCurrency(c.paid)} icon={TrendingUp} tone="brand" />
         <StatCard label="Pending Requests" value={formatCurrency(c.pendingRequests)} icon={Clock} tone="amber" hint="Awaiting approval" />
+        {hasPenalties && (
+          <StatCard label="Total Penalties" value={formatCurrency(c.penalties)} icon={AlertTriangle} tone="rose" hint="Deducted from balance" />
+        )}
       </div>
+
       <div className="mt-4 flex items-center justify-between gap-4">
-        {c.available < c.rule.amountPerThreshold && (
+        {balanceNegative ? (
+          <p className="text-sm text-rose-400">
+            Your balance is negative due to overdue penalties. Settle your outstanding orders to restore your balance before withdrawing.
+          </p>
+        ) : !canWithdraw ? (
           <p className="text-sm text-amber-400">
             Minimum withdrawal is {formatCurrency(c.rule.amountPerThreshold)} — keep settling boxes to reach it.
           </p>
-        )}
+        ) : null}
         <div className="ml-auto">
-          <Button onClick={() => setOpen(true)} disabled={c.available < c.rule.amountPerThreshold}>
+          <Button onClick={() => setOpen(true)} disabled={!canWithdraw}>
             <Coins className="h-4 w-4" /> Request withdrawal
           </Button>
         </div>
       </div>
+
+      {hasPenalties && <PenaltyBreakdown breakdown={c.penaltyBreakdown} />}
+
       <Card className="mt-4">
         <CardHeader title="My withdrawal requests" subtitle={`Rule: ${formatCurrency(c.rule.amountPerThreshold)} per ${c.rule.boxThreshold} boxes`} />
         {!wd?.data?.length ? <EmptyState title="No withdrawals yet" /> : (
@@ -76,6 +151,9 @@ function RepView() {
           </Table>
         )}
       </Card>
+
+      <PenaltyPolicyCard />
+
       {open && <WithdrawModal available={c.available} minWithdrawal={c.rule.amountPerThreshold} onClose={() => setOpen(false)} />}
     </>
   );
@@ -86,6 +164,16 @@ function AdminView() {
   const { data: summary, isLoading } = useQuery({ queryKey: ['commissions', 'summary'], queryFn: async () => unwrap(await api.get('/commissions/summary')).data });
   const { data: wd } = useQuery({ queryKey: ['commissions', 'withdrawals', 'all'], queryFn: async () => unwrap(await api.get('/commissions/withdrawals', { params: { limit: 30 } })) });
 
+  const applyPenalties = useMutation({
+    mutationFn: () => api.post('/penalties/apply'),
+    onSuccess: (res) => {
+      const d = res.data?.data;
+      toast.success(`Penalties: ${d?.penalties?.applied ?? 0} applied, ${d?.warnings?.notified ?? 0} deadline warnings sent`);
+      qc.invalidateQueries({ queryKey: ['commissions'] });
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
   const decide = useMutation({
     mutationFn: ({ id, action }) => api.post(`/commissions/withdrawals/${id}/decide`, { action }),
     onSuccess: () => { toast.success('Updated'); qc.invalidateQueries({ queryKey: ['commissions'] }); },
@@ -95,18 +183,45 @@ function AdminView() {
   if (isLoading || !summary) return <PageSpinner />;
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <StatCard label="Total earned" value={formatCurrency(summary.totals.earned)} icon={Coins} tone="violet" />
         <StatCard label="Total paid" value={formatCurrency(summary.totals.paid)} icon={Wallet} tone="emerald" />
         <StatCard label="Total pending" value={formatCurrency(summary.totals.pending)} icon={Clock} tone="amber" />
+        <StatCard label="Total penalties" value={formatCurrency(summary.totals.penalties)} icon={AlertTriangle} tone="rose" />
       </div>
 
-      <Card className="mt-6">
+      <div className="mt-4 flex justify-end">
+        <Button variant="secondary" loading={applyPenalties.isPending} onClick={() => applyPenalties.mutate()}>
+          <AlertTriangle className="h-4 w-4" /> Apply daily penalties
+        </Button>
+      </div>
+
+      <Card className="mt-4">
         <CardHeader title="Commission by representative" />
         <Table>
-          <THead><TR><TH>Rep</TH><TH>Boxes settled</TH><TH>Earned</TH><TH>Paid</TH><TH>Pending</TH></TR></THead>
+          <THead>
+            <TR>
+              <TH>Rep</TH>
+              <TH>Boxes settled</TH>
+              <TH>Earned</TH>
+              <TH>Penalties</TH>
+              <TH>Paid</TH>
+              <TH>Available</TH>
+            </TR>
+          </THead>
           <TBody>{summary.items.map((i) => (
-            <TR key={i.salesRepId}><TD className="font-medium">{i.name}</TD><TD>{formatNumber(i.boxesSettled)}</TD><TD>{formatCurrency(i.earned)}</TD><TD>{formatCurrency(i.paid)}</TD><TD className="text-amber-700">{formatCurrency(i.pending)}</TD></TR>
+            <TR key={i.salesRepId}>
+              <TD className="font-medium">{i.name}</TD>
+              <TD>{formatNumber(i.boxesSettled)}</TD>
+              <TD>{formatCurrency(i.earned)}</TD>
+              <TD className={i.penalties > 0 ? 'text-rose-400 font-semibold' : 'text-faint'}>
+                {i.penalties > 0 ? `−${formatCurrency(i.penalties)}` : '—'}
+              </TD>
+              <TD>{formatCurrency(i.paid)}</TD>
+              <TD className={i.available < 0 ? 'text-rose-400 font-semibold' : ''}>
+                {formatCurrency(i.available)}
+              </TD>
+            </TR>
           ))}</TBody>
         </Table>
       </Card>

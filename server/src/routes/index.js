@@ -36,6 +36,7 @@ router.use('/stock-requests', require('./stockRequests.routes'));
 router.use('/settlements', require('./settlements.routes'));
 router.use('/corrections', require('./corrections.routes'));
 router.use('/commissions', require('./commissions.routes'));
+router.use('/penalties', require('./penalties.routes'));
 router.use('/online-orders', require('./onlineOrders.routes'));
 router.use('/daily-reports', require('./dailyReports.routes'));
 router.use('/activity', require('./activity.routes'));

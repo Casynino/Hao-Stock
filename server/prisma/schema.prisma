@@ -407,6 +407,7 @@ model SalesRepresentative {
   commissionWithdrawals CommissionWithdrawal[]
   dailyReports          DailyReport[]
   corrections           CorrectionRequest[]
+  settlementPenalties   SettlementPenalty[]
 
   @@index([region])
   @@map("sales_representatives")
@@ -1110,6 +1111,7 @@ model Settlement {
   sales       Sale[]              @relation("OrderSales")
   returns     Return[]            @relation("OrderReturns")
   corrections CorrectionRequest[]
+  penalties   SettlementPenalty[]
 
   @@index([salesRepId])
   @@index([status])
@@ -1139,6 +1141,25 @@ model SettlementPayment {
   @@index([settlementId])
   @@index([productId])
   @@map("settlement_payments")
+}
+
+// Penalty applied each day a settlement stays overdue (past 72h deadline).
+// Used for audit; balance is always computed live from settlement data.
+model SettlementPenalty {
+  id           String              @id @default(cuid())
+  salesRepId   String
+  salesRep     SalesRepresentative @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
+  settlementId String
+  settlement   Settlement          @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  amount       Decimal             @db.Decimal(14, 2) // always 10,000 TZS
+  daysOverdue  Int
+  appliedAt    DateTime            @default(now())
+  notes        String?
+
+  @@index([salesRepId])
+  @@index([settlementId])
+  @@index([appliedAt])
+  @@map("settlement_penalties")
 }
 
 // --- Correction requests ----------------------------------------------------

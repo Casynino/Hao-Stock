@@ -171,7 +171,21 @@ async function get(id) {
   if (!s) throw ApiError.notFound('Settlement not found');
   const decorated = decorate(s);
   decorated.order = await orderBreakdown(s);
-  decorated.pendingReturns = await prisma.return.count({ where: { settlementId: id, status: 'PENDING' } });
+  // Pending returns on this order — surfaced with their line items so staff can
+  // approve/reject them straight from the order detail.
+  const pendingReturnRecords = await prisma.return.findMany({
+    where: { settlementId: id, status: 'PENDING' },
+    include: { items: { include: { product: { select: { name: true } }, packagingUnit: { select: { name: true } } } } },
+    orderBy: { processedAt: 'desc' },
+  });
+  decorated.pendingReturns = pendingReturnRecords.length;
+  decorated.pendingReturnsList = pendingReturnRecords.map((r) => ({
+    id: r.id,
+    returnNumber: r.returnNumber,
+    reason: r.reason,
+    processedAt: r.processedAt,
+    items: r.items.map((i) => ({ productName: i.product?.name, quantity: i.quantity, unitName: i.packagingUnit?.name })),
+  }));
   return decorated;
 }
 

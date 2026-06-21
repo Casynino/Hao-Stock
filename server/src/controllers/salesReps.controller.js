@@ -364,9 +364,6 @@ const resetData = asyncHandler(async (req, res) => {
     // Notifications: the rep's own + any admin alerts pointing at deleted records.
     await tx.notification.deleteMany({ where: { OR: [{ userId: rep.user.id }, { entityId: { in: entityIds } }] } });
 
-    // Rebuild stock caches from the remaining ledger (rep -> 0, warehouse same).
-    await inventory.recomputeAllCaches(tx);
-
     return {
       settlements: settlementIds.length,
       sales: sales.length,
@@ -377,6 +374,11 @@ const resetData = asyncHandler(async (req, res) => {
       inventoryTransactions: invDel.count,
     };
   }, { timeout: 120000 });
+
+  // Rebuild stock caches from the remaining ledger (rep -> 0, warehouse same).
+  // Done AFTER the transaction — recomputeAllCaches opens its own transaction
+  // and can't run nested inside an interactive one.
+  await inventory.recomputeAllCaches();
 
   await audit.record(req, { action: 'DELETE', entityType: 'SalesRepresentative', entityId: repId, newValues: { reset: true, ...summary } });
   return ok(res, { repId, code: rep.code, reset: true, ...summary });

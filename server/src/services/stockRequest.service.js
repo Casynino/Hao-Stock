@@ -84,6 +84,19 @@ async function create(salesRepId, payload) {
   return result;
 }
 
+// settlementId is a plain reference (no Prisma relation), so attach the linked
+// settlement's status separately. Lets the UI show Approved vs Settled.
+async function attachSettlements(items) {
+  const ids = [...new Set(items.map((i) => i.settlementId).filter(Boolean))];
+  if (ids.length === 0) return items.map((i) => ({ ...i, settlement: null }));
+  const settlements = await prisma.settlement.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, status: true, settlementNumber: true, settledAt: true },
+  });
+  const map = new Map(settlements.map((s) => [s.id, s]));
+  return items.map((i) => ({ ...i, settlement: i.settlementId ? map.get(i.settlementId) || null : null }));
+}
+
 async function list(filters, pagination) {
   const where = {};
   if (filters.salesRepId) where.salesRepId = filters.salesRepId;
@@ -92,13 +105,14 @@ async function list(filters, pagination) {
     prisma.stockRequest.findMany({ where, include: INCLUDE, skip: pagination.skip, take: pagination.take, orderBy: pagination.orderBy }),
     prisma.stockRequest.count({ where }),
   ]);
-  return { items, total };
+  return { items: await attachSettlements(items), total };
 }
 
 async function get(id) {
   const r = await prisma.stockRequest.findUnique({ where: { id }, include: INCLUDE });
   if (!r) throw ApiError.notFound('Stock request not found');
-  return r;
+  const [enriched] = await attachSettlements([r]);
+  return enriched;
 }
 
 // Edit a still-pending request: replace its line items wholesale and reprice.

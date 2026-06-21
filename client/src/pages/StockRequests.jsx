@@ -39,6 +39,18 @@ function boxCount(r) {
   return r.items.reduce((s, i) => s + (requestQty(r, i) || 0), 0);
 }
 
+// Workflow-accurate status: a fulfilled request is "Approved" once the doctor
+// issues it, then "Settled" when its linked order is fully settled/closed.
+function requestDisplayStatus(r) {
+  if (r.status === 'FULFILLED') {
+    return r.settlement?.status === 'SETTLED'
+      ? { label: 'Settled', cls: 'bg-emerald-100 text-emerald-700' }
+      : { label: 'Approved', cls: 'bg-sky-100 text-sky-700' };
+  }
+  const m = REQUEST_STATUS_META[r.status] || {};
+  return { label: m.label || r.status, cls: m.cls || 'bg-elevated text-muted' };
+}
+
 function defaultPkg(product) {
   if (!product?.packagings?.length) return null;
   return product.packagings.find((p) => p.isBaseUnit) || product.packagings[0];
@@ -316,7 +328,7 @@ function OrderDetailModal({ request, isRep, staff, onClose, onEdit }) {
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div><div className="text-xs text-faint">Rep</div><div className="font-medium">{request.salesRep?.user?.name}</div></div>
-          <div><div className="text-xs text-faint">Status</div><Badge className={REQUEST_STATUS_META[request.status]?.cls}>{REQUEST_STATUS_META[request.status]?.label}</Badge></div>
+          <div><div className="text-xs text-faint">Status</div><Badge className={requestDisplayStatus(request).cls}>{requestDisplayStatus(request).label}</Badge></div>
           <div><div className="text-xs text-faint">Requested</div><div className="font-medium">{formatDateTime(request.requestedAt)}</div></div>
           <div><div className="text-xs text-faint">Lines</div><div className="font-medium">{displayItems.length}</div></div>
         </div>
@@ -379,7 +391,7 @@ function OrderDetailModal({ request, isRep, staff, onClose, onEdit }) {
 function RepRequestCard({ r, onClick }) {
   const products = productCount(r);
   const boxes = boxCount(r);
-  const meta = REQUEST_STATUS_META[r.status] || {};
+  const ds = requestDisplayStatus(r);
   return (
     <motion.button
       whileTap={{ scale: 0.985 }}
@@ -388,7 +400,7 @@ function RepRequestCard({ r, onClick }) {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-bold text-foreground">{r.requestNumber}</span>
-        <Badge className={meta.cls}>{meta.label}</Badge>
+        <Badge className={ds.cls}>{ds.label}</Badge>
       </div>
 
       <div className="mt-3">
@@ -414,9 +426,12 @@ function RepRequestCard({ r, onClick }) {
 
 // Compact row for a finished request (approved/issued, rejected, or cancelled).
 function RepRequestRow({ r, onClick }) {
-  const meta = REQUEST_STATUS_META[r.status] || {};
+  const ds = requestDisplayStatus(r);
+  const settled = r.settlement?.status === 'SETTLED';
   const Icon = r.status === 'FULFILLED' ? CheckCircle2 : r.status === 'REJECTED' ? XCircle : Ban;
-  const iconCls = r.status === 'FULFILLED' ? 'text-emerald-500' : r.status === 'REJECTED' ? 'text-rose-500' : 'text-faint';
+  const iconCls = r.status === 'FULFILLED'
+    ? (settled ? 'text-emerald-500' : 'text-sky-500')
+    : r.status === 'REJECTED' ? 'text-rose-500' : 'text-faint';
   return (
     <button
       onClick={onClick}
@@ -426,7 +441,7 @@ function RepRequestRow({ r, onClick }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-sm font-semibold text-foreground">{r.requestNumber}</span>
-          <Badge className={meta.cls}>{meta.label}</Badge>
+          <Badge className={ds.cls}>{ds.label}</Badge>
         </div>
         <div className="mt-0.5 text-xs text-faint">
           {productCount(r)} product{productCount(r) !== 1 ? 's' : ''} · {formatNumber(boxCount(r))} box{boxCount(r) !== 1 ? 'es' : ''} · {formatCurrency(orderDisplayValue(r))}
@@ -533,7 +548,7 @@ function StaffRequestTable({ onView }) {
                   <TD>{r.salesRep?.user?.name}</TD>
                   <TD>{productCount(r)} line(s)</TD>
                   <TD className="font-medium">{formatCurrency(orderDisplayValue(r))}</TD>
-                  <TD><Badge className={REQUEST_STATUS_META[r.status]?.cls}>{REQUEST_STATUS_META[r.status]?.label}</Badge></TD>
+                  <TD>{(() => { const ds = requestDisplayStatus(r); return <Badge className={ds.cls}>{ds.label}</Badge>; })()}</TD>
                   <TD className="text-faint">{formatDateTime(r.requestedAt)}</TD>
                   <TD>
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-brand-600">

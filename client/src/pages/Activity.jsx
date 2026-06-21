@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import {
-  ShoppingCart, HandCoins, ClipboardList, Coins, Timer, Globe, Boxes, Activity as ActivityIcon,
+  ShoppingCart, HandCoins, ClipboardList, Coins, Timer, Boxes, Activity as ActivityIcon,
 } from 'lucide-react';
 import api, { unwrap } from '@/lib/api';
 import { fromNow } from '@/lib/format';
@@ -12,7 +12,6 @@ const KIND = {
   STOCK_REQUEST: { icon: ClipboardList, cls: 'bg-amber-100 text-amber-700' },
   WITHDRAWAL: { icon: Coins, cls: 'bg-violet-100 text-violet-700' },
   SETTLEMENT: { icon: Timer, cls: 'bg-sky-100 text-sky-700' },
-  ONLINE_ORDER: { icon: Globe, cls: 'bg-indigo-100 text-indigo-700' },
   MOVEMENT: { icon: Boxes, cls: 'bg-elevated text-muted' },
 };
 

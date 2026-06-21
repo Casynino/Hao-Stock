@@ -126,44 +126,6 @@ const withdrawalQuery = {
   }),
 };
 
-// --- Online orders ---------------------------------------------------------
-const onlineOrderItem = z.object({
-  productId: id,
-  packagingUnitId: id,
-  quantity: z.number().int().positive(),
-  unitPrice: money.optional(),
-});
-const onlineOrderCreate = {
-  body: z.object({
-    customerName: z.string().trim().min(1).max(160),
-    customerPhone: z.string().trim().max(40).optional().nullable(),
-    customerEmail: z.string().trim().max(160).optional().nullable(),
-    customerId: id.optional().nullable(),
-    region: z.string().trim().max(120).optional().nullable(),
-    address: z.string().trim().max(300).optional().nullable(),
-    courierName: z.string().trim().max(120).optional().nullable(),
-    trackingNumber: z.string().trim().max(120).optional().nullable(),
-    discount: money.optional(),
-    amountPaid: money.optional(),
-    warehouseId: id.optional().nullable(),
-    notes: z.string().max(500).optional().nullable(),
-    items: z.array(onlineOrderItem).min(1),
-  }),
-};
-const onlineOrderStatus = {
-  body: z.object({ status: z.enum(['PENDING', 'CONFIRMED', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED']) }),
-};
-const onlineOrderPayment = {
-  body: z.object({ amountPaid: money.optional(), paymentStatus: z.enum(['UNPAID', 'PARTIAL', 'PAID']).optional() }),
-};
-const onlineOrderQuery = {
-  query: z.object({
-    ...paginationFields,
-    status: z.enum(['PENDING', 'CONFIRMED', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED']).optional(),
-    paymentStatus: z.enum(['UNPAID', 'PARTIAL', 'PAID']).optional(),
-  }),
-};
-
 // --- Daily reports ---------------------------------------------------------
 const dailyReportSubmit = {
   body: z.object({
@@ -190,6 +152,5 @@ module.exports = {
   stockRequestCreate, stockRequestUpdate, stockRequestApprove, stockRequestReject, stockRequestQuery,
   settlementQuery, settlementSettle, settlementSettleBoxes,
   withdrawRequest, withdrawDecide, withdrawalQuery,
-  onlineOrderCreate, onlineOrderStatus, onlineOrderPayment, onlineOrderQuery,
   dailyReportSubmit, dailyReportQuery,
 };

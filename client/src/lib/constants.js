@@ -31,7 +31,6 @@ export const NAV = [
   { to: '/purchases', label: 'Imports & POs', icon: 'Ship', roles: STAFF, group: 'advanced' },
   { to: '/transfers', label: 'Transfers', icon: 'Truck', roles: STAFF, group: 'advanced' },
   { to: '/settlements', label: 'Settlements (72h)', icon: 'Timer', roles: ALL, group: 'advanced' },
-  { to: '/online-orders', label: 'Online Orders', icon: 'Globe', roles: STAFF, group: 'advanced' },
   { to: '/returns', label: 'Returns', icon: 'Undo2', roles: ALL, group: 'advanced' },
   { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'advanced' },
   { to: '/reorder', label: 'Reorder', icon: 'Repeat', roles: STAFF, group: 'advanced' },
@@ -137,4 +136,3 @@ export const RETURN_STATUS_META = {
   CANCELLED: { label: 'Cancelled', cls: 'bg-elevated text-muted' },
 };
 
-export const ORDER_FLOW = ['PENDING', 'CONFIRMED', 'PACKED', 'SHIPPED', 'DELIVERED'];

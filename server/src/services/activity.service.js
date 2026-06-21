@@ -8,13 +8,12 @@ const { toNumber } = require('../utils/money');
 // timestamp so it can be rendered consistently.
 async function feed(limit = 30) {
   const take = 12;
-  const [sales, payments, requests, withdrawals, settlements, orders, movements] = await Promise.all([
+  const [sales, payments, requests, withdrawals, settlements, movements] = await Promise.all([
     prisma.sale.findMany({ take, orderBy: { createdAt: 'desc' }, include: { salesRep: { include: { user: { select: { name: true } } } }, customer: { select: { name: true } } } }),
     prisma.creditPayment.findMany({ take, orderBy: { paidAt: 'desc' }, include: { creditSale: { include: { customer: { select: { name: true } } } }, receivedBy: { select: { name: true } } } }),
     prisma.stockRequest.findMany({ take, orderBy: { updatedAt: 'desc' }, include: { salesRep: { include: { user: { select: { name: true } } } } } }),
     prisma.commissionWithdrawal.findMany({ take, orderBy: { updatedAt: 'desc' }, include: { salesRep: { include: { user: { select: { name: true } } } } } }),
     prisma.settlement.findMany({ take, orderBy: { createdAt: 'desc' }, include: { salesRep: { include: { user: { select: { name: true } } } } } }),
-    prisma.onlineOrder.findMany({ take, orderBy: { updatedAt: 'desc' } }),
     prisma.inventoryTransaction.findMany({ take, orderBy: { createdAt: 'desc' }, include: { product: { select: { name: true } }, user: { select: { name: true } } } }),
   ]);
 
@@ -34,9 +33,6 @@ async function feed(limit = 30) {
   );
   settlements.forEach((s) =>
     items.push({ kind: 'SETTLEMENT', at: s.createdAt, title: `Settlement ${s.settlementNumber} opened`, detail: `${s.salesRep?.user?.name} · ${toNumber(s.assignedValue)} TZS`, by: s.salesRep?.user?.name }),
-  );
-  orders.forEach((o) =>
-    items.push({ kind: 'ONLINE_ORDER', at: o.updatedAt, title: `Online order ${o.orderNumber} — ${o.status}`, detail: `${o.customerName} · ${toNumber(o.total)} TZS` }),
   );
   movements.forEach((m) =>
     items.push({ kind: 'MOVEMENT', at: m.createdAt, title: `${m.type}`, detail: `${m.product?.name} · ${m.baseQuantity > 0 ? '+' : ''}${m.baseQuantity}`, by: m.user?.name }),

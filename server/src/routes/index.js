@@ -28,14 +28,13 @@ router.use('/audit-logs', require('./auditLogs.routes'));
 router.use('/dashboard', require('./dashboard.routes'));
 router.use('/settings', require('./settings.routes'));
 
-// Phase 2: imports, requests, settlements, commissions, online orders, etc.
+// Phase 2: imports, requests, settlements, commissions, etc.
 router.use('/suppliers', require('./suppliers.routes'));
 router.use('/purchase-orders', require('./purchaseOrders.routes'));
 router.use('/stock-requests', require('./stockRequests.routes'));
 router.use('/settlements', require('./settlements.routes'));
 router.use('/commissions', require('./commissions.routes'));
 router.use('/penalties', require('./penalties.routes'));
-router.use('/online-orders', require('./onlineOrders.routes'));
 router.use('/daily-reports', require('./dailyReports.routes'));
 router.use('/activity', require('./activity.routes'));
 

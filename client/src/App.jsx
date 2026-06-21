@@ -26,7 +26,6 @@ import Purchases from '@/pages/Purchases';
 import StockRequests from '@/pages/StockRequests';
 import Settlements from '@/pages/Settlements';
 import Commissions from '@/pages/Commissions';
-import OnlineOrders from '@/pages/OnlineOrders';
 import DailyReports from '@/pages/DailyReports';
 import Activity from '@/pages/Activity';
 import Profile from '@/pages/Profile';
@@ -59,7 +58,6 @@ export default function App() {
         <Route path="/transfers" element={<ProtectedRoute roles={W}><Transfers /></ProtectedRoute>} />
         <Route path="/stock-requests" element={<StockRequests />} />
         <Route path="/settlements" element={<Settlements />} />
-        <Route path="/online-orders" element={<ProtectedRoute roles={W}><OnlineOrders /></ProtectedRoute>} />
         <Route path="/commissions" element={<Commissions />} />
         <Route path="/daily-reports" element={<DailyReports />} />
         <Route path="/activity" element={<ProtectedRoute roles={W}><Activity /></ProtectedRoute>} />

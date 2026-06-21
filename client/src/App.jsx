@@ -16,6 +16,7 @@ import Debts from '@/pages/Debts';
 import Returns from '@/pages/Returns';
 import StockCounts from '@/pages/StockCounts';
 import SalesReps from '@/pages/SalesReps';
+import SalesRepProfile from '@/pages/SalesRepProfile';
 import Reorder from '@/pages/Reorder';
 import Reports from '@/pages/Reports';
 import AuditLogs from '@/pages/AuditLogs';
@@ -71,6 +72,7 @@ export default function App() {
         <Route path="/returns" element={<Returns />} />
         <Route path="/stock-counts" element={<StockCounts />} />
         <Route path="/reps" element={<ProtectedRoute roles={W}><SalesReps /></ProtectedRoute>} />
+        <Route path="/reps/:id" element={<ProtectedRoute roles={W}><SalesRepProfile /></ProtectedRoute>} />
         <Route path="/reorder" element={<ProtectedRoute roles={W}><Reorder /></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute roles={W}><Reports /></ProtectedRoute>} />
         <Route path="/notifications" element={<Notifications />} />

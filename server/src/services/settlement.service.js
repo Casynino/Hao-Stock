@@ -440,6 +440,7 @@ module.exports = {
   createForIssuance,
   list,
   get,
+  orderBreakdown,
   settle,
   settleBoxes,
   recomputeStatus,

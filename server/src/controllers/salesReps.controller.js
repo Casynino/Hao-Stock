@@ -7,6 +7,8 @@ const { ok, created, paginated } = require('../utils/response');
 const { parsePagination } = require('../utils/pagination');
 const inventory = require('../services/inventory.service');
 const stockCount = require('../services/stockCount.service');
+const commission = require('../services/commission.service');
+const settlement = require('../services/settlement.service');
 const { toNumber, round2 } = require('../utils/money');
 const { pad } = require('../utils/numbering');
 const audit = require('../services/audit.service');
@@ -120,6 +122,132 @@ const get = asyncHandler(async (req, res) => {
   });
 });
 
+// Lifetime box flow for a rep: received (issued in), sold (settled), returned.
+async function repPerformance(salesRepId, boxesSold) {
+  const [recv, ret] = await Promise.all([
+    prisma.stockTransferItem.aggregate({
+      where: { transfer: { is: { direction: 'WAREHOUSE_TO_REP', toRepId: salesRepId, status: { not: 'CANCELLED' } } } },
+      _sum: { baseQuantity: true },
+    }),
+    prisma.returnItem.aggregate({
+      where: { return: { is: { salesRepId, status: { in: ['APPROVED', 'COMPLETED'] } } } },
+      _sum: { baseQuantity: true },
+    }),
+  ]);
+  const received = recv._sum.baseQuantity || 0;
+  const returned = ret._sum.baseQuantity || 0;
+  const sold = boxesSold || 0;
+  return {
+    received,
+    sold,
+    returned,
+    net: received - sold - returned,
+    conversion: received > 0 ? round2((sold / received) * 100) : 0,
+  };
+}
+
+// A merged, timestamped timeline from the rep's domain records — more meaningful
+// (and reliable) than raw audit rows. Newest first.
+async function repActivity(salesRepId) {
+  const [requests, issues, sales, returns, withdrawals] = await Promise.all([
+    prisma.stockRequest.findMany({ where: { salesRepId }, select: { requestNumber: true, status: true, requestedAt: true }, orderBy: { requestedAt: 'desc' }, take: 12 }),
+    prisma.stockTransfer.findMany({ where: { direction: 'WAREHOUSE_TO_REP', toRepId: salesRepId }, select: { transferNumber: true, status: true, dispatchedAt: true }, orderBy: { dispatchedAt: 'desc' }, take: 12 }),
+    prisma.sale.findMany({ where: { salesRepId, settlementId: { not: null }, status: { not: 'CANCELLED' } }, select: { saleNumber: true, total: true, soldAt: true }, orderBy: { soldAt: 'desc' }, take: 12 }),
+    prisma.return.findMany({ where: { salesRepId }, select: { returnNumber: true, status: true, processedAt: true }, orderBy: { processedAt: 'desc' }, take: 12 }),
+    prisma.commissionWithdrawal.findMany({ where: { salesRepId }, select: { amount: true, status: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 12 }),
+  ]);
+  const ev = [];
+  for (const r of requests) ev.push({ at: r.requestedAt, type: 'STOCK_REQUEST', title: `Stock request ${r.requestNumber}`, status: r.status });
+  for (const t of issues) ev.push({ at: t.dispatchedAt, type: 'ISSUE', title: `Stock issued · ${t.transferNumber}`, status: t.status });
+  for (const s of sales) ev.push({ at: s.soldAt, type: 'SETTLEMENT', title: `Boxes settled · ${s.saleNumber}`, amount: toNumber(s.total) });
+  for (const r of returns) ev.push({ at: r.processedAt, type: 'RETURN', title: `Return ${r.returnNumber}`, status: r.status });
+  for (const w of withdrawals) ev.push({ at: w.createdAt, type: 'COMMISSION', title: 'Commission withdrawal', status: w.status, amount: toNumber(w.amount) });
+  ev.sort((a, b) => new Date(b.at) - new Date(a.at));
+  return ev.slice(0, 40);
+}
+
+// Full control-center profile: identity, live stock, active settlements (with
+// box breakdown), commission + eligibility, penalties, performance, activity.
+const getProfile = asyncHandler(async (req, res) => {
+  const rep = await prisma.salesRepresentative.findUnique({
+    where: { id: req.params.id },
+    include: {
+      user: { select: { id: true, name: true, email: true, phone: true, isActive: true, createdAt: true } },
+      _count: { select: { customers: true } },
+    },
+  });
+  if (!rep) throw ApiError.notFound('Sales representative not found');
+
+  const [{ stock, value }, comm, settlementsRes] = await Promise.all([
+    repStockList(rep.id),
+    commission.computeForRep(rep.id),
+    settlement.list({ salesRepId: rep.id }, { skip: 0, take: 200, orderBy: { deadlineAt: 'asc' } }),
+  ]);
+  const performance = await repPerformance(rep.id, comm.boxesSettled);
+  const activity = await repActivity(rep.id);
+
+  // Active (unsettled) settlements, with box breakdown + pending-return flags.
+  const active = settlementsRes.items.filter((s) => s.status !== 'SETTLED');
+  const activeIds = active.map((s) => s.id);
+  const pendingRetRows = activeIds.length
+    ? await prisma.return.groupBy({ by: ['settlementId'], where: { settlementId: { in: activeIds }, status: 'PENDING' }, _count: { _all: true } })
+    : [];
+  const pendingMap = new Map(pendingRetRows.map((r) => [r.settlementId, r._count._all]));
+
+  const activeSettlements = [];
+  for (const s of active) {
+    const bd = await settlement.orderBreakdown(s);
+    activeSettlements.push({
+      id: s.id,
+      settlementNumber: s.settlementNumber,
+      status: s.status,
+      deadlineAt: s.deadlineAt,
+      hoursRemaining: s.hoursRemaining,
+      assignedValue: toNumber(s.assignedValue),
+      balance: s.balance,
+      pendingReturns: pendingMap.get(s.id) || 0,
+      products: bd.lines.map((l) => l.name),
+      boxesTaken: bd.totals.assignedBoxes,
+      boxesSettled: bd.totals.settledBoxes,
+      boxesReturned: bd.totals.returnedBoxes,
+      boxesRemaining: bd.totals.remainingBoxes,
+    });
+  }
+
+  const threshold = comm.rule.amountPerThreshold;
+  return ok(res, {
+    rep: {
+      id: rep.id,
+      code: rep.code,
+      name: rep.user?.name,
+      email: rep.user?.email,
+      phone: rep.phone || rep.user?.phone || null,
+      region: rep.region,
+      isActive: rep.isActive,
+      joinDate: rep.createdAt,
+      monthlyTarget: rep.monthlyTarget ? toNumber(rep.monthlyTarget) : null,
+      customers: rep._count?.customers ?? 0,
+    },
+    stock: { items: stock, value },
+    commission: {
+      earned: comm.earned,
+      paid: comm.paid,
+      available: comm.available,
+      pending: comm.pending,
+      pendingRequests: comm.pendingRequests,
+      penalties: comm.penalties,
+      penaltyBreakdown: comm.penaltyBreakdown,
+      boxesSettled: comm.boxesSettled,
+      perBox: comm.rule.perBox,
+      threshold,
+      eligible: comm.available >= threshold,
+    },
+    settlements: { active: activeSettlements, activeCount: active.length, total: settlementsRes.total },
+    performance,
+    activity,
+  });
+});
+
 const getStock = asyncHandler(async (req, res) => {
   const rep = await prisma.salesRepresentative.findUnique({ where: { id: req.params.id } });
   if (!rep) throw ApiError.notFound('Sales representative not found');
@@ -184,4 +312,4 @@ const remove = asyncHandler(async (req, res) => {
   return ok(res, { id: req.params.id, deleted: true });
 });
 
-module.exports = { list, get, getStock, getReconciliation, create, update, remove };
+module.exports = { list, get, getProfile, getStock, getReconciliation, create, update, remove };

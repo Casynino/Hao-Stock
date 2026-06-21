@@ -24,6 +24,12 @@ const list = asyncHandler(async (req, res) => {
   return paginated(res, items, { page: pagination.page, limit: pagination.limit, total });
 });
 
+// In-stock product ids at the fulfilling warehouse — drives the rep's product
+// selector. Returns ids only (no quantities) so stock levels stay hidden.
+const availableProducts = asyncHandler(async (_req, res) => {
+  return ok(res, await stockRequest.availableProductIds());
+});
+
 const get = asyncHandler(async (req, res) => {
   const request = await stockRequest.get(req.params.id);
   if (req.user.role === ROLES.SALES_REP && request.salesRepId !== req.user.salesRepId) {
@@ -69,4 +75,4 @@ const cancel = asyncHandler(async (req, res) => {
   return ok(res, request);
 });
 
-module.exports = { create, list, get, update, approve, reject, cancel };
+module.exports = { create, list, get, update, approve, reject, cancel, availableProducts };

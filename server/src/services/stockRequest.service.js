@@ -25,6 +25,30 @@ async function resolveWarehouseId(requested) {
   return wh.id;
 }
 
+// Boxes available to issue from the fulfilling warehouse, keyed by product.
+async function availabilityMap(client, warehouseId) {
+  const whId = await resolveWarehouseId(warehouseId);
+  const rows = await inventory.warehouseBalances(client, whId);
+  return new Map(rows.map((r) => [r.productId, r.baseQuantity]));
+}
+
+// Throw if any product's requested base units exceed warehouse stock. The
+// quantities/levels themselves are never surfaced to the rep (Rule 5).
+async function assertWithinStock(client, warehouseId, requestedByProduct, message) {
+  const avail = await availabilityMap(client, warehouseId);
+  for (const [productId, reqBase] of requestedByProduct) {
+    if (reqBase > (avail.get(productId) || 0)) throw ApiError.badRequest(message);
+  }
+}
+
+// Product ids currently in stock at the fulfilling warehouse (no counts exposed).
+async function availableProductIds() {
+  const avail = await availabilityMap(prisma);
+  return [...avail.entries()].filter(([, qty]) => qty > 0).map(([pid]) => pid);
+}
+
+const STOCK_EXCEEDED_MSG = 'Requested quantity exceeds available stock..contact the lab';
+
 async function create(salesRepId, payload) {
   if (!payload.items || payload.items.length === 0) {
     throw ApiError.badRequest('A stock request needs at least one item');
@@ -39,8 +63,10 @@ async function create(salesRepId, payload) {
     // Price every line at the selling price for its chosen unit (Box/Carton).
     const lines = [];
     let totalValue = 0;
+    const requestedByProduct = new Map();
     for (const i of payload.items) {
-      const { packaging } = await inventory.convertToBase(tx, i.productId, i.packagingUnitId, i.quantity);
+      const { packaging, baseQuantity } = await inventory.convertToBase(tx, i.productId, i.packagingUnitId, i.quantity);
+      requestedByProduct.set(i.productId, (requestedByProduct.get(i.productId) || 0) + baseQuantity);
       const product = pMap.get(i.productId);
       const unitPrice =
         packaging.unitPrice != null
@@ -56,6 +82,9 @@ async function create(salesRepId, payload) {
         lineTotal,
       });
     }
+
+    // Can't request products/quantities beyond what The Lab currently holds.
+    await assertWithinStock(tx, payload.warehouseId, requestedByProduct, STOCK_EXCEEDED_MSG);
 
     const requestNumber = await nextDocNumber(tx.stockRequest, 'requestNumber', 'REQ');
     return tx.stockRequest.create({
@@ -136,8 +165,10 @@ async function update(id, payload) {
 
     const lines = [];
     let totalValue = 0;
+    const requestedByProduct = new Map();
     for (const i of payload.items) {
-      const { packaging } = await inventory.convertToBase(tx, i.productId, i.packagingUnitId, i.quantity);
+      const { packaging, baseQuantity } = await inventory.convertToBase(tx, i.productId, i.packagingUnitId, i.quantity);
+      requestedByProduct.set(i.productId, (requestedByProduct.get(i.productId) || 0) + baseQuantity);
       const product = pMap.get(i.productId);
       const unitPrice =
         packaging.unitPrice != null
@@ -153,6 +184,9 @@ async function update(id, payload) {
         lineTotal,
       });
     }
+
+    // Same stock guard as creation applies to edits.
+    await assertWithinStock(tx, payload.warehouseId !== undefined ? payload.warehouseId : existing.warehouseId, requestedByProduct, STOCK_EXCEEDED_MSG);
 
     // The request is still pending — nothing issued — so swap the items wholesale.
     await tx.stockRequestItem.deleteMany({ where: { stockRequestId: id } });
@@ -202,6 +236,15 @@ async function approve(id, actor, approvals = []) {
   const approvedTotal = round2(
     toIssue.reduce((acc, d) => acc + round2(toNumber(d.unitPrice) * d.quantityApproved), 0),
   );
+
+  // Re-validate against current warehouse stock (it may have dropped since the
+  // request was raised). Clear message so the Doctor can adjust or reject.
+  const approvedByProduct = new Map();
+  for (const d of toIssue) {
+    const { baseQuantity } = await inventory.convertToBase(prisma, d.productId, d.packagingUnitId, d.quantityApproved);
+    approvedByProduct.set(d.productId, (approvedByProduct.get(d.productId) || 0) + baseQuantity);
+  }
+  await assertWithinStock(prisma, fromWarehouseId, approvedByProduct, 'Insufficient stock available for approval.');
 
   // Dispatch the transfer (posts ledger + creates the 72h settlement).
   const transfer = await transfers.createTransfer(
@@ -313,4 +356,4 @@ async function cancel(id, actor) {
   return result;
 }
 
-module.exports = { create, list, get, update, approve, reject, cancel };
+module.exports = { create, list, get, update, approve, reject, cancel, availableProductIds };

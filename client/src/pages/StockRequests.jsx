@@ -67,12 +67,27 @@ function pkgPrice(product, pkg) {
 function CartOrderSheet({ onClose, existing }) {
   const editing = !!existing;
   const { data: products = [], isLoading: productsLoading } = useProducts();
+  // Only products currently in stock at The Lab can be ordered (ids only — no
+  // counts, so stock levels stay hidden from reps). Refreshes in real time.
+  const { data: availableIds = [], isLoading: availLoading } = useQuery({
+    queryKey: ['stock-requests', 'available-products'],
+    queryFn: async () => unwrap(await api.get('/stock-requests/available-products')).data,
+    refetchInterval: 60_000,
+  });
   const [cart, setCart] = useState(() =>
     existing ? Object.fromEntries(existing.items.map((i) => [i.productId, i.quantityRequested])) : {},
   );
   const [search, setSearch] = useState('');
   const [notes, setNotes] = useState(existing?.notes || '');
   const qc = useQueryClient();
+
+  // In-stock set; when editing, keep this order's existing products visible too
+  // so they can still be reduced/removed even if now out of stock.
+  const sellable = useMemo(() => {
+    const ok = new Set(availableIds);
+    if (existing) existing.items.forEach((i) => ok.add(i.productId));
+    return products.filter((p) => ok.has(p.id));
+  }, [products, availableIds, existing]);
 
   function setQty(productId, qty) {
     setCart((prev) => {
@@ -99,8 +114,8 @@ function CartOrderSheet({ onClose, existing }) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q ? products.filter((p) => p.name.toLowerCase().includes(q)) : products;
-  }, [products, search]);
+    return q ? sellable.filter((p) => p.name.toLowerCase().includes(q)) : sellable;
+  }, [sellable, search]);
 
   const create = useMutation({
     mutationFn: () => {
@@ -169,7 +184,7 @@ function CartOrderSheet({ onClose, existing }) {
       </div>
 
       {/* Product list */}
-      {productsLoading ? (
+      {productsLoading || availLoading ? (
         <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted" /></div>
       ) : (
         <ul className="-mx-5 divide-y divide-border">
@@ -238,7 +253,7 @@ function CartOrderSheet({ onClose, existing }) {
             );
           })}
           {filtered.length === 0 && (
-            <li className="py-10 text-center text-sm text-muted">No products match your search</li>
+            <li className="py-10 text-center text-sm text-muted">{search ? 'No products match your search' : 'No products are in stock right now'}</li>
           )}
         </ul>
       )}

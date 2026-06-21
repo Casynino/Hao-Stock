@@ -16,6 +16,7 @@ const reps = requireRoles(ROLES.SALES_REP);
 
 router.use(authenticate);
 router.get('/', validate(stockRequestQuery), ctrl.list);
+router.get('/available-products', ctrl.availableProducts); // before /:id
 router.get('/:id', validate(idParam), ctrl.get);
 router.post('/', reps, validate(stockRequestCreate), ctrl.create);
 router.put('/:id', validate({ ...idParam, ...stockRequestUpdate }), ctrl.update); // owner rep or staff; pending only (enforced in service/controller)

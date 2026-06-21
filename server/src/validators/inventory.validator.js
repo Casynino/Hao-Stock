@@ -128,35 +128,6 @@ const returnQuery = {
   }),
 };
 
-const stockCountCreate = {
-  body: z.object({
-    locationType: z.enum(['WAREHOUSE', 'SALES_REP']),
-    warehouseId: id.optional().nullable(),
-    salesRepId: id.optional().nullable(),
-    items: z
-      .array(
-        z.object({
-          productId: id,
-          packagingUnitId: id.optional(),
-          countedQuantity: z.number().int().min(0),
-        }),
-      )
-      .min(1),
-    notes: z.string().max(500).optional(),
-    countedAt: z.string().datetime().optional(),
-  }),
-};
-
-const stockCountQuery = {
-  query: z.object({
-    ...paginationFields,
-    locationType: z.enum(['WAREHOUSE', 'SALES_REP']).optional(),
-    warehouseId: id.optional(),
-    salesRepId: id.optional(),
-    status: z.enum(['DRAFT', 'COMPLETED', 'CANCELLED']).optional(),
-  }),
-};
-
 const balanceQuery = {
   query: z.object({
     ...paginationFields,
@@ -187,8 +158,6 @@ module.exports = {
   transferQuery,
   returnCreate,
   returnQuery,
-  stockCountCreate,
-  stockCountQuery,
   balanceQuery,
   movementQuery,
 };

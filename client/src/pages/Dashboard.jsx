@@ -156,7 +156,7 @@ export default function Dashboard() {
           onClick={() => navigate('/reorder')}
           render={(it) => (<><span className="truncate">{it.name}</span><span className="text-xs text-faint">{it.onHand}</span></>)} />
         <AlertCard title="Missing / shrinkage" count={alerts.missingStock.count} tone="rose" icon={PackageSearch} items={alerts.missingStock.items}
-          onClick={() => navigate('/stock-counts')}
+          onClick={() => navigate('/inventory')}
           render={(it) => (<><span className="truncate">{it.product}</span><span className="text-xs text-rose-500">-{it.units}</span></>)} />
         <AlertCard title="Reps holding stock" count={alerts.outstandingRepStock.count} tone="sky" icon={Truck} items={alerts.outstandingRepStock.items}
           onClick={() => navigate('/reps')}

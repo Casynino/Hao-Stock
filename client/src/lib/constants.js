@@ -34,7 +34,6 @@ export const NAV = [
   { to: '/online-orders', label: 'Online Orders', icon: 'Globe', roles: STAFF, group: 'advanced' },
   { to: '/returns', label: 'Returns', icon: 'Undo2', roles: ALL, group: 'advanced' },
   { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'advanced' },
-  { to: '/stock-counts', label: 'Stock Counts', icon: 'ClipboardCheck', roles: ALL, group: 'advanced' },
   { to: '/reorder', label: 'Reorder', icon: 'Repeat', roles: STAFF, group: 'advanced' },
   { to: '/activity', label: 'Activity', icon: 'Activity', roles: STAFF, group: 'advanced' },
   { to: '/audit', label: 'Audit Log', icon: 'ScrollText', roles: ['ADMIN'], group: 'advanced' },

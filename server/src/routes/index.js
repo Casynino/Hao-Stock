@@ -21,7 +21,6 @@ router.use('/transfers', require('./transfers.routes'));
 router.use('/sales', require('./sales.routes'));
 router.use('/credit', require('./credit.routes'));
 router.use('/returns', require('./returns.routes'));
-router.use('/stock-counts', require('./stockCounts.routes'));
 router.use('/reports', require('./reports.routes'));
 router.use('/reorder', require('./reorder.routes'));
 router.use('/notifications', require('./notifications.routes'));

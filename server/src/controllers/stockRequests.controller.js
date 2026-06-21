@@ -32,6 +32,21 @@ const get = asyncHandler(async (req, res) => {
   return ok(res, request);
 });
 
+const update = asyncHandler(async (req, res) => {
+  const existing = await stockRequest.get(req.params.id);
+  if (req.user.role === ROLES.SALES_REP && existing.salesRepId !== req.user.salesRepId) {
+    throw ApiError.forbidden('This order does not belong to you');
+  }
+  const request = await stockRequest.update(req.params.id, req.body);
+  await audit.record(req, {
+    action: 'UPDATE',
+    entityType: 'StockRequest',
+    entityId: req.params.id,
+    newValues: { totalValue: request.totalValue, lines: request.items.length },
+  });
+  return ok(res, request);
+});
+
 const approve = asyncHandler(async (req, res) => {
   const request = await stockRequest.approve(req.params.id, req.user, req.body.approvals || []);
   await audit.record(req, { action: 'APPROVE', entityType: 'StockRequest', entityId: req.params.id, newValues: { transferId: request.transferId } });
@@ -54,4 +69,4 @@ const cancel = asyncHandler(async (req, res) => {
   return ok(res, request);
 });
 
-module.exports = { create, list, get, approve, reject, cancel };
+module.exports = { create, list, get, update, approve, reject, cancel };

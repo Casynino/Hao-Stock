@@ -31,7 +31,6 @@ export const NAV = [
   { to: '/purchases', label: 'Imports & POs', icon: 'Ship', roles: STAFF, group: 'advanced' },
   { to: '/transfers', label: 'Transfers', icon: 'Truck', roles: STAFF, group: 'advanced' },
   { to: '/settlements', label: 'Settlements (72h)', icon: 'Timer', roles: ALL, group: 'advanced' },
-  { to: '/corrections', label: 'Corrections', icon: 'Flag', roles: STAFF, group: 'advanced' },
   { to: '/online-orders', label: 'Online Orders', icon: 'Globe', roles: STAFF, group: 'advanced' },
   { to: '/returns', label: 'Returns', icon: 'Undo2', roles: ALL, group: 'advanced' },
   { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'advanced' },
@@ -137,12 +136,6 @@ export const RETURN_STATUS_META = {
   REJECTED: { label: 'Rejected', cls: 'bg-rose-100 text-rose-700' },
   COMPLETED: { label: 'Approved', cls: 'bg-emerald-100 text-emerald-700' }, // legacy
   CANCELLED: { label: 'Cancelled', cls: 'bg-elevated text-muted' },
-};
-
-export const CORRECTION_STATUS_META = {
-  PENDING: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
-  RESOLVED: { label: 'Resolved', cls: 'bg-emerald-100 text-emerald-700' },
-  DISMISSED: { label: 'Dismissed', cls: 'bg-elevated text-muted' },
 };
 
 export const ORDER_FLOW = ['PENDING', 'CONFIRMED', 'PACKED', 'SHIPPED', 'DELIVERED'];

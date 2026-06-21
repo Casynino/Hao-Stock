@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Wallet, Undo2, CheckCircle2, Flag, Clock } from 'lucide-react';
+import { Wallet, Undo2, CheckCircle2, Clock } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useProducts, useWarehouses } from '@/lib/hooks';
-import { ROLES, SETTLEMENT_STATUS_META, CORRECTION_STATUS_META } from '@/lib/constants';
+import { ROLES, SETTLEMENT_STATUS_META } from '@/lib/constants';
 import { formatCurrency, formatNumber, formatDateTime } from '@/lib/format';
 import {
   Modal, Button, Field, Input, Select, Badge, PageSpinner,
@@ -99,7 +99,7 @@ function RecordReturnModal({ order, onClose, onDone }) {
         reason: `Return on order ${order.settlementNumber}`,
       });
     },
-    onSuccess: () => { toast.success('Return submitted — awaiting warehouse approval'); onDone(); onClose(); },
+    onSuccess: () => { toast.success('Return submitted — awaiting The Lab approval'); onDone(); onClose(); },
     onError: (e) => toast.error(apiError(e)),
   });
 
@@ -112,13 +112,13 @@ function RecordReturnModal({ order, onClose, onDone }) {
       )}
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
       <Button loading={create.isPending} disabled={!warehouseId || !hasCart} onClick={() => create.mutate()}>
-        <Undo2 className="h-4 w-4" /> Return to warehouse
+        <Undo2 className="h-4 w-4" /> Return to The Lab
       </Button>
     </>
   );
 
   return (
-    <Modal open onClose={onClose} size="lg" title={`Return stock · ${order.settlementNumber}`} footer={footer}>
+    <Modal open onClose={onClose} size="lg" title={`Return to The Lab · ${order.settlementNumber}`} footer={footer}>
       {returnableLines.length === 0 ? (
         <p className="py-4 text-center text-sm text-muted">No boxes left to return on this order.</p>
       ) : (
@@ -263,27 +263,6 @@ function RejectReturnModal({ ret, onClose, onDone }) {
   );
 }
 
-// --- Flag an issue (rep/staff can't edit; admin corrects) ------------------
-function FlagModal({ order, onClose, onDone }) {
-  const [message, setMessage] = useState('');
-  const flag = useMutation({
-    mutationFn: () => api.post('/corrections', { settlementId: order.id, message }),
-    onSuccess: () => { toast.success('Correction request sent to admin'); onDone(); onClose(); },
-    onError: (e) => toast.error(apiError(e)),
-  });
-  return (
-    <Modal open onClose={onClose} title={`Flag an issue · ${order.settlementNumber}`}
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={flag.isPending} disabled={message.trim().length < 3} onClick={() => flag.mutate()}>Send request</Button></>}>
-      <div className="space-y-3">
-        <p className="text-sm text-muted">Spotted a mistake? You can't edit settlements or returns yourself — describe what's wrong and an admin will correct it. Your request is logged.</p>
-        <Field label="What needs correcting?" required>
-          <textarea className="input min-h-[110px]" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="e.g. I settled 5 boxes by mistake, it should be 3." autoFocus />
-        </Field>
-      </div>
-    </Modal>
-  );
-}
-
 function MoneyCard({ label, value, tone }) {
   const tones = { brand: 'text-brand-600', emerald: 'text-emerald-500', rose: 'text-rose-500', default: 'text-foreground' };
   return (
@@ -306,18 +285,11 @@ export default function OrderDetailModal({ settlementId, onClose }) {
     queryFn: async () => unwrap(await api.get(`/settlements/${settlementId}`)).data,
   });
 
-  const { data: corrections = [] } = useQuery({
-    queryKey: ['corrections', settlementId],
-    queryFn: async () => unwrap(await api.get('/corrections', { params: { settlementId, limit: 50 } })).data,
-    enabled: !!settlementId,
-  });
-
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['settlement', settlementId] });
     qc.invalidateQueries({ queryKey: ['settlements'] });
     qc.invalidateQueries({ queryKey: ['inventory'] });
     qc.invalidateQueries({ queryKey: ['commissions'] });
-    qc.invalidateQueries({ queryKey: ['corrections'] });
     qc.invalidateQueries({ queryKey: ['dashboard'] }); // refresh rep/admin dashboards live
   };
 
@@ -338,7 +310,6 @@ export default function OrderDetailModal({ settlementId, onClose }) {
   const active = order && order.status !== 'SETTLED';
   const remaining = order?.order?.totals?.remainingBoxes ?? 0;
   const overdue = order?.status === 'OVERDUE';
-  const canFlag = staff; // only staff/admin can flag corrections; reps no longer request these
 
   return (
     <>
@@ -347,7 +318,6 @@ export default function OrderDetailModal({ settlementId, onClose }) {
           <>
             <Button variant="secondary" onClick={onClose}>Close</Button>
             {staff && active && <Button variant="ghost" onClick={() => setSub('extend')}><Clock className="h-4 w-4" /> Extend deadline</Button>}
-            {canFlag && <Button variant="ghost" onClick={() => setSub('flag')}><Flag className="h-4 w-4" /> Flag issue</Button>}
             {canAct && active && remaining > 0 && <Button variant="secondary" onClick={() => setSub('return')}><Undo2 className="h-4 w-4" /> Return</Button>}
             {canAct && active && remaining > 0 && <Button onClick={() => setSub('settle')}><Wallet className="h-4 w-4" /> Settle boxes</Button>}
             {staff && active && (remaining <= 0
@@ -368,7 +338,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
             {order.pendingReturns > 0 && (
               <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-400">
                 <Clock className="h-4 w-4 shrink-0" />
-                <span>{order.pendingReturns} return{order.pendingReturns !== 1 ? 's' : ''} awaiting warehouse approval — boxes remain outstanding until approved.</span>
+                <span>{order.pendingReturns} return{order.pendingReturns !== 1 ? 's' : ''} awaiting The Lab approval — boxes remain outstanding until approved.</span>
               </div>
             )}
 
@@ -447,32 +417,12 @@ export default function OrderDetailModal({ settlementId, onClose }) {
                 </ul>
               )}
             </div>
-
-            {/* Correction requests raised on this order — staff view only */}
-            {staff && corrections.length > 0 && (
-              <div>
-                <div className="mb-2 text-sm font-semibold text-foreground">Correction requests</div>
-                <ul className="space-y-2 text-sm">
-                  {corrections.map((c) => (
-                    <li key={c.id} className="rounded-lg border border-border bg-elevated p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-faint">{formatDateTime(c.createdAt)} · {c.raisedBy?.name}</span>
-                        <Badge className={CORRECTION_STATUS_META[c.status]?.cls}>{CORRECTION_STATUS_META[c.status]?.label}</Badge>
-                      </div>
-                      <p className="mt-1 text-foreground">{c.message}</p>
-                      {c.resolution && <p className="mt-1 text-xs text-faint">Admin: {c.resolution}</p>}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         )}
       </Modal>
 
       {order && sub === 'settle' && <SettleBoxesModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'return' && <RecordReturnModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
-      {order && sub === 'flag' && <FlagModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'extend' && <ExtendDeadlineModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {rejectingReturn && <RejectReturnModal ret={rejectingReturn} onClose={() => setRejectingReturn(null)} onDone={refresh} />}
     </>

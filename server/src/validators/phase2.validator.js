@@ -73,6 +73,13 @@ const stockRequestCreate = {
     items: z.array(z.object({ productId: id, packagingUnitId: id, quantity: z.number().int().positive() })).min(1),
   }),
 };
+const stockRequestUpdate = {
+  body: z.object({
+    warehouseId: id.optional().nullable(),
+    notes: z.string().max(500).optional().nullable(),
+    items: z.array(z.object({ productId: id, packagingUnitId: id, quantity: z.number().int().positive() })).min(1),
+  }),
+};
 const stockRequestApprove = {
   body: z.object({
     approvals: z.array(z.object({ itemId: id, quantityApproved: z.number().int().min(0) })).optional(),
@@ -105,28 +112,6 @@ const settlementSettleBoxes = {
     reference: z.string().max(120).optional().nullable(),
     notes: z.string().max(500).optional().nullable(),
     paidAt: dateStr,
-  }),
-};
-
-// --- Correction requests ---------------------------------------------------
-const correctionCreate = {
-  body: z.object({
-    settlementId: id.optional().nullable(),
-    message: z.string().trim().min(3).max(1000),
-  }),
-};
-const correctionResolve = {
-  body: z.object({
-    status: z.enum(['RESOLVED', 'DISMISSED']).optional(),
-    resolution: z.string().trim().max(1000).optional().nullable(),
-  }),
-};
-const correctionQuery = {
-  query: z.object({
-    ...paginationFields,
-    status: z.enum(['PENDING', 'RESOLVED', 'DISMISSED']).optional(),
-    settlementId: id.optional(),
-    salesRepId: id.optional(),
   }),
 };
 
@@ -202,9 +187,8 @@ const dailyReportQuery = {
 module.exports = {
   supplierCreate, supplierUpdate, supplierQuery,
   poCreate, poUpdate, poReceive, poQuery,
-  stockRequestCreate, stockRequestApprove, stockRequestReject, stockRequestQuery,
+  stockRequestCreate, stockRequestUpdate, stockRequestApprove, stockRequestReject, stockRequestQuery,
   settlementQuery, settlementSettle, settlementSettleBoxes,
-  correctionCreate, correctionResolve, correctionQuery,
   withdrawRequest, withdrawDecide, withdrawalQuery,
   onlineOrderCreate, onlineOrderStatus, onlineOrderPayment, onlineOrderQuery,
   dailyReportSubmit, dailyReportQuery,

@@ -14,7 +14,6 @@ import Sales from '@/pages/Sales';
 import Customers from '@/pages/Customers';
 import Debts from '@/pages/Debts';
 import Returns from '@/pages/Returns';
-import StockCounts from '@/pages/StockCounts';
 import SalesReps from '@/pages/SalesReps';
 import SalesRepProfile from '@/pages/SalesRepProfile';
 import Reorder from '@/pages/Reorder';
@@ -68,7 +67,6 @@ export default function App() {
         <Route path="/customers" element={<ProtectedRoute roles={W}><Customers /></ProtectedRoute>} />
         <Route path="/debts" element={<ProtectedRoute roles={W}><Debts /></ProtectedRoute>} />
         <Route path="/returns" element={<Returns />} />
-        <Route path="/stock-counts" element={<StockCounts />} />
         <Route path="/reps" element={<ProtectedRoute roles={W}><SalesReps /></ProtectedRoute>} />
         <Route path="/reps/:id" element={<ProtectedRoute roles={W}><SalesRepProfile /></ProtectedRoute>} />
         <Route path="/reorder" element={<ProtectedRoute roles={W}><Reorder /></ProtectedRoute>} />

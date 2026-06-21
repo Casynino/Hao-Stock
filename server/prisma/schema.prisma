@@ -213,7 +213,6 @@ model User {
   createdPurchaseOrders      PurchaseOrder[]        @relation("POCreatedBy")
   decidedStockRequests       StockRequest[]         @relation("SRDecidedBy")
   decidedWithdrawals         CommissionWithdrawal[] @relation("CWDecidedBy")
-  createdOnlineOrders        OnlineOrder[]          @relation("OOCreatedBy")
   receivedSettlementPayments SettlementPayment[]    @relation("SettlementPaymentReceivedBy")
 
   @@index([roleId])
@@ -271,7 +270,6 @@ model PackagingUnit {
   stockCountItems       StockCountItem[]
   purchaseOrderItems    PurchaseOrderItem[]
   stockRequestItems     StockRequestItem[]
-  onlineOrderItems      OnlineOrderItem[]
 
   @@map("packaging_units")
 }
@@ -315,7 +313,6 @@ model Product {
   stockCountItems       StockCountItem[]
   purchaseOrderItems    PurchaseOrderItem[]
   stockRequestItems     StockRequestItem[]
-  onlineOrderItems      OnlineOrderItem[]
   settlementPayments    SettlementPayment[]
 
   @@index([brandId])
@@ -373,7 +370,6 @@ model Warehouse {
   Sale                  Sale[]
   purchaseOrders        PurchaseOrder[]
   stockRequests         StockRequest[]
-  onlineOrders          OnlineOrder[]
 
   @@map("warehouses")
 }
@@ -521,7 +517,6 @@ model Customer {
   sales        Sale[]
   creditSales  CreditSale[]
   returns      Return[]
-  onlineOrders OnlineOrder[]
 
   @@index([salesRepId])
   @@index([region])
@@ -927,21 +922,6 @@ enum SettlementStatus {
   OVERDUE
 }
 
-enum OnlineOrderStatus {
-  PENDING
-  CONFIRMED
-  PACKED
-  SHIPPED
-  DELIVERED
-  CANCELLED
-}
-
-enum OrderPaymentStatus {
-  UNPAID
-  PARTIAL
-  PAID
-}
-
 enum WithdrawalStatus {
   PENDING
   APPROVED
@@ -1183,67 +1163,6 @@ model CommissionWithdrawal {
 
 // --- Online orders ----------------------------------------------------------
 
-model OnlineOrder {
-  id            String             @id @default(cuid())
-  orderNumber   String             @unique
-  status        OnlineOrderStatus  @default(PENDING)
-  paymentStatus OrderPaymentStatus @default(UNPAID)
-
-  customerId    String?
-  customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  customerName  String
-  customerPhone String?
-  customerEmail String?
-  region        String?
-  address       String?
-
-  courierName    String?
-  trackingNumber String?
-
-  subtotal   Decimal @default(0) @db.Decimal(14, 2)
-  discount   Decimal @default(0) @db.Decimal(14, 2)
-  total      Decimal @default(0) @db.Decimal(14, 2)
-  amountPaid Decimal @default(0) @db.Decimal(14, 2)
-
-  warehouseId String?
-  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
-  saleId      String? // set when fulfilled (creates a Sale that posts the ledger)
-
-  notes       String?
-  placedAt    DateTime  @default(now())
-  shippedAt   DateTime?
-  deliveredAt DateTime?
-  createdById String?
-  createdBy   User?     @relation("OOCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  items OnlineOrderItem[]
-
-  @@index([status])
-  @@index([paymentStatus])
-  @@index([placedAt])
-  @@map("online_orders")
-}
-
-model OnlineOrderItem {
-  id              String        @id @default(cuid())
-  onlineOrderId   String
-  onlineOrder     OnlineOrder   @relation(fields: [onlineOrderId], references: [id], onDelete: Cascade)
-  productId       String
-  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
-  packagingUnitId String
-  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
-
-  quantity     Int
-  baseQuantity Int
-  unitPrice    Decimal @default(0) @db.Decimal(14, 2) // per base unit
-  lineTotal    Decimal @default(0) @db.Decimal(14, 2)
-
-  @@index([onlineOrderId])
-  @@map("online_order_items")
-}
 
 // --- Daily opening/closing reports -----------------------------------------
 

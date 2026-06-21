@@ -312,4 +312,74 @@ const remove = asyncHandler(async (req, res) => {
   return ok(res, { id: req.params.id, deleted: true });
 });
 
-module.exports = { list, get, getProfile, getStock, getReconciliation, create, update, remove };
+// DANGER: wipe ALL business activity for a rep (used to reset a test account),
+// keeping the rep + user account intact. Deletes settlements, sales, returns,
+// stock requests, transfers, withdrawals, penalties, stock counts, the rep's
+// inventory ledger entries, and notifications — then rebuilds caches. Warehouse-
+// side ledger entries are left untouched, so warehouse stock does NOT change.
+const resetData = asyncHandler(async (req, res) => {
+  const repId = req.params.id;
+  const rep = await prisma.salesRepresentative.findUnique({
+    where: { id: repId },
+    include: { user: { select: { id: true } } },
+  });
+  if (!rep) throw ApiError.notFound('Sales representative not found');
+  // Safety: caller must echo the rep code (e.g. "REP-001") to confirm.
+  if (req.body.confirm !== rep.code) {
+    throw ApiError.badRequest(`To confirm, send { "confirm": "${rep.code}" }`);
+  }
+
+  const summary = await prisma.$transaction(async (tx) => {
+    const settlements = await tx.settlement.findMany({ where: { salesRepId: repId }, select: { id: true } });
+    const settlementIds = settlements.map((s) => s.id);
+    const transfers = await tx.stockTransfer.findMany({ where: { OR: [{ toRepId: repId }, { fromRepId: repId }] }, select: { id: true } });
+    const requests = await tx.stockRequest.findMany({ where: { salesRepId: repId }, select: { id: true } });
+    const sales = await tx.sale.findMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] }, select: { id: true } });
+    const returns = await tx.return.findMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] }, select: { id: true } });
+    const withdrawals = await tx.commissionWithdrawal.findMany({ where: { salesRepId: repId }, select: { id: true } });
+    const entityIds = [
+      ...settlementIds,
+      ...transfers.map((t) => t.id),
+      ...requests.map((r) => r.id),
+      ...sales.map((s) => s.id),
+      ...returns.map((r) => r.id),
+      ...withdrawals.map((w) => w.id),
+    ];
+
+    // Rep-side ledger only -> rep stock becomes 0; warehouse entries stay.
+    const invDel = await tx.inventoryTransaction.deleteMany({ where: { salesRepId: repId } });
+    await tx.repStock.deleteMany({ where: { salesRepId: repId } });
+
+    // Business records (children cascade from their parents).
+    await tx.sale.deleteMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] } });
+    await tx.creditSale.deleteMany({ where: { salesRepId: repId } });
+    await tx.return.deleteMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] } });
+    await tx.settlementPenalty.deleteMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] } });
+    await tx.commissionWithdrawal.deleteMany({ where: { salesRepId: repId } });
+    await tx.settlement.deleteMany({ where: { salesRepId: repId } });
+    await tx.stockRequest.deleteMany({ where: { salesRepId: repId } });
+    await tx.stockTransfer.deleteMany({ where: { OR: [{ toRepId: repId }, { fromRepId: repId }] } });
+    await tx.stockCount.deleteMany({ where: { salesRepId: repId } });
+
+    // Notifications: the rep's own + any admin alerts pointing at deleted records.
+    await tx.notification.deleteMany({ where: { OR: [{ userId: rep.user.id }, { entityId: { in: entityIds } }] } });
+
+    // Rebuild stock caches from the remaining ledger (rep -> 0, warehouse same).
+    await inventory.recomputeAllCaches(tx);
+
+    return {
+      settlements: settlementIds.length,
+      sales: sales.length,
+      returns: returns.length,
+      stockRequests: requests.length,
+      transfers: transfers.length,
+      withdrawals: withdrawals.length,
+      inventoryTransactions: invDel.count,
+    };
+  }, { timeout: 120000 });
+
+  await audit.record(req, { action: 'DELETE', entityType: 'SalesRepresentative', entityId: repId, newValues: { reset: true, ...summary } });
+  return ok(res, { repId, code: rep.code, reset: true, ...summary });
+});
+
+module.exports = { list, get, getProfile, getStock, getReconciliation, create, update, remove, resetData };

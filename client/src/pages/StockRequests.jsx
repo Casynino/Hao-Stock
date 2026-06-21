@@ -1,16 +1,17 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AnimatePresence } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
+import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
   Plus, Minus, X, Search, ShoppingCart, ClipboardList, Eye,
-  Loader2, CheckCircle2, Pencil,
+  Loader2, CheckCircle2, Pencil, ChevronRight, Clock, XCircle, Ban,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useProducts } from '@/lib/hooks';
 import { ROLES, REQUEST_STATUS_META } from '@/lib/constants';
-import { formatDateTime, formatCurrency, formatNumber } from '@/lib/format';
+import { formatDate, formatDateTime, formatCurrency, formatNumber } from '@/lib/format';
 import {
   PageHeader, Card, PageSpinner, EmptyState, Badge, Button, Modal, Field, Input,
   Pagination, Table, THead, TBody, TR, TH, TD,
@@ -25,6 +26,17 @@ function orderDisplayValue(r) {
     return r.items.reduce((s, i) => s + (i.quantityApproved ?? 0) * Number(i.unitPrice || 0), 0);
   }
   return Number(r.totalValue || 0);
+}
+
+// Per-request line/box counts (use approved figures once fulfilled).
+function requestQty(r, i) {
+  return r.status === 'FULFILLED' ? (i.quantityApproved ?? 0) : i.quantityRequested;
+}
+function productCount(r) {
+  return r.items.filter((i) => requestQty(r, i) > 0).length;
+}
+function boxCount(r) {
+  return r.items.reduce((s, i) => s + (requestQty(r, i) || 0), 0);
 }
 
 function defaultPkg(product) {
@@ -361,28 +373,199 @@ function OrderDetailModal({ request, isRep, staff, onClose, onEdit }) {
   );
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
+// ── Rep card views (match the Orders & Settlements layout) ────────────────────
 
-export default function StockRequests() {
-  const { hasRole, user } = useAuth();
-  const isRep = user?.role === ROLES.SALES_REP;
-  const staff = hasRole(ROLES.WAREHOUSE_STAFF);
+// Prominent card for a request still awaiting approval (the rep can edit/cancel).
+function RepRequestCard({ r, onClick }) {
+  const products = productCount(r);
+  const boxes = boxCount(r);
+  const meta = REQUEST_STATUS_META[r.status] || {};
+  return (
+    <motion.button
+      whileTap={{ scale: 0.985 }}
+      onClick={onClick}
+      className="w-full rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 text-left transition hover:bg-elevated"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-bold text-foreground">{r.requestNumber}</span>
+        <Badge className={meta.cls}>{meta.label}</Badge>
+      </div>
+
+      <div className="mt-3">
+        <div className="text-[11px] uppercase tracking-widest text-faint">Order value</div>
+        <div className="mt-0.5 text-2xl font-black tabular-nums text-amber-400">{formatCurrency(orderDisplayValue(r))}</div>
+      </div>
+
+      <div className="mt-1.5 text-xs text-faint">
+        {products} product{products !== 1 ? 's' : ''} · {formatNumber(boxes)} box{boxes !== 1 ? 'es' : ''} · {formatDateTime(r.requestedAt)}
+      </div>
+
+      <div className="mt-3 flex items-center justify-between border-t border-white/8 pt-3">
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400">
+          <Clock className="h-3.5 w-3.5" /> Waiting for approval · tap to edit
+        </span>
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-brand-400">
+          View details <ChevronRight className="h-3.5 w-3.5" />
+        </span>
+      </div>
+    </motion.button>
+  );
+}
+
+// Compact row for a finished request (approved/issued, rejected, or cancelled).
+function RepRequestRow({ r, onClick }) {
+  const meta = REQUEST_STATUS_META[r.status] || {};
+  const Icon = r.status === 'FULFILLED' ? CheckCircle2 : r.status === 'REJECTED' ? XCircle : Ban;
+  const iconCls = r.status === 'FULFILLED' ? 'text-emerald-500' : r.status === 'REJECTED' ? 'text-rose-500' : 'text-faint';
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-elevated active:bg-elevated"
+    >
+      <Icon className={clsx('h-5 w-5 shrink-0', iconCls)} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-sm font-semibold text-foreground">{r.requestNumber}</span>
+          <Badge className={meta.cls}>{meta.label}</Badge>
+        </div>
+        <div className="mt-0.5 text-xs text-faint">
+          {productCount(r)} product{productCount(r) !== 1 ? 's' : ''} · {formatNumber(boxCount(r))} box{boxCount(r) !== 1 ? 'es' : ''} · {formatCurrency(orderDisplayValue(r))}
+        </div>
+      </div>
+      <span className="hidden shrink-0 text-xs text-faint sm:block">{formatDate(r.requestedAt)}</span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-faint" />
+    </button>
+  );
+}
+
+function RepRequestsView({ onView }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['stock-requests', 'rep-all'],
+    queryFn: async () => unwrap(await api.get('/stock-requests', { params: { limit: 100 } })),
+    refetchInterval: 60_000,
+  });
+
+  if (isLoading) return <PageSpinner />;
+
+  const all = data?.data || [];
+  const active = all.filter((r) => r.status === 'PENDING');
+  const completed = all.filter((r) => r.status !== 'PENDING');
+
+  return (
+    <div className="space-y-8">
+      {/* ── Active (needs your attention) ── */}
+      <div>
+        <div className="mb-3 flex items-center gap-2">
+          <ClipboardList className="h-4 w-4 text-brand-500" />
+          <h2 className="text-base font-bold text-foreground">
+            Active requests
+            {active.length > 0 && (
+              <span className="ml-2 rounded-full bg-brand-500 px-2 py-0.5 text-[11px] font-black text-slate-950">{active.length}</span>
+            )}
+          </h2>
+        </div>
+        {active.length === 0 ? (
+          <div className="rounded-2xl border border-border bg-surface">
+            <EmptyState
+              title="No requests waiting"
+              message="When you submit a stock request, it shows here until The Lab approves it."
+              icon={ClipboardList}
+            />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {active.map((r) => <RepRequestCard key={r.id} r={r} onClick={() => onView(r)} />)}
+          </div>
+        )}
+      </div>
+
+      {/* ── Completed ── */}
+      {completed.length > 0 && (
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            <h2 className="text-sm font-semibold text-muted">Completed requests ({completed.length})</h2>
+          </div>
+          <Card>
+            <div className="divide-y divide-border p-1">
+              {completed.map((r) => <RepRequestRow key={r.id} r={r} onClick={() => onView(r)} />)}
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Staff table (admin / warehouse review) ────────────────────────────────────
+
+function StaffRequestTable({ onView }) {
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
-  const [cartOpen, setCartOpen] = useState(false);
-  const [viewing, setViewing] = useState(null);
-  const [editing, setEditing] = useState(null);
-
   const { data, isLoading } = useQuery({
     queryKey: ['stock-requests', { page, status }],
     queryFn: async () => unwrap(await api.get('/stock-requests', { params: { page, limit: 15, status: status || undefined } })),
   });
 
   return (
+    <Card>
+      <div className="border-b border-border p-4">
+        <select className="input sm:w-48" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+          <option value="">All statuses</option>
+          {Object.entries(REQUEST_STATUS_META).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
+        </select>
+      </div>
+
+      {isLoading ? <PageSpinner /> : !data?.data?.length ? (
+        <EmptyState title="No stock requests" icon={ClipboardList} />
+      ) : (
+        <>
+          <Table>
+            <THead>
+              <TR>
+                <TH>Order</TH><TH>Rep</TH><TH>Items</TH><TH>Value</TH><TH>Status</TH><TH>Requested</TH><TH />
+              </TR>
+            </THead>
+            <TBody>
+              {data.data.map((r) => (
+                <TR key={r.id} className="cursor-pointer" onClick={() => onView(r)}>
+                  <TD className="font-medium">{r.requestNumber}</TD>
+                  <TD>{r.salesRep?.user?.name}</TD>
+                  <TD>{productCount(r)} line(s)</TD>
+                  <TD className="font-medium">{formatCurrency(orderDisplayValue(r))}</TD>
+                  <TD><Badge className={REQUEST_STATUS_META[r.status]?.cls}>{REQUEST_STATUS_META[r.status]?.label}</Badge></TD>
+                  <TD className="text-faint">{formatDateTime(r.requestedAt)}</TD>
+                  <TD>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-brand-600">
+                      {r.status === 'PENDING' ? 'Review' : 'View'} <Eye className="h-3.5 w-3.5" />
+                    </span>
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+          <Pagination page={page} totalPages={data.meta?.totalPages} total={data.meta?.total} onChange={setPage} />
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
+
+export default function StockRequests() {
+  const { hasRole, user } = useAuth();
+  const isRep = user?.role === ROLES.SALES_REP;
+  const staff = hasRole(ROLES.WAREHOUSE_STAFF);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [viewing, setViewing] = useState(null);
+  const [editing, setEditing] = useState(null);
+
+  return (
     <div>
       <PageHeader
         title="Stock Requests"
-        subtitle={isRep ? 'Request stock from the warehouse.' : "Approve or reject reps' stock requests."}
+        subtitle={isRep ? 'Request stock from The Lab — tap a request to view details.' : "Approve or reject reps' stock requests."}
       >
         {isRep && (
           <Button onClick={() => setCartOpen(true)}>
@@ -391,58 +574,7 @@ export default function StockRequests() {
         )}
       </PageHeader>
 
-      <Card>
-        <div className="border-b border-border p-4">
-          <select
-            className="input sm:w-48"
-            value={status}
-            onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-          >
-            <option value="">All statuses</option>
-            {Object.entries(REQUEST_STATUS_META).map(([k, v]) => (
-              <option key={k} value={k}>{v.label}</option>
-            ))}
-          </select>
-        </div>
-
-        {isLoading ? <PageSpinner /> : !data?.data?.length ? (
-          <EmptyState title="No stock requests" icon={ClipboardList} />
-        ) : (
-          <>
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Order</TH>
-                  {staff && <TH>Rep</TH>}
-                  <TH>Items</TH>
-                  <TH>Value</TH>
-                  <TH>Status</TH>
-                  <TH>Requested</TH>
-                  <TH />
-                </TR>
-              </THead>
-              <TBody>
-                {data.data.map((r) => (
-                  <TR key={r.id} className="cursor-pointer" onClick={() => setViewing(r)}>
-                    <TD className="font-medium">{r.requestNumber}</TD>
-                    {staff && <TD>{r.salesRep?.user?.name}</TD>}
-                    <TD>{r.items.filter((i) => r.status === 'FULFILLED' ? (i.quantityApproved ?? 0) > 0 : true).length} line(s)</TD>
-                    <TD className="font-medium">{formatCurrency(orderDisplayValue(r))}</TD>
-                    <TD><Badge className={REQUEST_STATUS_META[r.status]?.cls}>{REQUEST_STATUS_META[r.status]?.label}</Badge></TD>
-                    <TD className="text-faint">{formatDateTime(r.requestedAt)}</TD>
-                    <TD>
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-brand-600">
-                        {staff && r.status === 'PENDING' ? 'Review' : 'View'} <Eye className="h-3.5 w-3.5" />
-                      </span>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-            <Pagination page={page} totalPages={data.meta?.totalPages} total={data.meta?.total} onChange={setPage} />
-          </>
-        )}
-      </Card>
+      {isRep ? <RepRequestsView onView={setViewing} /> : <StaffRequestTable onView={setViewing} />}
 
       {/* Cart sheet — slides up from bottom (new order or editing a pending one) */}
       <AnimatePresence>

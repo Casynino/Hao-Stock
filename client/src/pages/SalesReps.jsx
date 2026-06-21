@@ -1,12 +1,12 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Plus, Eye, UserCog, ChevronRight } from 'lucide-react';
+import { Plus, UserCog, ChevronRight } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { formatCurrency, formatNumber, initials } from '@/lib/format';
 import {
-  PageHeader, Card, CardHeader, PageSpinner, EmptyState, Badge, Button, Modal, Field, Select, Input, StatCard,
-  Pagination, Table, THead, TBody, TR, TH, TD,
+  PageHeader, Card, PageSpinner, EmptyState, Button, Modal, Field, Select, Input, Pagination,
 } from '@/components/ui';
 
 function RepModal({ onClose }) {
@@ -43,61 +43,10 @@ function RepModal({ onClose }) {
   );
 }
 
-function RepDetail({ id, onClose }) {
-  const { data, isLoading } = useQuery({ queryKey: ['sales-rep', id], queryFn: async () => unwrap(await api.get(`/sales-reps/${id}`)).data, enabled: !!id });
-  const { data: recon } = useQuery({ queryKey: ['sales-rep', id, 'recon'], queryFn: async () => unwrap(await api.get(`/sales-reps/${id}/reconciliation`)).data, enabled: !!id });
-
-  return (
-    <Modal open={!!id} onClose={onClose} size="xl" title={data?.user?.name || 'Sales rep'}>
-      {isLoading || !data ? <PageSpinner /> : (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Stock held (cost)" value={formatCurrency(data.heldStockValue)} tone="amber" />
-            <StatCard label="Total sales" value={formatCurrency(data.totalSales)} tone="emerald" />
-            <StatCard label="Owed to rep" value={formatCurrency(data.outstandingDebt)} tone="rose" />
-            <StatCard label="Customers" value={data._count?.customers ?? 0} tone="violet" />
-          </div>
-
-          <div>
-            <div className="mb-1 text-sm font-semibold text-foreground">Reconciliation (assigned vs sold vs returned vs missing)</div>
-            {!recon?.items?.length ? <p className="text-sm text-faint">No movement history.</p> : (
-              <Table>
-                <THead><TR><TH>Product</TH><TH>Assigned</TH><TH>Sold</TH><TH>Returned</TH><TH>On hand</TH><TH>Missing</TH></TR></THead>
-                <TBody>{recon.items.map((r) => (
-                  <TR key={r.productId}>
-                    <TD>{r.product}</TD>
-                    <TD>{formatNumber(r.assigned)}</TD>
-                    <TD>{formatNumber(r.sold)}</TD>
-                    <TD>{formatNumber(r.returned)}</TD>
-                    <TD>{formatNumber(r.onHand)}</TD>
-                    <TD>{r.missing > 0 ? <Badge className="bg-rose-100 text-rose-700">{formatNumber(r.missing)}</Badge> : '—'}</TD>
-                  </TR>
-                ))}</TBody>
-              </Table>
-            )}
-          </div>
-
-          <div>
-            <div className="mb-1 text-sm font-semibold text-foreground">Stock currently held</div>
-            {!data.heldStock?.length ? <p className="text-sm text-faint">Holding no stock.</p> : (
-              <Table>
-                <THead><TR><TH>Product</TH><TH>Units</TH><TH>Value</TH></TR></THead>
-                <TBody>{data.heldStock.map((s) => (
-                  <TR key={s.productId}><TD>{s.name}</TD><TD>{formatNumber(s.baseQuantity)} {s.baseUnitName}s</TD><TD>{formatCurrency(s.value)}</TD></TR>
-                ))}</TBody>
-              </Table>
-            )}
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-}
-
 export default function SalesReps() {
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
-  const [detailId, setDetailId] = useState(null);
   const { data, isLoading } = useQuery({
     queryKey: ['sales-reps', { page }],
     queryFn: async () => unwrap(await api.get('/sales-reps', { params: { page, limit: 15 } })),
@@ -118,7 +67,7 @@ export default function SalesReps() {
             {data.data.map((r, i) => (
               <button
                 key={r.id}
-                onClick={() => setDetailId(r.id)}
+                onClick={() => navigate(`/reps/${r.id}`)}
                 className="card-tile animate-rise text-left"
                 style={{ animationDelay: `${i * 40}ms` }}
               >
@@ -165,7 +114,6 @@ export default function SalesReps() {
         </>
       )}
       {open && <RepModal onClose={() => setOpen(false)} />}
-      {detailId && <RepDetail id={detailId} onClose={() => setDetailId(null)} />}
     </div>
   );
 }

@@ -1,0 +1,300 @@
+import { useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
+import {
+  ArrowLeft, Package, Timer, Wallet, AlertTriangle, TrendingUp, History,
+  ShieldCheck, ShieldAlert, Power, CheckCircle2, Clock, Undo2, ClipboardList,
+  Boxes, ChevronRight, Mail, Phone, MapPin, Calendar, Coins,
+} from 'lucide-react';
+import api, { unwrap, apiError } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import { ROLES, SETTLEMENT_STATUS_META } from '@/lib/constants';
+import { formatCurrency, formatNumber, formatDate, formatDateTime, initials } from '@/lib/format';
+import OrderDetailModal from '@/components/OrderDetail';
+import {
+  PageHeader, Card, PageSpinner, EmptyState, Badge, Button, StatCard,
+  Table, THead, TBody, TR, TH, TD,
+} from '@/components/ui';
+
+// ── Section wrapper ──────────────────────────────────────────────────────────
+function Section({ icon: Icon, title, count, children, action }) {
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          {Icon && <Icon className="h-4 w-4 text-brand-500" />}
+          <h2 className="text-sm font-bold text-foreground">{title}</h2>
+          {count != null && <span className="rounded-full bg-elevated px-2 py-0.5 text-[11px] font-semibold text-muted">{count}</span>}
+        </div>
+        {action}
+      </div>
+      <div className="p-4">{children}</div>
+    </Card>
+  );
+}
+
+function Money({ label, value, tone = 'default', sub }) {
+  const tones = { default: 'text-foreground', emerald: 'text-emerald-500', rose: 'text-rose-500', brand: 'text-brand-500', amber: 'text-amber-500' };
+  return (
+    <div className="rounded-xl border border-border bg-elevated p-3">
+      <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
+      <div className={`mt-0.5 text-lg font-bold tabular-nums ${tones[tone]}`}>{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-faint">{sub}</div>}
+    </div>
+  );
+}
+
+const ACTIVITY_META = {
+  STOCK_REQUEST: { icon: ClipboardList, cls: 'text-slate-400 bg-slate-500/10' },
+  ISSUE: { icon: Package, cls: 'text-brand-400 bg-brand-500/10' },
+  SETTLEMENT: { icon: CheckCircle2, cls: 'text-emerald-400 bg-emerald-500/10' },
+  RETURN: { icon: Undo2, cls: 'text-sky-400 bg-sky-500/10' },
+  COMMISSION: { icon: Coins, cls: 'text-violet-400 bg-violet-500/10' },
+};
+
+function hoursLabel(h) {
+  if (h == null) return '';
+  if (h < 0) return `${Math.abs(Math.round(h))}h overdue`;
+  if (h < 24) return `${Math.round(h)}h left`;
+  return `${Math.round(h / 24)}d left`;
+}
+
+export default function SalesRepProfile() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole(ROLES.ADMIN);
+  const [viewing, setViewing] = useState(null); // settlementId for OrderDetailModal
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['sales-rep-profile', id],
+    queryFn: async () => unwrap(await api.get(`/sales-reps/${id}/profile`)).data,
+    refetchInterval: 60_000,
+  });
+
+  const toggleActive = useMutation({
+    mutationFn: (isActive) => api.put(`/sales-reps/${id}`, { isActive }),
+    onSuccess: (_r, isActive) => {
+      toast.success(isActive ? 'Sales rep activated' : 'Sales rep suspended');
+      qc.invalidateQueries({ queryKey: ['sales-rep-profile', id] });
+      qc.invalidateQueries({ queryKey: ['sales-reps'] });
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const refreshAll = () => {
+    qc.invalidateQueries({ queryKey: ['sales-rep-profile', id] });
+    qc.invalidateQueries({ queryKey: ['settlements'] });
+    qc.invalidateQueries({ queryKey: ['commissions'] });
+  };
+
+  if (isLoading || !data) return <PageSpinner />;
+
+  const { rep, stock, commission: c, settlements, performance: perf, activity } = data;
+  const outstanding = settlements.active.reduce((s, x) => s + (x.balance || 0), 0);
+  const hasPenalties = c.penalties > 0 || (c.penaltyBreakdown?.length > 0);
+
+  return (
+    <div>
+      <PageHeader title="Sales Rep Profile" subtitle="Full control center — stock, settlements, commission, compliance.">
+        <Button variant="secondary" onClick={() => navigate('/reps')}><ArrowLeft className="h-4 w-4" /> All reps</Button>
+      </PageHeader>
+
+      {/* ── Identity header ── */}
+      <Card className="mb-6">
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+          <span className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-xl font-bold text-white">
+            {initials(rep.name)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-bold text-foreground">{rep.name}</h1>
+              <Badge className="bg-brand-500/15 text-brand-400">{rep.code}</Badge>
+              {rep.isActive
+                ? <Badge className="bg-emerald-100 text-emerald-700">Active</Badge>
+                : <Badge className="bg-rose-100 text-rose-700">Suspended</Badge>}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted">
+              {rep.email && <span className="inline-flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-faint" />{rep.email}</span>}
+              {rep.phone && <span className="inline-flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-faint" />{rep.phone}</span>}
+              {rep.region && <span className="inline-flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-faint" />{rep.region}</span>}
+              <span className="inline-flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 text-faint" />Joined {formatDate(rep.joinDate)}</span>
+            </div>
+          </div>
+          {isAdmin && (
+            <div className="flex flex-shrink-0 gap-2">
+              {rep.isActive ? (
+                <Button variant="ghost" className="text-rose-500" loading={toggleActive.isPending} onClick={() => toggleActive.mutate(false)}>
+                  <Power className="h-4 w-4" /> Suspend
+                </Button>
+              ) : (
+                <Button loading={toggleActive.isPending} onClick={() => toggleActive.mutate(true)}>
+                  <Power className="h-4 w-4" /> Activate
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* ── Top stats ── */}
+      <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Stock in hand" value={formatNumber(perf.net)} icon={Boxes} tone="brand" hint={`${formatCurrency(stock.value)} cost`} />
+        <StatCard
+          label="Available balance"
+          value={formatCurrency(c.available)}
+          icon={c.available < 0 ? ShieldAlert : Wallet}
+          tone={c.available < 0 ? 'rose' : 'emerald'}
+          hint={c.eligible ? 'Eligible to withdraw' : `Min ${formatCurrency(c.threshold)}`}
+        />
+        <StatCard label="Outstanding (open orders)" value={formatCurrency(outstanding)} icon={Timer} tone="amber" hint={`${settlements.activeCount} active`} />
+        <StatCard label="Penalties" value={formatCurrency(c.penalties)} icon={AlertTriangle} tone={hasPenalties ? 'rose' : 'default'} hint={hasPenalties ? 'Overdue settlements' : 'None'} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* ── Left column (wider) ── */}
+        <div className="space-y-6 lg:col-span-2">
+          {/* Active settlements */}
+          <Section icon={Timer} title="Active settlements" count={settlements.activeCount}>
+            {settlements.active.length === 0 ? (
+              <p className="py-2 text-sm text-faint">No active settlements — all orders are closed.</p>
+            ) : (
+              <div className="space-y-3">
+                {settlements.active.map((s) => {
+                  const meta = SETTLEMENT_STATUS_META[s.status] || {};
+                  return (
+                    <button key={s.id} onClick={() => setViewing(s.id)}
+                      className="w-full rounded-xl border border-border bg-elevated p-3 text-left transition hover:border-brand-500/40">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-foreground">{s.settlementNumber}</span>
+                        <div className="flex items-center gap-2">
+                          {s.pendingReturns > 0 && <Badge className="bg-amber-100 text-amber-700">Return review</Badge>}
+                          <Badge className={meta.cls}>{meta.label || s.status}</Badge>
+                        </div>
+                      </div>
+                      <div className="mt-1 text-xs text-faint">{s.products.join(', ') || '—'}</div>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                        <span className="text-muted">Taken <b className="text-foreground">{formatNumber(s.boxesTaken)}</b></span>
+                        <span className="text-emerald-500">Settled <b>{formatNumber(s.boxesSettled)}</b></span>
+                        <span className="text-sky-400">Returned <b>{formatNumber(s.boxesReturned)}</b></span>
+                        <span className={s.boxesRemaining > 0 ? 'font-semibold text-rose-500' : 'text-muted'}>Remaining {formatNumber(s.boxesRemaining)}</span>
+                        <span className="ml-auto text-faint">{hoursLabel(s.hoursRemaining)} · bal {formatCurrency(s.balance)}</span>
+                        <ChevronRight className="h-3.5 w-3.5 text-brand-500" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Section>
+
+          {/* Current stock */}
+          <Section icon={Package} title="Stock in hand" count={stock.items.length} action={isAdmin && <Button variant="ghost" className="text-xs" onClick={() => navigate('/inventory')}>Adjust stock</Button>}>
+            {stock.items.length === 0 ? (
+              <p className="py-2 text-sm text-faint">Holding no stock.</p>
+            ) : (
+              <Table>
+                <THead><TR><TH>Product</TH><TH>Boxes held</TH><TH>Value (cost)</TH></TR></THead>
+                <TBody>
+                  {stock.items.map((s) => (
+                    <TR key={s.productId}>
+                      <TD className="font-medium text-foreground">{s.name}</TD>
+                      <TD>{formatNumber(s.baseQuantity)} {s.baseUnitName || 'Box'}{s.baseQuantity !== 1 ? 'es' : ''}</TD>
+                      <TD>{formatCurrency(s.value)}</TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )}
+          </Section>
+
+          {/* Performance */}
+          <Section icon={TrendingUp} title="Performance summary">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <Money label="Received" value={formatNumber(perf.received)} tone="brand" sub="boxes" />
+              <Money label="Sold" value={formatNumber(perf.sold)} tone="emerald" sub="settled" />
+              <Money label="Returned" value={formatNumber(perf.returned)} sub="boxes" />
+              <Money label="Net (held)" value={formatNumber(perf.net)} sub="boxes" />
+              <Money label="Conversion" value={`${perf.conversion}%`} tone={perf.conversion >= 80 ? 'emerald' : 'amber'} sub="sold / received" />
+            </div>
+          </Section>
+        </div>
+
+        {/* ── Right column ── */}
+        <div className="space-y-6">
+          {/* Commission overview */}
+          <Section icon={Wallet} title="Commission overview"
+            action={isAdmin && <Button variant="ghost" className="text-xs" onClick={() => navigate('/commissions')}>Payouts</Button>}>
+            <div className="grid grid-cols-2 gap-3">
+              <Money label="Total earned" value={formatCurrency(c.earned)} tone="emerald" sub={`${formatNumber(c.boxesSettled)} boxes × ${formatCurrency(c.perBox)}`} />
+              <Money label="Paid out" value={formatCurrency(c.paid)} />
+              <Money label="Available" value={formatCurrency(c.available)} tone={c.available < 0 ? 'rose' : 'emerald'} />
+              <Money label="Penalties" value={formatCurrency(c.penalties)} tone={c.penalties > 0 ? 'rose' : 'default'} />
+            </div>
+            <div className={`mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${c.eligible ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-border bg-elevated text-muted'}`}>
+              {c.eligible ? <ShieldCheck className="h-4 w-4" /> : <ShieldAlert className="h-4 w-4" />}
+              {c.eligible
+                ? <span>Eligible to withdraw — balance ≥ {formatCurrency(c.threshold)}</span>
+                : <span>Not eligible — needs {formatCurrency(c.threshold)} (has {formatCurrency(c.available)})</span>}
+            </div>
+            {c.pendingRequests > 0 && <p className="mt-2 text-xs text-amber-400">{formatCurrency(c.pendingRequests)} in pending withdrawal requests.</p>}
+          </Section>
+
+          {/* Overdue / penalties */}
+          {hasPenalties && (
+            <Section icon={AlertTriangle} title="Overdue & penalties">
+              <div className="space-y-2">
+                {c.penaltyBreakdown.map((p) => (
+                  <div key={p.settlementId} className="flex items-center justify-between gap-2 rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2 text-sm">
+                    <div>
+                      <div className="font-medium text-foreground">{p.settlementNumber}</div>
+                      <div className="text-xs text-faint">{p.daysOverdue} day{p.daysOverdue !== 1 ? 's' : ''} overdue{p.exemptPendingReturn ? ' · exempt (return under review)' : ''}</div>
+                    </div>
+                    <div className={`font-bold ${p.exemptPendingReturn ? 'text-faint line-through' : 'text-rose-500'}`}>{formatCurrency(p.totalPenalty)}</div>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
+                  <span>Total penalties</span><span className="text-rose-500">{formatCurrency(c.penalties)}</span>
+                </div>
+                <p className="text-xs text-faint">TZS 10,000/day applies after the 72h deadline until the order is settled or returned.</p>
+              </div>
+            </Section>
+          )}
+
+          {/* Activity */}
+          <Section icon={History} title="Activity history" count={activity.length}>
+            {activity.length === 0 ? (
+              <p className="py-2 text-sm text-faint">No recorded activity yet.</p>
+            ) : (
+              <ul className="space-y-3">
+                {activity.map((e, i) => {
+                  const m = ACTIVITY_META[e.type] || ACTIVITY_META.STOCK_REQUEST;
+                  const Icon = m.icon;
+                  return (
+                    <li key={i} className="flex gap-3">
+                      <span className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg ${m.cls}`}><Icon className="h-3.5 w-3.5" /></span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm text-foreground">{e.title}</span>
+                          {e.amount != null && <span className="text-sm font-semibold text-emerald-500">{formatCurrency(e.amount)}</span>}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-faint">
+                          <Clock className="h-3 w-3" />{formatDateTime(e.at)}
+                          {e.status && <span className="rounded bg-elevated px-1.5 py-0.5">{e.status}</span>}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Section>
+        </div>
+      </div>
+
+      {viewing && <OrderDetailModal settlementId={viewing} onClose={() => { setViewing(null); refreshAll(); }} />}
+    </div>
+  );
+}

@@ -17,6 +17,7 @@ router.get('/:id', validate(idParam), ctrl.get);
 router.get('/:id/profile', requireRoles(ROLES.WAREHOUSE_STAFF), validate(idParam), ctrl.getProfile);
 router.get('/:id/stock', validate(idParam), ctrl.getStock);
 router.get('/:id/reconciliation', validate(idParam), ctrl.getReconciliation);
+router.post('/:id/reset-data', requireAdmin, validate(idParam), ctrl.resetData); // DANGER: wipe a test rep's business activity
 router.post('/', requireAdmin, validate(salesRepCreate), ctrl.create);
 router.put('/:id', requireAdmin, validate({ ...idParam, ...salesRepUpdate }), ctrl.update);
 router.delete('/:id', requireAdmin, validate(idParam), ctrl.remove);

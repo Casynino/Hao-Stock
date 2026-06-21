@@ -101,6 +101,71 @@ async function get(id) {
   return r;
 }
 
+// Edit a still-pending request: replace its line items wholesale and reprice.
+// Only allowed while PENDING (nothing has been issued yet). Ownership is
+// enforced by the controller.
+async function update(id, payload) {
+  if (!payload.items || payload.items.length === 0) {
+    throw ApiError.badRequest('A stock request needs at least one item');
+  }
+  const existing = await prisma.stockRequest.findUnique({ where: { id } });
+  if (!existing) throw ApiError.notFound('Stock request not found');
+  if (existing.status !== 'PENDING') {
+    throw ApiError.badRequest(`Only pending orders can be edited (this one is ${existing.status})`);
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const productIds = [...new Set(payload.items.map((i) => i.productId))];
+    const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+    const pMap = new Map(products.map((p) => [p.id, p]));
+    if (pMap.size !== productIds.length) throw ApiError.badRequest('One or more products were not found');
+
+    const lines = [];
+    let totalValue = 0;
+    for (const i of payload.items) {
+      const { packaging } = await inventory.convertToBase(tx, i.productId, i.packagingUnitId, i.quantity);
+      const product = pMap.get(i.productId);
+      const unitPrice =
+        packaging.unitPrice != null
+          ? toNumber(packaging.unitPrice)
+          : round2(toNumber(product.sellingPrice) * packaging.baseQuantity);
+      const lineTotal = round2(unitPrice * i.quantity);
+      totalValue += lineTotal;
+      lines.push({
+        productId: i.productId,
+        packagingUnitId: i.packagingUnitId,
+        quantityRequested: i.quantity,
+        unitPrice,
+        lineTotal,
+      });
+    }
+
+    // The request is still pending — nothing issued — so swap the items wholesale.
+    await tx.stockRequestItem.deleteMany({ where: { stockRequestId: id } });
+    return tx.stockRequest.update({
+      where: { id },
+      data: {
+        warehouseId: payload.warehouseId !== undefined ? payload.warehouseId : existing.warehouseId,
+        notes: payload.notes !== undefined ? payload.notes : existing.notes,
+        totalValue: round2(totalValue),
+        items: { create: lines },
+      },
+      include: INCLUDE,
+    });
+  });
+
+  notification.notifyAdmins({
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: `Stock request updated: ${result.requestNumber}`,
+    message: `${result.salesRep?.user?.name || 'A rep'} edited their pending order — now worth ${formatCurrency(result.totalValue)}. Review and approve.`,
+    entityType: 'StockRequest',
+    entityId: result.id,
+  }).catch(() => {});
+
+  return result;
+}
+
 // Approve a request: optionally adjust quantities, then dispatch a
 // warehouse→rep transfer (which posts the ledger and opens a settlement).
 async function approve(id, actor, approvals = []) {
@@ -234,4 +299,4 @@ async function cancel(id, actor) {
   return result;
 }
 
-module.exports = { create, list, get, approve, reject, cancel };
+module.exports = { create, list, get, update, approve, reject, cancel };

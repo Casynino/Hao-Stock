@@ -83,7 +83,7 @@ function ReturnDetailModal({ returnId, canDecide, onClose }) {
         {isLoading || !ret ? <PageSpinner /> : (
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              <div><div className="text-xs text-faint">Type</div><div className="font-medium">{ret.type === 'CUSTOMER_RETURN' ? 'Customer return' : 'Rep → warehouse'}</div></div>
+              <div><div className="text-xs text-faint">Type</div><div className="font-medium">{ret.type === 'CUSTOMER_RETURN' ? 'Customer return' : 'Rep → The Lab'}</div></div>
               <div><div className="text-xs text-faint">Status</div><Badge className={meta.cls}>{meta.label}</Badge></div>
               <div><div className="text-xs text-faint">Rep / Customer</div><div className="font-medium">{ret.salesRep?.user?.name || ret.customer?.name || '—'}</div></div>
               <div><div className="text-xs text-faint">Warehouse</div><div className="font-medium">{ret.warehouse?.name || '—'}</div></div>
@@ -187,7 +187,7 @@ function ReturnModal({ onClose }) {
       return api.post('/returns', payload);
     },
     onSuccess: () => {
-      toast.success('Return submitted — awaiting warehouse approval');
+      toast.success('Return submitted — awaiting The Lab approval');
       qc.invalidateQueries({ queryKey: ['returns'] });
       onClose();
     },
@@ -215,7 +215,7 @@ function ReturnModal({ onClose }) {
       <div className="space-y-4">
         {/* Type toggle */}
         <div className="flex gap-2">
-          {[['CUSTOMER_RETURN', 'Customer return'], ['SALES_RETURN', 'Rep → warehouse']].map(([k, label]) => (
+          {[['CUSTOMER_RETURN', 'Customer return'], ['SALES_RETURN', 'Rep → The Lab']].map(([k, label]) => (
             <button key={k} onClick={() => { setType(k); setCart({}); }}
               className={`flex-1 rounded-lg border px-4 py-2 text-sm font-semibold transition ${type === k ? 'border-brand-500 bg-brand-500/10 text-brand-400' : 'border-border text-muted hover:bg-elevated'}`}>
               {label}
@@ -248,7 +248,7 @@ function ReturnModal({ onClose }) {
             </Field>
           )}
           {(type === 'SALES_RETURN' || !isRep) && (
-            <Field label="Into warehouse" required={type === 'SALES_RETURN'}
+            <Field label="Into The Lab" required={type === 'SALES_RETURN'}
               hint={type === 'CUSTOMER_RETURN' ? 'Or pick a rep ←' : undefined}>
               <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
                 <option value="">{type === 'SALES_RETURN' ? 'Select warehouse…' : '— None —'}</option>
@@ -334,7 +334,7 @@ export default function Returns() {
 
   return (
     <div>
-      <PageHeader title="Returns" subtitle="Customer returns and rep stock returned to the warehouse.">
+      <PageHeader title="Returns" subtitle="Customer returns and rep stock returned to The Lab.">
         <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New return</Button>
       </PageHeader>
 

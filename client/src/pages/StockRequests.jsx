@@ -4,7 +4,7 @@ import { AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   Plus, Minus, X, Search, ShoppingCart, ClipboardList, Eye,
-  Loader2, CheckCircle2,
+  Loader2, CheckCircle2, Pencil,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -40,11 +40,14 @@ function pkgPrice(product, pkg) {
 
 // ── Order sheet (rep only) ────────────────────────────────────────────────────
 
-function CartOrderSheet({ onClose }) {
+function CartOrderSheet({ onClose, existing }) {
+  const editing = !!existing;
   const { data: products = [], isLoading: productsLoading } = useProducts();
-  const [cart, setCart] = useState({});
+  const [cart, setCart] = useState(() =>
+    existing ? Object.fromEntries(existing.items.map((i) => [i.productId, i.quantityRequested])) : {},
+  );
   const [search, setSearch] = useState('');
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(existing?.notes || '');
   const qc = useQueryClient();
 
   function setQty(productId, qty) {
@@ -76,16 +79,21 @@ function CartOrderSheet({ onClose }) {
   }, [products, search]);
 
   const create = useMutation({
-    mutationFn: () => api.post('/stock-requests', {
-      items: cartEntries.map(({ productId, pkg, qty }) => ({
-        productId,
-        packagingUnitId: pkg.packagingUnitId,
-        quantity: qty,
-      })),
-      notes: notes || undefined,
-    }),
+    mutationFn: () => {
+      const body = {
+        items: cartEntries.map(({ productId, pkg, qty }) => ({
+          productId,
+          packagingUnitId: pkg.packagingUnitId,
+          quantity: qty,
+        })),
+        notes: notes || undefined,
+      };
+      return editing
+        ? api.put(`/stock-requests/${existing.id}`, body)
+        : api.post('/stock-requests', body);
+    },
     onSuccess: () => {
-      toast.success('Order submitted for approval!');
+      toast.success(editing ? 'Order updated' : 'Order submitted for approval!');
       qc.invalidateQueries({ queryKey: ['stock-requests'] });
       qc.invalidateQueries({ queryKey: ['dashboard', 'me'] });
       onClose();
@@ -110,13 +118,13 @@ function CartOrderSheet({ onClose }) {
       >
         {create.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
         <ShoppingCart className="h-4 w-4" />
-        Submit for approval
+        {editing ? 'Save changes' : 'Submit for approval'}
       </Button>
     </>
   );
 
   return (
-    <Modal open onClose={onClose} title="New stock request" size="lg" footer={footerContent}>
+    <Modal open onClose={onClose} title={editing ? `Edit order ${existing.requestNumber}` : 'New stock request'} size="lg" footer={footerContent}>
       {/* Search */}
       <div className="relative mb-4">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
@@ -229,7 +237,7 @@ function CartOrderSheet({ onClose }) {
 
 // ── Order detail (admin / staff review + rep view) ────────────────────────────
 
-function OrderDetailModal({ request, isRep, staff, onClose }) {
+function OrderDetailModal({ request, isRep, staff, onClose, onEdit }) {
   const qc = useQueryClient();
   const pending = request.status === 'PENDING';
   const fulfilled = request.status === 'FULFILLED';
@@ -288,6 +296,7 @@ function OrderDetailModal({ request, isRep, staff, onClose }) {
           <Button variant="secondary" onClick={onClose}>Close</Button>
           {editable && <Button variant="ghost" className="text-rose-500" loading={reject.isPending} onClick={() => reject.mutate()}>Reject</Button>}
           {editable && <Button loading={approve.isPending} onClick={() => approve.mutate()}>Approve &amp; issue</Button>}
+          {isRep && pending && <Button variant="ghost" onClick={() => onEdit?.(request)}><Pencil className="h-4 w-4" /> Edit order</Button>}
           {isRep && pending && <Button variant="danger" loading={cancel.isPending} onClick={() => cancel.mutate()}>Cancel order</Button>}
         </>
       }
@@ -362,6 +371,7 @@ export default function StockRequests() {
   const [status, setStatus] = useState('');
   const [cartOpen, setCartOpen] = useState(false);
   const [viewing, setViewing] = useState(null);
+  const [editing, setEditing] = useState(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['stock-requests', { page, status }],
@@ -434,9 +444,10 @@ export default function StockRequests() {
         )}
       </Card>
 
-      {/* Cart sheet — slides up from bottom */}
+      {/* Cart sheet — slides up from bottom (new order or editing a pending one) */}
       <AnimatePresence>
         {cartOpen && <CartOrderSheet onClose={() => setCartOpen(false)} />}
+        {editing && <CartOrderSheet existing={editing} onClose={() => setEditing(null)} />}
       </AnimatePresence>
 
       {viewing && (
@@ -445,6 +456,7 @@ export default function StockRequests() {
           isRep={isRep}
           staff={staff}
           onClose={() => setViewing(null)}
+          onEdit={(req) => { setViewing(null); setEditing(req); }}
         />
       )}
     </div>

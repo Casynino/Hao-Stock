@@ -34,7 +34,6 @@ router.use('/suppliers', require('./suppliers.routes'));
 router.use('/purchase-orders', require('./purchaseOrders.routes'));
 router.use('/stock-requests', require('./stockRequests.routes'));
 router.use('/settlements', require('./settlements.routes'));
-router.use('/corrections', require('./corrections.routes'));
 router.use('/commissions', require('./commissions.routes'));
 router.use('/penalties', require('./penalties.routes'));
 router.use('/online-orders', require('./onlineOrders.routes'));

@@ -215,8 +215,6 @@ model User {
   decidedWithdrawals         CommissionWithdrawal[] @relation("CWDecidedBy")
   createdOnlineOrders        OnlineOrder[]          @relation("OOCreatedBy")
   receivedSettlementPayments SettlementPayment[]    @relation("SettlementPaymentReceivedBy")
-  correctionsRaised          CorrectionRequest[]    @relation("CorrectionRaisedBy")
-  correctionsResolved        CorrectionRequest[]    @relation("CorrectionResolvedBy")
 
   @@index([roleId])
   @@index([warehouseId])
@@ -406,7 +404,6 @@ model SalesRepresentative {
   settlements           Settlement[]
   commissionWithdrawals CommissionWithdrawal[]
   dailyReports          DailyReport[]
-  corrections           CorrectionRequest[]
   settlementPenalties   SettlementPenalty[]
 
   @@index([region])
@@ -1110,7 +1107,6 @@ model Settlement {
   payments    SettlementPayment[]
   sales       Sale[]              @relation("OrderSales")
   returns     Return[]            @relation("OrderReturns")
-  corrections CorrectionRequest[]
   penalties   SettlementPenalty[]
 
   @@index([salesRepId])
@@ -1160,38 +1156,6 @@ model SettlementPenalty {
   @@index([settlementId])
   @@index([appliedAt])
   @@map("settlement_penalties")
-}
-
-// --- Correction requests ----------------------------------------------------
-// Reps can't edit settlements/returns/stock after submission. If they spot a
-// mistake they raise a correction request against the order; only an admin can
-// resolve it (using the admin tools), and the whole exchange is auditable.
-enum CorrectionStatus {
-  PENDING
-  RESOLVED
-  DISMISSED
-}
-
-model CorrectionRequest {
-  id           String               @id @default(cuid())
-  settlementId String?
-  settlement   Settlement?          @relation(fields: [settlementId], references: [id], onDelete: SetNull)
-  salesRepId   String?
-  salesRep     SalesRepresentative? @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
-  raisedById   String?
-  raisedBy     User?                @relation("CorrectionRaisedBy", fields: [raisedById], references: [id], onDelete: SetNull)
-  message      String
-  status       CorrectionStatus     @default(PENDING)
-  resolution   String?
-  resolvedById String?
-  resolvedBy   User?                @relation("CorrectionResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
-  resolvedAt   DateTime?
-  createdAt    DateTime             @default(now())
-
-  @@index([status])
-  @@index([settlementId])
-  @@index([salesRepId])
-  @@map("correction_requests")
 }
 
 // --- Commission withdrawals (earned commission is computed from sales) ------

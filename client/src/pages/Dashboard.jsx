@@ -16,6 +16,38 @@ import {
 } from '@/components/ui';
 import { BarChartCard } from '@/components/charts';
 
+// Per-brand summary card (OHIS / CIVILLY). Accent keyed by brand name so the
+// two are visually distinct and never confused.
+const BRAND_TONE = {
+  OHIS: { ring: 'border-emerald-500/30', bg: 'bg-emerald-500/5', badge: 'bg-emerald-500/15 text-emerald-400', dot: 'bg-emerald-400' },
+  CIVILLY: { ring: 'border-violet-500/30', bg: 'bg-violet-500/5', badge: 'bg-violet-500/15 text-violet-400', dot: 'bg-violet-400' },
+};
+function BrandCard({ b, onClick }) {
+  const t = BRAND_TONE[b.name?.toUpperCase()] || { ring: 'border-border', bg: 'bg-surface', badge: 'bg-elevated text-muted', dot: 'bg-border' };
+  const Money = ({ label, value, sub }) => (
+    <div className="rounded-xl bg-black/20 p-3">
+      <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
+      <div className="mt-0.5 text-lg font-bold tabular-nums text-foreground">{value}</div>
+      {sub && <div className="text-[11px] text-faint">{sub}</div>}
+    </div>
+  );
+  return (
+    <button onClick={onClick} className={`w-full rounded-2xl border ${t.ring} ${t.bg} p-4 text-left transition hover:bg-elevated`}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className={`h-2.5 w-2.5 rounded-full ${t.dot}`} />
+        <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${t.badge}`}>{b.name}</span>
+        <span className="ml-auto text-[11px] text-faint">this month</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        <Money label="Stock value" value={formatCurrency(b.stockValue, { compact: true })} sub={`${formatNumber(b.stockUnits)} boxes`} />
+        <Money label="Sales (month)" value={formatCurrency(b.salesMonth, { compact: true })} sub={`${formatNumber(b.unitsSoldMonth)} boxes sold`} />
+        <Money label="Sales today" value={formatCurrency(b.salesToday, { compact: true })} />
+        <Money label="In The Lab" value={`${formatNumber(b.warehouseUnits)}`} sub="boxes in warehouse" />
+      </div>
+    </button>
+  );
+}
+
 function AlertCard({ title, count, tone, icon: Icon, items = [], render, onClick }) {
   const tones = {
     amber: 'text-amber-400 bg-amber-500/15',
@@ -60,6 +92,10 @@ export default function Dashboard() {
   const { data: commission } = useQuery({
     queryKey: ['commissions', 'summary'],
     queryFn: async () => unwrap(await api.get('/commissions/summary')).data,
+  });
+  const { data: brandData } = useQuery({
+    queryKey: ['dashboard', 'brands'],
+    queryFn: async () => unwrap(await api.get('/dashboard/brands')).data,
   });
 
   if (isLoading) return <PageSpinner label="Building your dashboard…" />;
@@ -129,6 +165,16 @@ export default function Dashboard() {
         <StatCard label="Gross profit (month)" value={formatCurrency(profit.grossProfit)} icon={Wallet} tone="violet" hint={`Margin ${profit.grossMargin}%`} />
         <StatCard label="Collected (month)" value={formatCurrency(paymentsCollected.total)} icon={Wallet} tone="slate" />
       </div>
+
+      {/* By brand — OHIS and CIVILLY tracked separately */}
+      {brandData?.brands?.length > 0 && (
+        <div className="mt-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">By brand</h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {brandData.brands.map((b) => <BrandCard key={b.brandId} b={b} onClick={() => navigate('/inventory')} />)}
+          </div>
+        </div>
+      )}
 
       {/* Charts */}
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">

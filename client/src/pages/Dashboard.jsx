@@ -42,7 +42,7 @@ function BrandCard({ b, onClick }) {
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <Money label="Stock value" value={formatCurrency(b.stockValue)} sub={`${formatNumber(b.stockUnits)} boxes`} />
         <Money label="Sales (month)" value={formatCurrency(b.salesMonth)} sub={`${formatNumber(b.unitsSoldMonth)} boxes sold`} />
-        <Money label="Sales today" value={formatCurrency(b.salesToday)} />
+        <Money label="Profit (month)" value={formatCurrency(b.profitMonth)} sub={`${b.marginMonth}% margin`} />
         <Money label="In The Lab" value={`${formatNumber(b.warehouseUnits)}`} sub="boxes in warehouse" />
       </div>
     </button>
@@ -209,7 +209,7 @@ export default function Dashboard() {
       <div className="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-4">
         <StatCard label="Sales today" value={formatCurrency(sales.daily.revenue)} icon={TrendingUp} tone="emerald" hint={`${sales.daily.orders} orders`} />
         <StatCard label="Sales this month" value={formatCurrency(sales.monthly.revenue)} icon={TrendingUp} tone="emerald" hint={`${sales.monthly.orders} orders`} onClick={() => navigate('/reports')} />
-        <StatCard label="Gross profit (month)" value={formatCurrency(profit.grossProfit)} icon={Wallet} tone="violet" hint={`Margin ${profit.grossMargin}%`} />
+        <StatCard label="Gross profit (month)" value={formatCurrency(profit.grossProfit)} icon={Wallet} tone="violet" hint={`Margin ${profit.grossMargin}% · view profit`} onClick={() => navigate('/profit')} />
         <StatCard label="Collected (month)" value={formatCurrency(paymentsCollected.total)} icon={Wallet} tone="slate" />
       </div>
 

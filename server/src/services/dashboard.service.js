@@ -108,7 +108,7 @@ async function overview() {
     periodSales('month'),
     credit.debtSummary(),
     paymentsCollected('month'),
-    reports.profitReport({ period: 'month' }),
+    reports.profitOverview('month'),
     reports.productPerformance({ period: 'month', limit: 5 }),
     reports.regionalPerformance({ period: 'month' }),
     reorder.reorderAnalysis(),
@@ -136,10 +136,10 @@ async function overview() {
     },
     sales: { daily, weekly, monthly },
     profit: {
-      grossProfit: profit.grossProfit,
-      netProfit: profit.netProfit,
-      grossMargin: profit.grossMargin,
-      revenue: profit.revenue,
+      grossProfit: profit.totals.profit,
+      netProfit: profit.totals.profit,
+      grossMargin: profit.totals.margin,
+      revenue: profit.totals.revenue,
     },
     debt: {
       totalOutstanding: debt.totalOutstanding,
@@ -187,14 +187,15 @@ async function brandBreakdown() {
   const today = resolveRange({ period: 'today' });
   const [brands, products, val, monthItems, todayItems] = await Promise.all([
     prisma.brand.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
-    prisma.product.findMany({ select: { id: true, brandId: true } }),
+    prisma.product.findMany({ select: { id: true, brandId: true, purchasePrice: true } }),
     inventory.valuation(prisma),
     prisma.saleItem.groupBy({ by: ['productId'], where: { sale: { status: { not: 'CANCELLED' }, soldAt: { gte: month.start, lte: month.end } } }, _sum: { lineTotal: true, baseQuantity: true } }),
     prisma.saleItem.groupBy({ by: ['productId'], where: { sale: { status: { not: 'CANCELLED' }, soldAt: { gte: today.start, lte: today.end } } }, _sum: { lineTotal: true } }),
   ]);
 
   const brandOf = new Map(products.map((p) => [p.id, p.brandId]));
-  const mk = (b) => ({ brandId: b.id, name: b.name, stockValue: 0, stockUnits: 0, warehouseUnits: 0, salesMonth: 0, unitsSoldMonth: 0, salesToday: 0 });
+  const costOf = new Map(products.map((p) => [p.id, toNumber(p.purchasePrice)]));
+  const mk = (b) => ({ brandId: b.id, name: b.name, stockValue: 0, stockUnits: 0, warehouseUnits: 0, salesMonth: 0, costMonth: 0, unitsSoldMonth: 0, salesToday: 0 });
   const byBrand = new Map(brands.map((b) => [b.id, mk(b)]));
 
   for (const it of val.items) {
@@ -208,6 +209,7 @@ async function brandBreakdown() {
     const b = byBrand.get(brandOf.get(r.productId));
     if (!b) continue;
     b.salesMonth += toNumber(r._sum.lineTotal);
+    b.costMonth += (r._sum.baseQuantity || 0) * (costOf.get(r.productId) || 0);
     b.unitsSoldMonth += r._sum.baseQuantity || 0;
   }
   for (const r of todayItems) {
@@ -217,12 +219,22 @@ async function brandBreakdown() {
   }
 
   const items = [...byBrand.values()]
-    .map((b) => ({ ...b, stockValue: round2(b.stockValue), salesMonth: round2(b.salesMonth), salesToday: round2(b.salesToday) }))
+    .map((b) => {
+      const profitMonth = round2(b.salesMonth - b.costMonth);
+      return {
+        ...b,
+        stockValue: round2(b.stockValue),
+        salesMonth: round2(b.salesMonth),
+        salesToday: round2(b.salesToday),
+        profitMonth,
+        marginMonth: b.salesMonth > 0 ? round2((profitMonth / b.salesMonth) * 100) : 0,
+      };
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
   const sum = (k) => round2(items.reduce((t, b) => t + b[k], 0));
   return {
     brands: items,
-    totals: { stockValue: sum('stockValue'), stockUnits: items.reduce((t, b) => t + b.stockUnits, 0), salesMonth: sum('salesMonth'), salesToday: sum('salesToday') },
+    totals: { stockValue: sum('stockValue'), stockUnits: items.reduce((t, b) => t + b.stockUnits, 0), salesMonth: sum('salesMonth'), salesToday: sum('salesToday'), profitMonth: sum('profitMonth') },
   };
 }
 

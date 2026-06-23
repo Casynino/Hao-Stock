@@ -112,7 +112,7 @@ const balances = asyncHandler(async (req, res) => {
     prisma.salesRepresentative.findMany({ include: { user: { select: { name: true } } } }),
     prisma.product.findMany({
       where: q.productId ? { id: q.productId } : undefined,
-      select: { id: true, name: true, sku: true, baseUnitName: true, purchasePrice: true, sellingPrice: true, minStockLevel: true },
+      select: { id: true, name: true, sku: true, baseUnitName: true, purchasePrice: true, sellingPrice: true, minStockLevel: true, brand: { select: { id: true, name: true } } },
     }),
   ]);
 
@@ -150,6 +150,8 @@ const balances = asyncHandler(async (req, res) => {
       name: p.name,
       sku: p.sku,
       baseUnitName: p.baseUnitName,
+      brandId: p.brand?.id || null,
+      brandName: p.brand?.name || null,
       minStockLevel: p.minStockLevel,
       sellingPrice: toNumber(p.sellingPrice),
       lowStock: p.minStockLevel > 0 && g.totalBase <= p.minStockLevel,
@@ -159,6 +161,10 @@ const balances = asyncHandler(async (req, res) => {
     };
   });
 
+  if (q.brand) {
+    const b = q.brand.toLowerCase();
+    rows = rows.filter((r) => (r.brandName || '').toLowerCase() === b);
+  }
   if (q.search) {
     const s = q.search.toLowerCase();
     rows = rows.filter((r) => r.name.toLowerCase().includes(s) || r.sku.toLowerCase().includes(s));

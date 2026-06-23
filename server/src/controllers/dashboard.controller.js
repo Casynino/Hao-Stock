@@ -21,6 +21,10 @@ const activity = asyncHandler(async (req, res) => {
   return ok(res, data);
 });
 
+const brands = asyncHandler(async (_req, res) => {
+  return ok(res, await dashboard.brandBreakdown());
+});
+
 // Personal dashboard for a sales representative — built around the rep's real
 // job: stock held, open orders (72h settlements), and commission on settled
 // boxes. Reps do not record customer sales, so there are no sales figures here.
@@ -98,4 +102,4 @@ const myStats = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { overview, activity, myOverview, myStats };
+module.exports = { overview, activity, brands, myOverview, myStats };

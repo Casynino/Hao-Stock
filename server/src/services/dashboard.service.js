@@ -180,4 +180,50 @@ async function overview() {
   };
 }
 
-module.exports = { overview, recentActivity, outstandingRepStock, paymentsCollected };
+// Per-brand split (OHIS vs CIVILLY): stock on hand + this month's/today's sales.
+// Everything is grouped by the product's brand, so no brand is ever mixed.
+async function brandBreakdown() {
+  const month = resolveRange({ period: 'month' });
+  const today = resolveRange({ period: 'today' });
+  const [brands, products, val, monthItems, todayItems] = await Promise.all([
+    prisma.brand.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
+    prisma.product.findMany({ select: { id: true, brandId: true } }),
+    inventory.valuation(prisma),
+    prisma.saleItem.groupBy({ by: ['productId'], where: { sale: { status: { not: 'CANCELLED' }, soldAt: { gte: month.start, lte: month.end } } }, _sum: { lineTotal: true, baseQuantity: true } }),
+    prisma.saleItem.groupBy({ by: ['productId'], where: { sale: { status: { not: 'CANCELLED' }, soldAt: { gte: today.start, lte: today.end } } }, _sum: { lineTotal: true } }),
+  ]);
+
+  const brandOf = new Map(products.map((p) => [p.id, p.brandId]));
+  const mk = (b) => ({ brandId: b.id, name: b.name, stockValue: 0, stockUnits: 0, warehouseUnits: 0, salesMonth: 0, unitsSoldMonth: 0, salesToday: 0 });
+  const byBrand = new Map(brands.map((b) => [b.id, mk(b)]));
+
+  for (const it of val.items) {
+    const b = byBrand.get(brandOf.get(it.productId));
+    if (!b) continue;
+    b.stockValue += it.costValue;
+    b.stockUnits += it.totalBase;
+    b.warehouseUnits += it.warehouseBase;
+  }
+  for (const r of monthItems) {
+    const b = byBrand.get(brandOf.get(r.productId));
+    if (!b) continue;
+    b.salesMonth += toNumber(r._sum.lineTotal);
+    b.unitsSoldMonth += r._sum.baseQuantity || 0;
+  }
+  for (const r of todayItems) {
+    const b = byBrand.get(brandOf.get(r.productId));
+    if (!b) continue;
+    b.salesToday += toNumber(r._sum.lineTotal);
+  }
+
+  const items = [...byBrand.values()]
+    .map((b) => ({ ...b, stockValue: round2(b.stockValue), salesMonth: round2(b.salesMonth), salesToday: round2(b.salesToday) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const sum = (k) => round2(items.reduce((t, b) => t + b[k], 0));
+  return {
+    brands: items,
+    totals: { stockValue: sum('stockValue'), stockUnits: items.reduce((t, b) => t + b.stockUnits, 0), salesMonth: sum('salesMonth'), salesToday: sum('salesToday') },
+  };
+}
+
+module.exports = { overview, recentActivity, outstandingRepStock, paymentsCollected, brandBreakdown };

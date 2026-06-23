@@ -135,6 +135,7 @@ const balanceQuery = {
     warehouseId: id.optional(),
     salesRepId: id.optional(),
     productId: id.optional(),
+    brand: z.string().trim().max(80).optional(),
   }),
 };
 

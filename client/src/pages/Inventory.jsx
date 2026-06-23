@@ -116,13 +116,23 @@ function AdjustModal({ mode, onClose }) {
   );
 }
 
+const BRAND_CHIP = {
+  OHIS: 'bg-emerald-100 text-emerald-700',
+  CIVILLY: 'bg-violet-100 text-violet-700',
+};
+
 function Balances() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [brand, setBrand] = useState('');
   const debounced = useDebounce(search);
+  const { data: brands = [] } = useQuery({
+    queryKey: ['brands', 'all'],
+    queryFn: async () => unwrap(await api.get('/brands', { params: { limit: 50 } })).data,
+  });
   const { data, isLoading } = useQuery({
-    queryKey: ['inventory', 'balances', { page, search: debounced }],
-    queryFn: async () => unwrap(await api.get('/inventory/balances', { params: { page, limit: 24, search: debounced } })),
+    queryKey: ['inventory', 'balances', { page, search: debounced, brand }],
+    queryFn: async () => unwrap(await api.get('/inventory/balances', { params: { page, limit: 24, search: debounced, brand: brand || undefined } })),
   });
 
   const rows = data?.data || [];
@@ -130,8 +140,16 @@ function Balances() {
 
   return (
     <div>
-      <div className="mb-4 max-w-sm">
-        <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search product…" />
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="max-w-sm flex-1"><SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search product…" /></div>
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => { setBrand(''); setPage(1); }}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${brand === '' ? 'bg-brand-500 text-slate-950' : 'border border-border text-muted hover:bg-elevated'}`}>All brands</button>
+          {brands.map((b) => (
+            <button key={b.id} onClick={() => { setBrand(b.name); setPage(1); }}
+              className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${brand === b.name ? 'bg-brand-500 text-slate-950' : 'border border-border text-muted hover:bg-elevated'}`}>{b.name}</button>
+          ))}
+        </div>
       </div>
       {isLoading ? (
         <Card><PageSpinner /></Card>
@@ -145,7 +163,10 @@ function Balances() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate font-semibold leading-tight text-foreground">{r.name}</div>
-                    <div className="text-xs text-faint">{r.sku}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      {r.brandName && <Badge className={BRAND_CHIP[r.brandName?.toUpperCase()] || 'bg-elevated text-muted'}>{r.brandName}</Badge>}
+                      <span className="text-xs text-faint">{r.sku}</span>
+                    </div>
                   </div>
                   {r.lowStock && <Badge className="bg-rose-100 text-rose-700">Low</Badge>}
                 </div>

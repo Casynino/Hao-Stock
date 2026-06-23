@@ -129,6 +129,11 @@ const profit = asyncHandler(async (req, res) => {
   });
 });
 
+const profitOverview = asyncHandler(async (req, res) => {
+  const q = req.validatedQuery || req.query;
+  return ok(res, await reports.profitOverview(q.period || 'month'));
+});
+
 const inventoryValuation = asyncHandler(async (req, res) => {
   const q = req.validatedQuery || req.query;
   const data = await reports.inventoryValuationReport();
@@ -196,6 +201,7 @@ module.exports = {
   regional,
   salesReps,
   profit,
+  profitOverview,
   inventoryValuation,
   inventoryMovements,
   debts,

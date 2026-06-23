@@ -18,6 +18,7 @@ import SalesReps from '@/pages/SalesReps';
 import SalesRepProfile from '@/pages/SalesRepProfile';
 import Reorder from '@/pages/Reorder';
 import Reports from '@/pages/Reports';
+import Profit from '@/pages/Profit';
 import AuditLogs from '@/pages/AuditLogs';
 import Users from '@/pages/Users';
 import Settings from '@/pages/Settings';
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/reps/:id" element={<ProtectedRoute roles={W}><SalesRepProfile /></ProtectedRoute>} />
         <Route path="/reorder" element={<ProtectedRoute roles={W}><Reorder /></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute roles={W}><Reports /></ProtectedRoute>} />
+        <Route path="/profit" element={<ProtectedRoute roles={W}><Profit /></ProtectedRoute>} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/audit" element={<ProtectedRoute roles={[ROLES.ADMIN]}><AuditLogs /></ProtectedRoute>} />

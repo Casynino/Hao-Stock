@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Package, Boxes, Truck, ShoppingCart, Users, HandCoins, Undo2,
   ClipboardCheck, UserCog, Repeat, BarChart3, ScrollText, ShieldCheck, Settings,
   Bell, Menu, X, LogOut, ChevronDown, User, Lock, Eye, EyeOff, Loader2,
-  Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag,
+  Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag, TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { NAV, ROLE_LABELS, ROLES } from '@/lib/constants';
@@ -18,7 +18,7 @@ import { Modal, Button, Field, Input } from '@/components/ui';
 const ICONS = {
   LayoutDashboard, Package, Boxes, Truck, ShoppingCart, Users, HandCoins, Undo2,
   ClipboardCheck, UserCog, Repeat, BarChart3, ScrollText, ShieldCheck, Settings,
-  Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag,
+  Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag, TrendingUp,
 };
 
 function NavItems({ items, onNavigate }) {

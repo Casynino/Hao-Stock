@@ -9,6 +9,7 @@ const { TX_TYPES } = require('./inventory.validator');
 const reportQuery = {
   query: z.object({
     ...dateRangeFields,
+    period: z.enum(['today', 'week', 'month', 'year', 'all']).optional(),
     groupBy: z.enum(['day', 'week', 'month']).optional(),
     salesRepId: id.optional(),
     warehouseId: id.optional(),

@@ -219,4 +219,24 @@ const recomputeCaches = asyncHandler(async (req, res) => {
   return ok(res, result);
 });
 
-module.exports = { stockIn, adjust, damage, balances, movements, recomputeCaches };
+// Admin maintenance: delete a single mistaken ledger entry (e.g. a damage or
+// stock-count loss recorded by mistake) and rebuild caches so stock and the
+// shrinkage/profit math reflect the removal. Irreversible — use carefully.
+const deleteMovement = asyncHandler(async (req, res) => {
+  const tx = await prisma.inventoryTransaction.findUnique({
+    where: { id: req.params.id },
+    include: { product: { select: { name: true } } },
+  });
+  if (!tx) throw ApiError.notFound('Ledger entry not found');
+  await prisma.inventoryTransaction.delete({ where: { id: req.params.id } });
+  await inventory.recomputeAllCaches(prisma);
+  await audit.record(req, {
+    action: 'DELETE',
+    entityType: 'InventoryTransaction',
+    entityId: req.params.id,
+    oldValues: { type: tx.type, product: tx.product?.name, baseQuantity: tx.baseQuantity, notes: tx.notes },
+  });
+  return ok(res, { deleted: true, id: req.params.id, type: tx.type, product: tx.product?.name, baseQuantity: tx.baseQuantity });
+});
+
+module.exports = { stockIn, adjust, damage, balances, movements, recomputeCaches, deleteMovement };

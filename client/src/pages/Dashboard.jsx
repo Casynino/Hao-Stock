@@ -49,11 +49,36 @@ function BrandCard({ b, onClick }) {
   );
 }
 
+// Neon-glow tones — full class strings so Tailwind JIT keeps the arbitrary shadows.
 const ALERT_TONES = {
-  amber: { text: 'text-amber-400', chip: 'bg-amber-500/15 text-amber-400', ring: 'hover:border-amber-500/40', glow: 'from-amber-500/15', bar: 'bg-amber-500' },
-  rose: { text: 'text-rose-400', chip: 'bg-rose-500/15 text-rose-400', ring: 'hover:border-rose-500/40', glow: 'from-rose-500/15', bar: 'bg-rose-500' },
-  sky: { text: 'text-sky-400', chip: 'bg-sky-500/15 text-sky-400', ring: 'hover:border-sky-500/40', glow: 'from-sky-500/15', bar: 'bg-sky-500' },
-  violet: { text: 'text-violet-400', chip: 'bg-violet-500/15 text-violet-400', ring: 'hover:border-violet-500/40', glow: 'from-violet-500/15', bar: 'bg-violet-500' },
+  amber: {
+    border: 'border-amber-500/40',
+    glow: 'shadow-[0_0_22px_-8px_rgba(245,158,11,0.6)] hover:shadow-[0_0_38px_-6px_rgba(245,158,11,0.9)]',
+    num: 'text-amber-300 [text-shadow:0_0_18px_rgba(245,158,11,0.65)]',
+    icon: 'text-amber-300 border-amber-400/50 bg-amber-500/10 shadow-[0_0_18px_-5px_rgba(245,158,11,0.8)]',
+    blob: 'bg-amber-500',
+  },
+  rose: {
+    border: 'border-rose-500/40',
+    glow: 'shadow-[0_0_22px_-8px_rgba(244,63,94,0.6)] hover:shadow-[0_0_38px_-6px_rgba(244,63,94,0.95)]',
+    num: 'text-rose-300 [text-shadow:0_0_18px_rgba(244,63,94,0.65)]',
+    icon: 'text-rose-300 border-rose-400/50 bg-rose-500/10 shadow-[0_0_18px_-5px_rgba(244,63,94,0.8)]',
+    blob: 'bg-rose-500',
+  },
+  sky: {
+    border: 'border-sky-500/40',
+    glow: 'shadow-[0_0_22px_-8px_rgba(14,165,233,0.6)] hover:shadow-[0_0_38px_-6px_rgba(14,165,233,0.95)]',
+    num: 'text-sky-300 [text-shadow:0_0_18px_rgba(14,165,233,0.65)]',
+    icon: 'text-sky-300 border-sky-400/50 bg-sky-500/10 shadow-[0_0_18px_-5px_rgba(14,165,233,0.8)]',
+    blob: 'bg-sky-500',
+  },
+  violet: {
+    border: 'border-violet-500/40',
+    glow: 'shadow-[0_0_22px_-8px_rgba(139,92,246,0.6)] hover:shadow-[0_0_38px_-6px_rgba(139,92,246,0.95)]',
+    num: 'text-violet-300 [text-shadow:0_0_18px_rgba(139,92,246,0.65)]',
+    icon: 'text-violet-300 border-violet-400/50 bg-violet-500/10 shadow-[0_0_18px_-5px_rgba(139,92,246,0.8)]',
+    blob: 'bg-violet-500',
+  },
 };
 
 function AlertCard({ title, count, tone, icon: Icon, items = [], render, onClick }) {
@@ -63,35 +88,40 @@ function AlertCard({ title, count, tone, icon: Icon, items = [], render, onClick
     <motion.button
       type="button"
       onClick={onClick}
-      whileTap={onClick ? { scale: 0.99 } : undefined}
+      whileTap={onClick ? { scale: 0.985 } : undefined}
       className={clsx(
-        'group relative w-full overflow-hidden rounded-2xl border border-border bg-surface pb-1 text-left transition-all duration-200',
-        onClick && `cursor-pointer ${t.ring} hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/30`,
+        'group relative w-full overflow-hidden rounded-2xl border bg-[#0a0d12] text-left transition-all duration-300',
+        active ? t.border : 'border-white/10',
+        active && t.glow,
+        onClick && 'cursor-pointer hover:-translate-y-1',
       )}
     >
-      {/* tone accent bar + soft corner glow */}
-      <span className={clsx('absolute inset-x-0 top-0 h-1', t.bar, active ? 'opacity-80' : 'opacity-25')} />
-      <span className={clsx('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-gradient-to-br to-transparent blur-2xl', t.glow)} />
+      {/* ambient neon haze inside the card */}
+      {active && <div className={clsx('pointer-events-none absolute -right-6 -top-10 h-32 w-32 rounded-full opacity-25 blur-3xl transition-opacity duration-300 group-hover:opacity-40', t.blob)} />}
 
-      <div className="flex items-start justify-between gap-2 px-5 pt-5">
-        <div className="flex items-center gap-3">
-          <span className={clsx('flex h-11 w-11 items-center justify-center rounded-xl', t.chip)}><Icon className="h-5 w-5" /></span>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-faint">{title}</div>
-            <div className={clsx('text-3xl font-black leading-none tabular-nums', active ? t.text : 'text-foreground/30')}>{count}</div>
-          </div>
-        </div>
-        {onClick && <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-faint transition-all group-hover:translate-x-1 group-hover:text-foreground" />}
+      {/* header: neon-outlined icon + sliding arrow */}
+      <div className="relative flex items-start justify-between px-5 pt-5">
+        <span className={clsx('flex h-12 w-12 items-center justify-center rounded-xl border', active ? t.icon : 'border-white/10 bg-white/5 text-foreground/40')}>
+          <Icon className="h-6 w-6" strokeWidth={2.2} />
+        </span>
+        {onClick && <ArrowRight className="mt-1 h-4 w-4 text-faint transition-all duration-200 group-hover:translate-x-1 group-hover:text-foreground" />}
       </div>
 
+      {/* hero count */}
+      <div className="relative mt-3 px-5">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">{title}</div>
+        <div className={clsx('mt-1 text-5xl font-black leading-none tabular-nums', active ? t.num : 'text-white/15')}>{count}</div>
+      </div>
+
+      {/* items */}
       {items.length > 0 ? (
-        <ul className="mt-4 divide-y divide-border/50 border-t border-border/50 text-sm">
+        <div className="relative mt-4 px-2 pb-3">
           {items.slice(0, 4).map((it, i) => (
-            <li key={i} className="flex items-center justify-between gap-2 px-5 py-2 text-muted">{render(it)}</li>
+            <div key={i} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-white/[0.04]">{render(it)}</div>
           ))}
-        </ul>
+        </div>
       ) : (
-        <div className="mt-4 flex items-center gap-1.5 border-t border-border/50 px-5 py-3 text-xs font-medium text-emerald-500/80">
+        <div className="relative mt-4 flex items-center gap-1.5 px-5 pb-5 text-xs font-semibold text-emerald-400 [text-shadow:0_0_12px_rgba(52,211,153,0.6)]">
           <CheckCircle2 className="h-3.5 w-3.5" /> All clear
         </div>
       )}

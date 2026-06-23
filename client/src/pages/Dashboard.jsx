@@ -2,9 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Wallet, TrendingUp, HandCoins, Boxes, Warehouse, Truck, AlertTriangle,
-  PackageSearch, Repeat, ArrowRight, Timer, Coins,
+  PackageSearch, Repeat, ArrowRight, Timer, Coins, CheckCircle2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import clsx from 'clsx';
 import api, { unwrap } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrency, formatNumber, fromNow } from '@/lib/format';
@@ -48,37 +49,53 @@ function BrandCard({ b, onClick }) {
   );
 }
 
+const ALERT_TONES = {
+  amber: { text: 'text-amber-400', chip: 'bg-amber-500/15 text-amber-400', ring: 'hover:border-amber-500/40', glow: 'from-amber-500/15', bar: 'bg-amber-500' },
+  rose: { text: 'text-rose-400', chip: 'bg-rose-500/15 text-rose-400', ring: 'hover:border-rose-500/40', glow: 'from-rose-500/15', bar: 'bg-rose-500' },
+  sky: { text: 'text-sky-400', chip: 'bg-sky-500/15 text-sky-400', ring: 'hover:border-sky-500/40', glow: 'from-sky-500/15', bar: 'bg-sky-500' },
+  violet: { text: 'text-violet-400', chip: 'bg-violet-500/15 text-violet-400', ring: 'hover:border-violet-500/40', glow: 'from-violet-500/15', bar: 'bg-violet-500' },
+};
+
 function AlertCard({ title, count, tone, icon: Icon, items = [], render, onClick }) {
-  const tones = {
-    amber: 'text-amber-400 bg-amber-500/15',
-    rose: 'text-rose-400 bg-rose-500/15',
-    sky: 'text-sky-400 bg-sky-500/15',
-    violet: 'text-violet-400 bg-violet-500/15',
-  };
+  const t = ALERT_TONES[tone] || ALERT_TONES.sky;
+  const active = count > 0;
   return (
-    <Card>
-      <div className="flex items-center justify-between px-5 py-4">
+    <motion.button
+      type="button"
+      onClick={onClick}
+      whileTap={onClick ? { scale: 0.99 } : undefined}
+      className={clsx(
+        'group relative w-full overflow-hidden rounded-2xl border border-border bg-surface pb-1 text-left transition-all duration-200',
+        onClick && `cursor-pointer ${t.ring} hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/30`,
+      )}
+    >
+      {/* tone accent bar + soft corner glow */}
+      <span className={clsx('absolute inset-x-0 top-0 h-1', t.bar, active ? 'opacity-80' : 'opacity-25')} />
+      <span className={clsx('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-gradient-to-br to-transparent blur-2xl', t.glow)} />
+
+      <div className="flex items-start justify-between gap-2 px-5 pt-5">
         <div className="flex items-center gap-3">
-          <span className={`rounded-lg p-2 ${tones[tone]}`}><Icon className="h-5 w-5" /></span>
+          <span className={clsx('flex h-11 w-11 items-center justify-center rounded-xl', t.chip)}><Icon className="h-5 w-5" /></span>
           <div>
-            <div className="text-sm font-semibold text-foreground">{title}</div>
-            <div className="text-2xl font-bold text-foreground">{count}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-faint">{title}</div>
+            <div className={clsx('text-3xl font-black leading-none tabular-nums', active ? t.text : 'text-foreground/30')}>{count}</div>
           </div>
         </div>
-        {onClick && (
-          <button onClick={onClick} className="text-faint hover:text-brand-600"><ArrowRight className="h-5 w-5" /></button>
-        )}
+        {onClick && <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-faint transition-all group-hover:translate-x-1 group-hover:text-foreground" />}
       </div>
-      {items.length > 0 && (
-        <div className="border-t border-border px-5 py-3">
-          <ul className="space-y-1.5 text-sm">
-            {items.slice(0, 4).map((it, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 text-muted">{render(it)}</li>
-            ))}
-          </ul>
+
+      {items.length > 0 ? (
+        <ul className="mt-4 divide-y divide-border/50 border-t border-border/50 text-sm">
+          {items.slice(0, 4).map((it, i) => (
+            <li key={i} className="flex items-center justify-between gap-2 px-5 py-2 text-muted">{render(it)}</li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-4 flex items-center gap-1.5 border-t border-border/50 px-5 py-3 text-xs font-medium text-emerald-500/80">
+          <CheckCircle2 className="h-3.5 w-3.5" /> All clear
         </div>
       )}
-    </Card>
+    </motion.button>
   );
 }
 

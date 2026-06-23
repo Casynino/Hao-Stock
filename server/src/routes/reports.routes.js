@@ -17,6 +17,7 @@ router.get('/products', ctrl.products);
 router.get('/regional', ctrl.regional);
 router.get('/sales-reps', ctrl.salesReps);
 router.get('/profit', ctrl.profit);
+router.get('/profit-overview', ctrl.profitOverview);
 router.get('/inventory-valuation', ctrl.inventoryValuation);
 router.get('/inventory-movements', ctrl.inventoryMovements);
 router.get('/debts', ctrl.debts);

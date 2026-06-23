@@ -280,6 +280,79 @@ async function profitReport(params = {}) {
   };
 }
 
+// Full profit picture for The Doctor. COGS is computed from each product's
+// CURRENT cost price × boxes sold (deterministic, works even for sales recorded
+// before cost prices existed). Profit is only counted on actual sales (settled
+// boxes create CASH sales) — never on stock requests, transfers or warehouse
+// inventory. period: today | week | month | year | all.
+async function profitOverview(period = 'month') {
+  const range = period && period !== 'all' ? resolveRange({ period }) : null;
+  const where = { sale: { is: { ...NON_CANCELLED } } };
+  if (range) where.sale.is.soldAt = { gte: range.start, lte: range.end };
+
+  const [items, products, reps, val] = await Promise.all([
+    prisma.saleItem.findMany({
+      where,
+      select: { baseQuantity: true, lineTotal: true, productId: true, sale: { select: { salesRepId: true } } },
+    }),
+    prisma.product.findMany({ select: { id: true, name: true, purchasePrice: true, sellingPrice: true, brand: { select: { id: true, name: true } } } }),
+    prisma.salesRepresentative.findMany({ include: { user: { select: { name: true } } } }),
+    inventory.valuation(prisma),
+  ]);
+
+  const pMap = new Map(products.map((p) => [p.id, p]));
+  const repName = new Map(reps.map((r) => [r.id, r.user?.name || r.code]));
+  const fin = (o) => ({
+    ...o,
+    revenue: round2(o.revenue),
+    cost: round2(o.cost),
+    profit: round2(o.revenue - o.cost),
+    margin: o.revenue > 0 ? round2(((o.revenue - o.cost) / o.revenue) * 100) : 0,
+  });
+
+  let revenue = 0;
+  let cost = 0;
+  let boxes = 0;
+  const byBrand = new Map();
+  const byProduct = new Map();
+  const byRep = new Map();
+
+  for (const it of items) {
+    const p = pMap.get(it.productId);
+    if (!p) continue;
+    const rev = toNumber(it.lineTotal);
+    const c = it.baseQuantity * toNumber(p.purchasePrice);
+    revenue += rev;
+    cost += c;
+    boxes += it.baseQuantity;
+
+    const bId = p.brand?.id || 'none';
+    const b = byBrand.get(bId) || { brandId: bId, name: p.brand?.name || '—', revenue: 0, cost: 0, boxes: 0 };
+    b.revenue += rev; b.cost += c; b.boxes += it.baseQuantity; byBrand.set(bId, b);
+
+    const pr = byProduct.get(it.productId) || { productId: it.productId, name: p.name, brandName: p.brand?.name || '—', revenue: 0, cost: 0, boxes: 0, profitPerBox: toNumber(p.sellingPrice) - toNumber(p.purchasePrice) };
+    pr.revenue += rev; pr.cost += c; pr.boxes += it.baseQuantity; byProduct.set(it.productId, pr);
+
+    const rid = it.sale?.salesRepId || 'direct';
+    const r = byRep.get(rid) || { salesRepId: rid, name: rid === 'direct' ? 'Direct (admin)' : (repName.get(rid) || '—'), revenue: 0, cost: 0, boxes: 0 };
+    r.revenue += rev; r.cost += c; r.boxes += it.baseQuantity; byRep.set(rid, r);
+  }
+
+  return {
+    period: period || 'month',
+    totals: { ...fin({ revenue, cost }), boxes },
+    byBrand: [...byBrand.values()].map(fin).sort((a, b) => b.profit - a.profit),
+    byProduct: [...byProduct.values()].map((p) => ({ ...fin(p), profitPerBox: round2(p.profitPerBox) })).sort((a, b) => b.profit - a.profit).slice(0, 12),
+    byRep: [...byRep.values()].filter((r) => r.boxes > 0).map(fin).sort((a, b) => b.profit - a.profit),
+    inventoryValue: {
+      costValue: val.totals.totalValue,
+      potentialRevenue: val.totals.retailValue,
+      potentialProfit: round2(toNumber(val.totals.retailValue) - toNumber(val.totals.totalValue)),
+      units: val.totals.totalBaseUnits,
+    },
+  };
+}
+
 async function inventoryMovementReport(params = {}) {
   const range = resolveRange(params);
   const where = { occurredAt: { gte: range.start, lte: range.end } };
@@ -348,6 +421,7 @@ module.exports = {
   regionalPerformance,
   salesRepPerformance,
   profitReport,
+  profitOverview,
   inventoryMovementReport,
   debtReport,
   inventoryValuationReport,

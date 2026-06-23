@@ -19,5 +19,6 @@ router.post('/stock-in', warehouseStaff, validate(stockIn), ctrl.stockIn);
 router.post('/adjustments', warehouseStaff, validate(adjustment), ctrl.adjust);
 router.post('/damage', warehouseStaff, validate(damage), ctrl.damage);
 router.post('/recompute-caches', requireAdmin, ctrl.recomputeCaches);
+router.delete('/movements/:id', requireAdmin, ctrl.deleteMovement);
 
 module.exports = router;

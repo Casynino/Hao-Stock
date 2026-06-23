@@ -133,11 +133,11 @@ export default function Dashboard() {
           <div className="flex gap-8">
             <div>
               <div className="text-xs text-white/50">Sales today</div>
-              <div className="text-2xl font-bold">{formatCurrency(sales.daily.revenue, { compact: true })}</div>
+              <div className="text-2xl font-bold tabular-nums">{formatCurrency(sales.daily.revenue)}</div>
             </div>
             <div>
               <div className="text-xs text-white/50">This month</div>
-              <div className="text-2xl font-bold">{formatCurrency(sales.monthly.revenue, { compact: true })}</div>
+              <div className="text-2xl font-bold tabular-nums">{formatCurrency(sales.monthly.revenue)}</div>
             </div>
           </div>
         </div>

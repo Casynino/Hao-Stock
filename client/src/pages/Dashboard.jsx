@@ -27,7 +27,7 @@ function BrandCard({ b, onClick }) {
   const Money = ({ label, value, sub }) => (
     <div className="rounded-xl bg-black/20 p-3">
       <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
-      <div className="mt-0.5 text-lg font-bold tabular-nums text-foreground">{value}</div>
+      <div className="mt-0.5 text-base font-bold tabular-nums text-foreground">{value}</div>
       {sub && <div className="text-[11px] text-faint">{sub}</div>}
     </div>
   );
@@ -39,9 +39,9 @@ function BrandCard({ b, onClick }) {
         <span className="ml-auto text-[11px] text-faint">this month</span>
       </div>
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <Money label="Stock value" value={formatCurrency(b.stockValue, { compact: true })} sub={`${formatNumber(b.stockUnits)} boxes`} />
-        <Money label="Sales (month)" value={formatCurrency(b.salesMonth, { compact: true })} sub={`${formatNumber(b.unitsSoldMonth)} boxes sold`} />
-        <Money label="Sales today" value={formatCurrency(b.salesToday, { compact: true })} />
+        <Money label="Stock value" value={formatCurrency(b.stockValue)} sub={`${formatNumber(b.stockUnits)} boxes`} />
+        <Money label="Sales (month)" value={formatCurrency(b.salesMonth)} sub={`${formatNumber(b.unitsSoldMonth)} boxes sold`} />
+        <Money label="Sales today" value={formatCurrency(b.salesToday)} />
         <Money label="In The Lab" value={`${formatNumber(b.warehouseUnits)}`} sub="boxes in warehouse" />
       </div>
     </button>

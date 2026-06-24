@@ -118,7 +118,7 @@ function AdjustModal({ mode, onClose }) {
 
 const BRAND_CHIP = {
   OHIS: 'bg-emerald-100 text-emerald-700',
-  CIVILLY: 'bg-violet-100 text-violet-700',
+  CIVLILY: 'bg-violet-100 text-violet-700',
 };
 
 function Balances() {

@@ -4,6 +4,7 @@ const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const commission = require('./commission.service');
 const sales = require('./sales.service');
+const inventory = require('./inventory.service');
 const notification = require('./notification.service');
 const { nextDocNumber } = require('../utils/numbering');
 const { toNumber, round2, formatCurrency } = require('../utils/money');
@@ -319,6 +320,149 @@ async function settleBoxes(id, payload, actor) {
   return result;
 }
 
+// Admin issues additional boxes to a rep, OUT of The Lab's warehouse. If the
+// rep already has an active (unsettled) order the boxes are appended to that
+// order: the stock moves warehouse→rep, the order's linked transfer records the
+// extra boxes (so the box-by-box breakdown stays exact), the order value grows,
+// and status/outstanding recompute. If the rep has no active order a fresh
+// warehouse→rep issuance opens a new 72h settlement. Notifies ONLY the rep.
+// Both sides (warehouse balance, rep stock held, order, settlement) move in the
+// SAME db transaction, so admin and rep can never see divergent numbers.
+async function addStockToRep(salesRepId, payload, actor) {
+  const { productId, warehouseId, reason } = payload;
+  const boxes = Math.trunc(Number(payload.boxes));
+  if (!productId) throw ApiError.badRequest('Select a product to add');
+  if (!Number.isInteger(boxes) || boxes <= 0) throw ApiError.badRequest('Boxes must be a positive whole number');
+  if (!warehouseId) throw ApiError.badRequest('No warehouse available to issue from');
+
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const rep = await tx.salesRepresentative.findUnique({
+        where: { id: salesRepId },
+        include: { user: { select: { id: true, name: true } } },
+      });
+      if (!rep) throw ApiError.notFound('Sales rep not found');
+      if (!rep.isActive) throw ApiError.badRequest('This rep account is suspended');
+
+      const product = await tx.product.findUnique({
+        where: { id: productId },
+        select: { id: true, name: true, sellingPrice: true, purchasePrice: true },
+      });
+      if (!product) throw ApiError.badRequest('Product not found');
+      const pkg = await tx.productPackaging.findFirst({ where: { productId, isBaseUnit: true } });
+      if (!pkg) throw ApiError.badRequest(`${product.name} has no base (Box) packaging configured`);
+
+      const { baseQuantity } = await inventory.convertToBase(tx, productId, pkg.packagingUnitId, boxes);
+      const addedValue = round2(baseQuantity * toNumber(product.sellingPrice));
+      const unitCost = toNumber(product.purchasePrice);
+
+      const from = { type: inventory.LOCATION.WAREHOUSE, warehouseId };
+      const to = { type: inventory.LOCATION.SALES_REP, salesRepId };
+
+      // Latest active (unsettled) order for this rep, if one is still open.
+      const active = await tx.settlement.findFirst({
+        where: { salesRepId, status: { not: 'SETTLED' }, transferId: { not: null } },
+        orderBy: { issuedAt: 'desc' },
+      });
+
+      let settlementId;
+      let settlementNumber;
+      let mode;
+
+      if (active) {
+        // Move the boxes warehouse→rep (asserts The Lab actually has them),
+        // tied to the order's existing transfer.
+        await inventory.transferStock(tx, {
+          productId,
+          packagingUnitId: pkg.packagingUnitId,
+          quantity: boxes,
+          baseQuantity,
+          from,
+          to,
+          referenceType: 'STOCK_TRANSFER',
+          referenceId: active.transferId,
+          userId: actor ? actor.id : null,
+          unitCost,
+          notes: `Added to order ${active.settlementNumber}${reason ? ` — ${reason}` : ''}`,
+        });
+        // Append to the order's transfer so the box-by-box breakdown reflects it.
+        await tx.stockTransferItem.create({
+          data: { transferId: active.transferId, productId, packagingUnitId: pkg.packagingUnitId, quantity: boxes, baseQuantity },
+        });
+        // Grow the order value, then recompute status/outstanding.
+        await tx.settlement.update({
+          where: { id: active.id },
+          data: { assignedValue: round2(toNumber(active.assignedValue) + addedValue) },
+        });
+        await recomputeStatus(tx, active.id);
+        settlementId = active.id;
+        settlementNumber = active.settlementNumber;
+        mode = 'attached';
+      } else {
+        // No active order — open a fresh warehouse→rep issuance + 72h settlement.
+        const transferNumber = await nextDocNumber(tx.stockTransfer, 'transferNumber', 'TRF');
+        const transfer = await tx.stockTransfer.create({
+          data: {
+            transferNumber,
+            direction: 'WAREHOUSE_TO_REP',
+            status: 'COMPLETED',
+            fromWarehouseId: warehouseId,
+            toRepId: salesRepId,
+            notes: reason || 'Stock added by The Doctor',
+            dispatchedAt: new Date(),
+            dispatchedById: actor ? actor.id : null,
+            items: { create: [{ productId, packagingUnitId: pkg.packagingUnitId, quantity: boxes, baseQuantity }] },
+          },
+        });
+        await inventory.transferStock(tx, {
+          productId,
+          packagingUnitId: pkg.packagingUnitId,
+          quantity: boxes,
+          baseQuantity,
+          from,
+          to,
+          referenceType: 'STOCK_TRANSFER',
+          referenceId: transfer.id,
+          userId: actor ? actor.id : null,
+          unitCost,
+          notes: `Transfer ${transferNumber}`,
+          occurredAt: transfer.dispatchedAt,
+        });
+        const fresh = await createForIssuance(tx, {
+          salesRepId,
+          assignedValue: addedValue,
+          transferId: transfer.id,
+          issuedAt: transfer.dispatchedAt,
+        });
+        settlementId = fresh.id;
+        settlementNumber = fresh.settlementNumber;
+        mode = 'created';
+      }
+
+      const updated = await tx.settlement.findUnique({ where: { id: settlementId }, include: { ...INCLUDE, sales: SALES_INCLUDE } });
+      const dec = decorate(updated);
+      dec.order = await orderBreakdown(updated, tx);
+      return { mode, settlement: dec, rep, productName: product.name, boxes, addedValue, settlementNumber };
+    },
+    { timeout: 30000 },
+  );
+
+  // Notify ONLY this rep — the stock landed on their order.
+  notification.notifyUser(result.rep.user?.id, {
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: '📦 New stock added',
+    message:
+      result.mode === 'attached'
+        ? `The Doctor added ${result.boxes} box(es) of ${result.productName} to your active order ${result.settlementNumber}. Your settlement has been updated.`
+        : `The Doctor issued ${result.boxes} box(es) of ${result.productName} to you — new order ${result.settlementNumber}.`,
+    entityType: 'Settlement',
+    entityId: result.settlement.id,
+  }).catch(() => {});
+
+  return result;
+}
+
 // Close an order. Enforces the core rule: every issued box must be accounted
 // for — settled (paid) or returned — before the request can be closed. Since
 // settled value + returned value = order value when no boxes remain, this also
@@ -443,6 +587,7 @@ module.exports = {
   orderBreakdown,
   settle,
   settleBoxes,
+  addStockToRep,
   recomputeStatus,
   refreshOverdue,
   summary,

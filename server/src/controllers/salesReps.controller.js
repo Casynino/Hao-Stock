@@ -384,4 +384,38 @@ const resetData = asyncHandler(async (req, res) => {
   return ok(res, { repId, code: rep.code, reset: true, ...summary });
 });
 
-module.exports = { list, get, getProfile, getStock, getReconciliation, create, update, remove, resetData };
+// Admin adds boxes to a rep, issued OUT of The Lab's primary warehouse. Attaches
+// to the rep's active order (or opens a fresh one), recalculates the order,
+// notifies the rep, and records an audit entry. See settlement.addStockToRep.
+const addStock = asyncHandler(async (req, res) => {
+  const rep = await prisma.salesRepresentative.findUnique({ where: { id: req.params.id } });
+  if (!rep) throw ApiError.notFound('Sales representative not found');
+
+  // Issue from the primary active warehouse (The Lab).
+  const wh = await prisma.warehouse.findFirst({ where: { isActive: true }, orderBy: { isPrimary: 'desc' } });
+  if (!wh) throw ApiError.badRequest('No active warehouse available to issue from');
+
+  const result = await settlement.addStockToRep(
+    rep.id,
+    { productId: req.body.productId, boxes: req.body.boxes, warehouseId: wh.id, reason: req.body.reason },
+    req.user,
+  );
+
+  await audit.record(req, {
+    action: 'ADD_STOCK',
+    entityType: 'Settlement',
+    entityId: result.settlement.id,
+    newValues: {
+      salesRepId: rep.id,
+      productId: req.body.productId,
+      boxes: result.boxes,
+      addedValue: result.addedValue,
+      mode: result.mode,
+      settlement: result.settlementNumber,
+    },
+  });
+
+  return created(res, { settlement: result.settlement, mode: result.mode, boxes: result.boxes, addedValue: result.addedValue });
+});
+
+module.exports = { list, get, getProfile, getStock, getReconciliation, create, update, remove, resetData, addStock };

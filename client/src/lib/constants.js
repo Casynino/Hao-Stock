@@ -34,6 +34,7 @@ export const NAV = [
   { to: '/settlements', label: 'Settlements (72h)', icon: 'Timer', roles: ALL, group: 'advanced' },
   { to: '/returns', label: 'Returns', icon: 'Undo2', roles: ALL, group: 'advanced' },
   { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'advanced' },
+  { to: '/invoice-generator', label: 'Invoice Generator', icon: 'Receipt', roles: ALL, group: 'advanced' },
   { to: '/reorder', label: 'Reorder', icon: 'Repeat', roles: STAFF, group: 'advanced' },
   { to: '/activity', label: 'Activity', icon: 'Activity', roles: STAFF, group: 'advanced' },
   { to: '/audit', label: 'Audit Log', icon: 'ScrollText', roles: ['ADMIN'], group: 'advanced' },

@@ -1079,6 +1079,7 @@ model Settlement {
   assignedValue Decimal @default(0) @db.Decimal(16, 2) // order value the rep owes
   settledValue  Decimal @default(0) @db.Decimal(16, 2) // value of boxes settled (paid)
   returnedValue Decimal @default(0) @db.Decimal(16, 2) // value of boxes returned to warehouse
+  reminderStage Int     @default(0) // deadline reminders sent: 0=none,1=24h,2=6h,3=1h
   notes         String?
 
   createdAt DateTime @default(now())

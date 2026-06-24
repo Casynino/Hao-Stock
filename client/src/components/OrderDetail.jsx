@@ -330,7 +330,11 @@ export default function OrderDetailModal({ settlementId, onClose }) {
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
               <div><div className="text-xs text-faint">Rep</div><div className="font-medium">{order.salesRep?.user?.name}</div></div>
               <div><div className="text-xs text-faint">Status</div><Badge className={SETTLEMENT_STATUS_META[order.status]?.cls}>{SETTLEMENT_STATUS_META[order.status]?.label}</Badge></div>
-              <div><div className="text-xs text-faint">Deadline</div><div className="font-medium">{formatDateTime(order.deadlineAt)}</div></div>
+              {order.status === 'SETTLED' ? (
+                <div><div className="text-xs text-faint">Settled</div><div className="font-medium text-emerald-500">{order.settledAt ? formatDateTime(order.settledAt) : '—'}</div></div>
+              ) : (
+                <div><div className="text-xs text-faint">Deadline</div><div className="font-medium">{formatDateTime(order.deadlineAt)}</div></div>
+              )}
               <div><div className="text-xs text-faint">Issued</div><div className="font-medium">{formatDateTime(order.issuedAt)}</div></div>
             </div>
 

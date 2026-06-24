@@ -25,8 +25,12 @@ function effectiveStatus(s) {
 }
 
 function decorate(s) {
-  const hoursRemaining = round2(dayjs(s.deadlineAt).diff(dayjs(), 'hour', true));
   const status = effectiveStatus(s);
+  // Time tracking only applies to LIVE orders. Once an order is settled it's a
+  // finalized state — no countdown, no overdue, no "approaching". This is the
+  // single source of truth every screen reads from.
+  const settled = status === 'SETTLED';
+  const hoursRemaining = settled ? null : round2(dayjs(s.deadlineAt).diff(dayjs(), 'hour', true));
   const paid = round2(toNumber(s.settledValue));
   const returned = round2(toNumber(s.returnedValue));
   // Outstanding = order value minus what's been settled AND returned. Returns
@@ -36,7 +40,7 @@ function decorate(s) {
     ...s,
     status,
     hoursRemaining,
-    approaching: status !== 'SETTLED' && status !== 'OVERDUE' && hoursRemaining <= APPROACHING_HOURS,
+    approaching: !settled && status !== 'OVERDUE' && hoursRemaining <= APPROACHING_HOURS,
     paid,
     returned,
     balance,
@@ -514,6 +518,77 @@ async function refreshOverdue() {
   return { updated: res.count };
 }
 
+// --- Automated settlement-deadline reminders --------------------------------
+// Three escalating reminders fire as an ACTIVE order nears its 72h deadline:
+// 24h (info) → 6h (warning) → 1h (urgent). Each stage fires ONCE — tracked by
+// Settlement.reminderStage (0=none,1=24h,2=6h,3=1h) — so repeated sweeps never
+// re-notify. Settled/closed orders are never touched.
+const REMINDER_DEFS = {
+  1: {
+    severity: 'INFO',
+    title: 'Settlement due in 24 hours',
+    msg: (n) => `Order ${n} is due for settlement in 24 hours. Please complete settlement or return process.`,
+  },
+  2: {
+    severity: 'WARNING',
+    title: 'Final reminder — settle soon',
+    msg: (n) => `Final reminder: Order ${n} will be auto-processed soon. Settle or return immediately.`,
+  },
+  3: {
+    severity: 'CRITICAL',
+    title: 'Urgent — settlement deadline near',
+    msg: (n) => `Urgent: Order ${n} settlement deadline is almost reached. Immediate action required.`,
+  },
+};
+
+// Which reminder stage a given hours-to-deadline falls in (0 = none).
+function reminderStageFor(hoursRemaining) {
+  if (hoursRemaining > 0 && hoursRemaining <= 1) return 3;
+  if (hoursRemaining > 1 && hoursRemaining <= 6) return 2;
+  if (hoursRemaining > 6 && hoursRemaining <= 24) return 1;
+  return 0;
+}
+
+// Send any due 24h/6h/1h reminders to reps. Idempotent: a per-settlement atomic
+// claim (reminderStage < stage) guarantees each reminder goes out exactly once
+// even if two sweeps race. Only active orders are considered.
+async function sendDueReminders() {
+  const now = Date.now();
+  const active = await prisma.settlement.findMany({
+    where: { status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] } },
+    select: { id: true, settlementNumber: true, deadlineAt: true, reminderStage: true, salesRep: { select: { user: { select: { id: true } } } } },
+  });
+
+  let sent = 0;
+  for (const s of active) {
+    const hrs = (new Date(s.deadlineAt).getTime() - now) / 3_600_000;
+    const stage = reminderStageFor(hrs);
+    if (stage === 0 || stage <= (s.reminderStage || 0)) continue;
+
+    // Atomically claim this stage so concurrent sweeps can't double-send.
+    const claim = await prisma.settlement.updateMany({
+      where: { id: s.id, reminderStage: { lt: stage } },
+      data: { reminderStage: stage },
+    });
+    if (claim.count !== 1) continue;
+
+    const def = REMINDER_DEFS[stage];
+    const uid = s.salesRep?.user?.id;
+    if (uid && def) {
+      await notification.notifyUser(uid, {
+        type: 'GENERAL',
+        severity: def.severity,
+        title: def.title,
+        message: def.msg(s.settlementNumber),
+        entityType: 'Settlement',
+        entityId: s.id,
+      }).catch(() => {});
+      sent += 1;
+    }
+  }
+  return { checked: active.length, sent };
+}
+
 // Dashboard summary: who is outstanding, approaching the 72h deadline, overdue.
 async function summary() {
   const open = await prisma.settlement.findMany({
@@ -573,7 +648,8 @@ async function extendDeadline(id, { deadlineAt, additionalHours }) {
 
   const updated = await prisma.settlement.update({
     where: { id },
-    data: { deadlineAt: newDeadline, status: newStatus },
+    // Re-arm reminders for the new window (24h/6h/1h fire again).
+    data: { deadlineAt: newDeadline, status: newStatus, reminderStage: 0 },
     include: INCLUDE,
   });
   return decorate(updated);
@@ -590,6 +666,7 @@ module.exports = {
   addStockToRep,
   recomputeStatus,
   refreshOverdue,
+  sendDueReminders,
   summary,
   decorate,
   extendDeadline,

@@ -17,7 +17,10 @@ const list = asyncHandler(async (req, res) => {
   return paginated(res, items, { page: pagination.page, limit: pagination.limit, total });
 });
 
-const summary = asyncHandler(async (_req, res) => ok(res, await settlement.summary()));
+const summary = asyncHandler(async (_req, res) => {
+  settlement.sendDueReminders().catch(() => {}); // fire-and-forget 24h/6h/1h reminders
+  return ok(res, await settlement.summary());
+});
 
 const get = asyncHandler(async (req, res) => {
   const s = await settlement.get(req.params.id);

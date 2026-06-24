@@ -27,6 +27,7 @@ router.use('/notifications', require('./notifications.routes'));
 router.use('/audit-logs', require('./auditLogs.routes'));
 router.use('/dashboard', require('./dashboard.routes'));
 router.use('/settings', require('./settings.routes'));
+router.use('/cron', require('./cron.routes'));
 
 // Phase 2: imports, requests, settlements, commissions, etc.
 router.use('/suppliers', require('./suppliers.routes'));

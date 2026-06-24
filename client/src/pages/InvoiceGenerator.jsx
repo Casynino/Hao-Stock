@@ -216,7 +216,7 @@ export default function InvoiceGenerator() {
   // ── Builder view ──
   return (
     <div>
-      <PageHeader title="Invoice Generator" subtitle="Create a customer invoice in seconds — download or share. Does not affect stock." />
+      <PageHeader title="Generate Invoice" subtitle="Create a customer invoice in seconds — download or share. Does not affect stock." />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {/* Customer */}

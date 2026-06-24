@@ -21,12 +21,24 @@ const ICONS = {
   Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag, TrendingUp, Receipt,
 };
 
-function NavItems({ items, onNavigate }) {
+// Small "action required" count pill (e.g. pending settlements/returns).
+function CountPill({ count }) {
+  if (!count) return null;
+  return (
+    <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white shadow-[0_0_10px_-2px_rgba(244,63,94,0.7)]">
+      {count > 99 ? '99+' : count}
+    </span>
+  );
+}
+
+function NavItems({ items, counts = {}, onNavigate }) {
   const location = useLocation();
   const primary = items.filter((i) => i.group !== 'advanced');
   const advanced = items.filter((i) => i.group === 'advanced');
   const onAdvanced = advanced.some((i) => location.pathname === i.to);
   const [showMore, setShowMore] = useState(onAdvanced);
+  const countFor = (item) => (item.badge ? counts[item.badge] || 0 : 0);
+  const advancedCount = advanced.reduce((s, i) => s + countFor(i), 0);
 
   const renderLink = (item) => {
     const Icon = ICONS[item.icon] || Package;
@@ -45,7 +57,8 @@ function NavItems({ items, onNavigate }) {
         }
       >
         <Icon className="h-5 w-5 flex-shrink-0" />
-        {item.label}
+        <span className="flex-1 truncate">{item.label}</span>
+        <CountPill count={countFor(item)} />
       </NavLink>
     );
   };
@@ -60,7 +73,10 @@ function NavItems({ items, onNavigate }) {
             className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted transition hover:bg-white/5 hover:text-foreground"
           >
             <span>More tools</span>
-            <ChevronDown className={`h-4 w-4 transition-transform ${showMore ? 'rotate-180' : ''}`} />
+            <span className="flex items-center gap-2">
+              {!showMore && <CountPill count={advancedCount} />}
+              <ChevronDown className={`h-4 w-4 transition-transform ${showMore ? 'rotate-180' : ''}`} />
+            </span>
           </button>
           {showMore && <div className="mt-1 space-y-1">{advanced.map(renderLink)}</div>}
         </div>
@@ -148,6 +164,15 @@ export default function Layout() {
     refetchInterval: 30_000,
   });
 
+  // Pending-action counts for the sidebar badges (staff/admin only). Each item
+  // stays counted until it's approved or rejected.
+  const { data: pendingActions = {} } = useQuery({
+    queryKey: ['dashboard', 'pending-actions'],
+    queryFn: async () => unwrap(await api.get('/dashboard/pending-actions')).data,
+    enabled: hasRole(ROLES.WAREHOUSE_STAFF),
+    refetchInterval: 30_000,
+  });
+
   const { data: recentNotes = [] } = useQuery({
     queryKey: ['notifications', 'recent'],
     queryFn: async () => unwrap(await api.get('/notifications', { params: { limit: 6, page: 1 } })).data,
@@ -170,7 +195,7 @@ export default function Layout() {
       {/* Sidebar (desktop) */}
       <aside className="hidden w-64 flex-col border-r border-border bg-[#0c0c0e] lg:flex">
         <Brand />
-        <NavItems items={items} />
+        <NavItems items={items} counts={pendingActions} />
         <div className="border-t border-white/5 p-3 text-[11px] text-faint"><span className="font-semibold uppercase tracking-wider">The Lab</span> · Developed by Nino</div>
       </aside>
 
@@ -185,7 +210,7 @@ export default function Layout() {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <NavItems items={items} onNavigate={() => setMobileOpen(false)} />
+            <NavItems items={items} counts={pendingActions} onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
       )}

@@ -11,6 +11,7 @@ import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES, SETTLEMENT_STATUS_META } from '@/lib/constants';
 import { formatCurrency, formatNumber, formatDate, formatDateTime, initials } from '@/lib/format';
+import { sortByCanonical } from '@/lib/productOrder';
 import OrderDetailModal from '@/components/OrderDetail';
 import {
   PageHeader, Card, PageSpinner, EmptyState, Badge, Button, StatCard,
@@ -73,6 +74,7 @@ function AddStockModal({ repId, repName, onClose }) {
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['inventory', 'balances', 'warehouse', 'add-stock'],
     queryFn: async () => unwrap(await api.get('/inventory/balances', { params: { scope: 'WAREHOUSE', limit: 200 } })).data,
+    select: (r) => sortByCanonical(r),
   });
 
   const selected = rows.find((r) => r.productId === productId) || null;

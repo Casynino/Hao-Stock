@@ -5,6 +5,7 @@ import { PackagePlus, SlidersHorizontal, Boxes, Warehouse, Truck } from 'lucide-
 import api, { unwrap, apiError } from '@/lib/api';
 import { useProducts, useWarehouses, useSalesReps, useDebounce } from '@/lib/hooks';
 import { formatCurrency, formatNumber, formatDateTime, pluralizeUnit } from '@/lib/format';
+import { sortByCanonical } from '@/lib/productOrder';
 import { MOVEMENT_META } from '@/lib/constants';
 import ItemLines from '@/components/ItemLines';
 import {
@@ -135,7 +136,7 @@ function Balances() {
     queryFn: async () => unwrap(await api.get('/inventory/balances', { params: { page, limit: 24, search: debounced, brand: brand || undefined } })),
   });
 
-  const rows = data?.data || [];
+  const rows = sortByCanonical(data?.data || []);
   const max = Math.max(1, ...rows.map((r) => r.totalBase));
 
   return (

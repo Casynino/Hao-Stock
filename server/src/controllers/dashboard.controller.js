@@ -32,6 +32,10 @@ const myOverview = asyncHandler(async (req, res) => {
   const salesRepId = req.user.salesRepId;
   if (!salesRepId) throw ApiError.forbidden('Your account has no sales-rep profile');
 
+  // Reps poll this every ~60s, so it doubles as the heartbeat that fires due
+  // 24h/6h/1h settlement reminders. Fire-and-forget — never blocks the response.
+  settlement.sendDueReminders().catch(() => {});
+
   const [balances, commissionData, openOrders, pendingRequests] = await Promise.all([
     inventory.repBalances(prisma, salesRepId),
     commission.computeForRep(salesRepId),

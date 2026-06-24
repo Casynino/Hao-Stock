@@ -224,10 +224,19 @@ function StaffSettlements({ viewing, setViewing }) {
                     <TD className="text-emerald-500">{formatCurrency(s.paid)}</TD>
                     <TD className={s.balance > 0 ? 'font-semibold text-rose-500' : 'text-faint'}>{formatCurrency(s.balance)}</TD>
                     <TD>
-                      <div className="text-muted">{formatDateTime(s.deadlineAt)}</div>
-                      <div className={clsx('text-xs', s.hoursRemaining < 0 ? 'text-rose-500' : s.approaching ? 'text-amber-500' : 'text-faint')}>
-                        {hoursLabel(s.hoursRemaining)}
-                      </div>
+                      {s.status === 'SETTLED' ? (
+                        // Finalized order — no countdown, no overdue, just when it closed.
+                        <div className="inline-flex items-center gap-1 text-xs text-emerald-500">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Settled{s.settledAt ? ` · ${formatDateTime(s.settledAt)}` : ''}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-muted">{formatDateTime(s.deadlineAt)}</div>
+                          <div className={clsx('text-xs', s.hoursRemaining < 0 ? 'text-rose-500' : s.approaching ? 'text-amber-500' : 'text-faint')}>
+                            {hoursLabel(s.hoursRemaining)}
+                          </div>
+                        </>
+                      )}
                     </TD>
                     <TD><Badge className={SETTLEMENT_STATUS_META[s.status]?.cls}>{SETTLEMENT_STATUS_META[s.status]?.label}</Badge></TD>
                     <TD>

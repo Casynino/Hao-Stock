@@ -170,7 +170,7 @@ async function regionalPerformance(params = {}) {
   // Bucket revenue by the rep's CURRENT region (live join), not a region copied
   // onto the sale when it happened — so editing a rep's region immediately
   // re-buckets all their sales. Sales with no rep (admin direct) → "Unspecified".
-  const [grouped, reps] = await Promise.all([
+  const [grouped, reps, primaryWh] = await Promise.all([
     prisma.sale.groupBy({
       by: ['salesRepId'],
       where: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } },
@@ -178,13 +178,18 @@ async function regionalPerformance(params = {}) {
       _count: true,
     }),
     prisma.salesRepresentative.findMany({ select: { id: true, region: true } }),
+    prisma.warehouse.findFirst({ where: { isActive: true }, orderBy: { isPrimary: 'desc' }, select: { region: true } }),
   ]);
 
+  // Direct (no-rep) sales come straight from The Lab — a normal cash sale from
+  // the warehouse — so they belong to the warehouse's region. Rep sales use the
+  // rep's CURRENT region (live).
+  const labRegion = (primaryWh?.region || '').trim() || 'Unspecified';
   const regionByRep = new Map(reps.map((r) => [r.id, (r.region || '').trim() || 'Unspecified']));
 
   const byRegion = new Map();
   for (const g of grouped) {
-    const region = (g.salesRepId && regionByRep.get(g.salesRepId)) || 'Unspecified';
+    const region = g.salesRepId ? (regionByRep.get(g.salesRepId) || 'Unspecified') : labRegion;
     const cur = byRegion.get(region) || { region, revenue: 0, cost: 0, orders: 0 };
     cur.revenue += toNumber(g._sum.total);
     cur.cost += toNumber(g._sum.costTotal);

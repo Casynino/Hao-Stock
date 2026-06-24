@@ -106,4 +106,15 @@ const myStats = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { overview, activity, brands, myOverview, myStats };
+// Counts of items awaiting The Doctor's action — drives the sidebar badges.
+// Each stays counted until it's approved or rejected (i.e. acted on).
+const pendingActions = asyncHandler(async (_req, res) => {
+  const [stockRequests, settlements, returns] = await Promise.all([
+    prisma.stockRequest.count({ where: { status: 'PENDING' } }),
+    prisma.settlementSubmission.count({ where: { status: 'PENDING' } }),
+    prisma.return.count({ where: { status: 'PENDING' } }),
+  ]);
+  return ok(res, { stockRequests, settlements, returns });
+});
+
+module.exports = { overview, activity, brands, myOverview, myStats, pendingActions };

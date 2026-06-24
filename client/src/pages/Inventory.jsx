@@ -189,10 +189,13 @@ function Balances() {
                   />
                 </div>
 
-                <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3">
-                  <span className="whitespace-nowrap text-xs text-faint">Value {formatCurrency(r.value)}</span>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    {r.locations.slice(0, 3).map((loc, k) => (
+                <div className="mt-3 border-t border-border pt-3">
+                  <div className="mb-1.5 flex items-center justify-between text-xs text-faint">
+                    <span>Value {formatCurrency(r.value)}</span>
+                    <span>{r.locations.length} location{r.locations.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {r.locations.map((loc, k) => (
                       <Badge key={k} className={loc.type === 'WAREHOUSE' ? 'bg-elevated text-muted' : 'bg-sky-100 text-sky-700'}>
                         {loc.type === 'WAREHOUSE' ? <Warehouse className="h-3 w-3" /> : <Truck className="h-3 w-3" />}
                         {(loc.name || '').split(' ')[0]}: {formatNumber(loc.baseQuantity)}

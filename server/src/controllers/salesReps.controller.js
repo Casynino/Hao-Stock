@@ -218,6 +218,7 @@ const getProfile = asyncHandler(async (req, res) => {
   return ok(res, {
     rep: {
       id: rep.id,
+      userId: rep.user?.id,
       code: rep.code,
       name: rep.user?.name,
       email: rep.user?.email,

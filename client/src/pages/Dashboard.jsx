@@ -21,7 +21,7 @@ import { BarChartCard } from '@/components/charts';
 // two are visually distinct and never confused.
 const BRAND_TONE = {
   OHIS: { ring: 'border-emerald-500/30', bg: 'bg-emerald-500/5', badge: 'bg-emerald-500/15 text-emerald-400', dot: 'bg-emerald-400' },
-  CIVILLY: { ring: 'border-violet-500/30', bg: 'bg-violet-500/5', badge: 'bg-violet-500/15 text-violet-400', dot: 'bg-violet-400' },
+  CIVLILY: { ring: 'border-violet-500/30', bg: 'bg-violet-500/5', badge: 'bg-violet-500/15 text-violet-400', dot: 'bg-violet-400' },
 };
 function BrandCard({ b, onClick }) {
   const t = BRAND_TONE[b.name?.toUpperCase()] || { ring: 'border-border', bg: 'bg-surface', badge: 'bg-elevated text-muted', dot: 'bg-border' };
@@ -153,7 +153,7 @@ export default function Dashboard() {
   const greeting = tzGreeting();
   const firstName = user?.name?.split(' ')[0] || 'there';
 
-  const topSellingData = topSelling.map((p) => ({ name: p.name.replace(/CIVILLY|OHIS/, '').trim().slice(0, 22), value: p.revenue }));
+  const topSellingData = topSelling.map((p) => ({ name: p.name.replace(/civlily|ohis/i, '').trim().slice(0, 22), value: p.revenue }));
   const regionalData = regional.map((r) => ({ name: r.region, value: r.revenue }));
 
   return (
@@ -199,7 +199,7 @@ export default function Dashboard() {
           hint={`${alerts.outstandingRepStock.count} rep(s) holding`} onClick={() => navigate('/reps')} />
         <StatCard label="3 · Owed to me" value={formatCurrency(debt.totalOutstanding)} icon={HandCoins} tone="rose"
           hint={`${debt.overdueAccounts} overdue`} onClick={() => navigate('/debts')} />
-        <StatCard label="4 · Best seller" value={topSelling[0] ? topSelling[0].name.replace(/CIVILLY|OHIS/, '').trim().slice(0, 16) : '—'}
+        <StatCard label="4 · Best seller" value={topSelling[0] ? topSelling[0].name.replace(/civlily|ohis/i, '').trim().slice(0, 16) : '—'}
           icon={TrendingUp} tone="emerald" hint={topSelling[0] ? formatCurrency(topSelling[0].revenue) : 'no sales yet'} onClick={() => navigate('/reports')} />
         <StatCard label="5 · Commission owed" value={formatCurrency(commission?.totals?.pending || 0)} icon={Coins} tone="amber"
           hint="pending payout" onClick={() => navigate('/commissions')} />

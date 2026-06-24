@@ -12,7 +12,7 @@ const PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This mont
 const PERIOD_LABEL = { today: 'today', week: 'this week', month: 'this month', all: 'all time' };
 const BRAND_TONE = {
   OHIS: { card: 'border-emerald-500/30 bg-emerald-500/5', badge: 'bg-emerald-500/15 text-emerald-400' },
-  CIVILLY: { card: 'border-violet-500/30 bg-violet-500/5', badge: 'bg-violet-500/15 text-violet-400' },
+  CIVLILY: { card: 'border-violet-500/30 bg-violet-500/5', badge: 'bg-violet-500/15 text-violet-400' },
 };
 
 function Money({ label, value, tone }) {

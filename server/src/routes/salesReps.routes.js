@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireAdmin, requireRoles, ROLES } = require('../middleware/authorize');
 const validate = require('../middleware/validate');
 const ctrl = require('../controllers/salesReps.controller');
-const { salesRepCreate, salesRepUpdate } = require('../validators/people.validator');
+const { salesRepCreate, salesRepUpdate, salesRepAddStock } = require('../validators/people.validator');
 const { namedQuery } = require('../validators/catalog.validator');
 const { idParam } = require('../validators/common.validator');
 
@@ -18,6 +18,7 @@ router.get('/:id/profile', requireRoles(ROLES.WAREHOUSE_STAFF), validate(idParam
 router.get('/:id/stock', validate(idParam), ctrl.getStock);
 router.get('/:id/reconciliation', validate(idParam), ctrl.getReconciliation);
 router.post('/:id/reset-data', requireAdmin, validate(idParam), ctrl.resetData); // DANGER: wipe a test rep's business activity
+router.post('/:id/add-stock', requireRoles(ROLES.WAREHOUSE_STAFF), validate({ ...idParam, ...salesRepAddStock }), ctrl.addStock);
 router.post('/', requireAdmin, validate(salesRepCreate), ctrl.create);
 router.put('/:id', requireAdmin, validate({ ...idParam, ...salesRepUpdate }), ctrl.update);
 router.delete('/:id', requireAdmin, validate(idParam), ctrl.remove);

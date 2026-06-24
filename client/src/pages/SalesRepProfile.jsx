@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   ArrowLeft, Package, Timer, Wallet, AlertTriangle, TrendingUp, History,
   ShieldCheck, ShieldAlert, Power, CheckCircle2, Clock, Undo2, ClipboardList,
-  Boxes, ChevronRight, Mail, Phone, MapPin, Calendar, Coins,
+  Boxes, ChevronRight, Mail, Phone, MapPin, Calendar, Coins, PackagePlus,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -14,7 +14,7 @@ import { formatCurrency, formatNumber, formatDate, formatDateTime, initials } fr
 import OrderDetailModal from '@/components/OrderDetail';
 import {
   PageHeader, Card, PageSpinner, EmptyState, Badge, Button, StatCard,
-  Table, THead, TBody, TR, TH, TD,
+  Table, THead, TBody, TR, TH, TD, Modal, Field, Select, Input, Textarea,
 } from '@/components/ui';
 
 // ── Section wrapper ──────────────────────────────────────────────────────────
@@ -60,6 +60,87 @@ function hoursLabel(h) {
   return `${Math.round(h / 24)}d left`;
 }
 
+// ── Add stock to a rep (admin) ───────────────────────────────────────────────
+// Issues boxes OUT of The Lab and attaches them to the rep's active order (or
+// opens a new one). The product list is the warehouse's live stock so the admin
+// can only pick what The Lab actually holds.
+function AddStockModal({ repId, repName, onClose }) {
+  const qc = useQueryClient();
+  const [productId, setProductId] = useState('');
+  const [boxes, setBoxes] = useState('');
+  const [reason, setReason] = useState('');
+
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['inventory', 'balances', 'warehouse', 'add-stock'],
+    queryFn: async () => unwrap(await api.get('/inventory/balances', { params: { scope: 'WAREHOUSE', limit: 200 } })).data,
+  });
+
+  const selected = rows.find((r) => r.productId === productId) || null;
+  const available = selected?.totalBase ?? 0;
+  const n = Math.trunc(Number(boxes)) || 0;
+  const overMax = !!selected && n > available;
+  const valid = !!productId && n > 0 && !overMax;
+
+  const add = useMutation({
+    mutationFn: () => api.post(`/sales-reps/${repId}/add-stock`, { productId, boxes: n, reason: reason.trim() || undefined }),
+    onSuccess: (res) => {
+      const r = res.data?.data || {};
+      toast.success(
+        r.mode === 'attached'
+          ? `Added ${formatNumber(r.boxes)} box(es) to ${repName}'s active order`
+          : `Issued ${formatNumber(r.boxes)} box(es) to ${repName} — new order opened`,
+      );
+      ['sales-rep-profile', 'settlements', 'commissions', 'inventory', 'dashboard'].forEach((k) =>
+        qc.invalidateQueries({ queryKey: [k] }));
+      onClose();
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Add stock — ${repName}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => add.mutate()} loading={add.isPending} disabled={!valid}>
+            <PackagePlus className="h-4 w-4" /> Add stock
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="rounded-lg border border-border bg-elevated px-3 py-2 text-xs text-muted">
+          Boxes are issued out of The Lab and attached to {repName}'s latest active order (a new order opens if they have none).
+          Their order value, outstanding balance and stock-held all update, and they get a notification.
+        </p>
+        <Field label="Product (from The Lab)" required hint={isLoading ? 'Loading stock…' : `${rows.length} product${rows.length !== 1 ? 's' : ''} in stock`}>
+          <Select value={productId} onChange={(e) => { setProductId(e.target.value); setBoxes(''); }}>
+            <option value="">Select a product…</option>
+            {rows.map((r) => (
+              <option key={r.productId} value={r.productId}>{r.name} — {formatNumber(r.totalBase)} in stock</option>
+            ))}
+          </Select>
+        </Field>
+        <Field
+          label="Boxes to add"
+          required
+          error={overMax ? `Only ${formatNumber(available)} box(es) in The Lab` : undefined}
+          hint={selected && !overMax ? `${formatCurrency(selected.sellingPrice)}/box · adds ${formatCurrency((selected.sellingPrice || 0) * n)} to the order` : undefined}
+        >
+          <Input type="number" min="1" max={available || undefined} value={boxes} disabled={!productId}
+            onChange={(e) => setBoxes(e.target.value)} placeholder="0" />
+        </Field>
+        <Field label="Reason / note" hint="Optional — saved to the audit log">
+          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Restock for weekend market" />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
 export default function SalesRepProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -67,6 +148,7 @@ export default function SalesRepProfile() {
   const { hasRole } = useAuth();
   const isAdmin = hasRole(ROLES.ADMIN);
   const [viewing, setViewing] = useState(null); // settlementId for OrderDetailModal
+  const [addOpen, setAddOpen] = useState(false); // "Add stock" modal
 
   const { data, isLoading } = useQuery({
     queryKey: ['sales-rep-profile', id],
@@ -124,7 +206,12 @@ export default function SalesRepProfile() {
             </div>
           </div>
           {isAdmin && (
-            <div className="flex flex-shrink-0 gap-2">
+            <div className="flex flex-shrink-0 flex-wrap gap-2">
+              {rep.isActive && (
+                <Button onClick={() => setAddOpen(true)}>
+                  <PackagePlus className="h-4 w-4" /> Add stock
+                </Button>
+              )}
               {rep.isActive ? (
                 <Button variant="ghost" className="text-rose-500" loading={toggleActive.isPending} onClick={() => toggleActive.mutate(false)}>
                   <Power className="h-4 w-4" /> Suspend
@@ -191,7 +278,7 @@ export default function SalesRepProfile() {
           </Section>
 
           {/* Current stock */}
-          <Section icon={Package} title="Stock in hand" count={stock.items.length} action={isAdmin && <Button variant="ghost" className="text-xs" onClick={() => navigate('/inventory')}>Adjust stock</Button>}>
+          <Section icon={Package} title="Stock in hand" count={stock.items.length} action={isAdmin && rep.isActive && <Button variant="ghost" className="text-xs" onClick={() => setAddOpen(true)}><PackagePlus className="h-3.5 w-3.5" /> Add stock</Button>}>
             {stock.items.length === 0 ? (
               <p className="py-2 text-sm text-faint">Holding no stock.</p>
             ) : (
@@ -295,6 +382,7 @@ export default function SalesRepProfile() {
       </div>
 
       {viewing && <OrderDetailModal settlementId={viewing} onClose={() => { setViewing(null); refreshAll(); }} />}
+      {addOpen && <AddStockModal repId={id} repName={rep.name} onClose={() => setAddOpen(false)} />}
     </div>
   );
 }

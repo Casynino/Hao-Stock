@@ -1,7 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
-const { id, paginationFields, boolQuery, money } = require('./common.validator');
+const { id, paginationFields, boolQuery, money, positiveInt } = require('./common.validator');
 
 // --- Users -----------------------------------------------------------------
 const userCreate = {
@@ -84,6 +84,15 @@ const salesRepUpdate = {
   }),
 };
 
+// Admin adds boxes to a rep's order (issued from the warehouse).
+const salesRepAddStock = {
+  body: z.object({
+    productId: id,
+    boxes: positiveInt,
+    reason: z.string().trim().max(300).optional().nullable(),
+  }),
+};
+
 // --- Warehouses ------------------------------------------------------------
 const warehouseCreate = {
   body: z.object({
@@ -106,6 +115,7 @@ module.exports = {
   customerQuery,
   salesRepCreate,
   salesRepUpdate,
+  salesRepAddStock,
   warehouseCreate,
   warehouseUpdate,
 };

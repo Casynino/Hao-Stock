@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   ArrowLeft, Package, Timer, Wallet, AlertTriangle, TrendingUp, History,
   ShieldCheck, ShieldAlert, Power, CheckCircle2, Clock, Undo2, ClipboardList,
-  Boxes, ChevronRight, Mail, Phone, MapPin, Calendar, Coins, PackagePlus,
+  Boxes, ChevronRight, Mail, Phone, MapPin, Calendar, Coins, PackagePlus, Pencil,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -59,6 +59,71 @@ function hoursLabel(h) {
   if (h < 0) return `${Math.abs(Math.round(h))}h overdue`;
   if (h < 24) return `${Math.round(h)}h left`;
   return `${Math.round(h / 24)}d left`;
+}
+
+// ── Edit rep details (admin) ─────────────────────────────────────────────────
+// Name + email live on the user account; phone, region and target on the rep —
+// so this saves to both endpoints. Region was the gap that left a rep's sales
+// showing as an undefined location.
+function EditRepModal({ rep, onClose }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    name: rep.name || '',
+    email: rep.email || '',
+    phone: rep.phone || '',
+    region: rep.region || '',
+    monthlyTarget: rep.monthlyTarget != null ? String(rep.monthlyTarget) : '',
+  });
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const target = form.monthlyTarget === '' ? null : Number(form.monthlyTarget);
+      await api.put(`/users/${rep.userId}`, { name: form.name.trim(), email: form.email.trim().toLowerCase() });
+      await api.put(`/sales-reps/${rep.id}`, {
+        region: form.region.trim() || null,
+        phone: form.phone.trim() || null,
+        monthlyTarget: target,
+      });
+    },
+    onSuccess: () => {
+      toast.success('Rep details updated');
+      qc.invalidateQueries({ queryKey: ['sales-rep-profile', rep.id] });
+      qc.invalidateQueries({ queryKey: ['sales-reps'] });
+      onClose();
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const valid = form.name.trim() && form.email.trim();
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Edit ${rep.name || 'rep'} (${rep.code})`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!valid}>
+            <Pencil className="h-4 w-4" /> Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Full name" required><Input value={form.name} onChange={set('name')} placeholder="Full name" /></Field>
+        <Field label="Email" required><Input type="email" value={form.email} onChange={set('email')} placeholder="name@example.com" /></Field>
+        <Field label="Phone"><Input value={form.phone} onChange={set('phone')} placeholder="07.." /></Field>
+        <Field label="Region / location" hint="Where this rep sells — shown on their sales & profile">
+          <Input value={form.region} onChange={set('region')} placeholder="e.g. Dar Es Salaam" />
+        </Field>
+        <Field label="Monthly target (TZS)" hint="Optional">
+          <Input type="number" min="0" value={form.monthlyTarget} onChange={set('monthlyTarget')} placeholder="0" />
+        </Field>
+      </div>
+    </Modal>
+  );
 }
 
 // ── Add stock to a rep (admin) ───────────────────────────────────────────────
@@ -151,6 +216,7 @@ export default function SalesRepProfile() {
   const isAdmin = hasRole(ROLES.ADMIN);
   const [viewing, setViewing] = useState(null); // settlementId for OrderDetailModal
   const [addOpen, setAddOpen] = useState(false); // "Add stock" modal
+  const [editOpen, setEditOpen] = useState(false); // "Edit details" modal
 
   const { data, isLoading } = useQuery({
     queryKey: ['sales-rep-profile', id],
@@ -209,6 +275,9 @@ export default function SalesRepProfile() {
           </div>
           {isAdmin && (
             <div className="flex flex-shrink-0 flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => setEditOpen(true)}>
+                <Pencil className="h-4 w-4" /> Edit
+              </Button>
               {rep.isActive && (
                 <Button onClick={() => setAddOpen(true)}>
                   <PackagePlus className="h-4 w-4" /> Add stock
@@ -385,6 +454,7 @@ export default function SalesRepProfile() {
 
       {viewing && <OrderDetailModal settlementId={viewing} onClose={() => { setViewing(null); refreshAll(); }} />}
       {addOpen && <AddStockModal repId={id} repName={rep.name} onClose={() => setAddOpen(false)} />}
+      {editOpen && <EditRepModal rep={rep} onClose={() => setEditOpen(false)} />}
     </div>
   );
 }

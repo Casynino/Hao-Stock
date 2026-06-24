@@ -191,6 +191,24 @@ async function get(id) {
     processedAt: r.processedAt,
     items: r.items.map((i) => ({ productName: i.product?.name, quantity: i.quantity, unitName: i.packagingUnit?.name })),
   }));
+  // Pending settlement submissions on this order — awaiting The Doctor's
+  // approval. They have NO business impact yet (no sale recorded). Surfaced so
+  // staff can approve/reject straight from the order detail, like returns.
+  const pendingSubs = await prisma.settlementSubmission.findMany({
+    where: { settlementId: id, status: 'PENDING' },
+    orderBy: { submittedAt: 'desc' },
+  });
+  decorated.pendingSubmissions = pendingSubs.length;
+  decorated.pendingSubmissionsList = pendingSubs.map((p) => ({
+    id: p.id,
+    submissionNumber: p.submissionNumber,
+    productId: p.productId,
+    productName: p.productName,
+    boxes: p.boxes,
+    amount: toNumber(p.amount),
+    method: p.method,
+    submittedAt: p.submittedAt,
+  }));
   return decorated;
 }
 
@@ -219,109 +237,65 @@ async function recomputeStatus(client, id) {
   });
 }
 
-// Settle boxes against an order: the rep accounts for `boxes` of a product by
-// paying for them. Each settle creates a CASH sale (so the value flows into
-// revenue, today's sales and product performance), the boxes leave the rep's
-// stock, and the order auto-closes once every issued box is settled or returned.
-async function settleBoxes(id, payload, actor) {
-  const productId = payload.productId;
-  const boxes = Math.trunc(Number(payload.boxes));
-  if (!productId) throw ApiError.badRequest('Select a product to settle');
-  if (!Number.isInteger(boxes) || boxes <= 0) throw ApiError.badRequest('Boxes settled must be a positive whole number');
+// Boxes of one product still outstanding on an order (issued − settled −
+// returned). Does NOT subtract pending submissions — callers add that.
+async function productOutstanding(client, settlement, productId) {
+  const transfer = settlement.transferId
+    ? await client.stockTransfer.findUnique({ where: { id: settlement.transferId }, include: { items: { where: { productId } } } })
+    : null;
+  const assigned = (transfer?.items || []).reduce((n, it) => n + it.baseQuantity, 0);
+  const [settledAgg, retAgg] = await Promise.all([
+    client.saleItem.aggregate({ where: { productId, sale: { settlementId: settlement.id, status: { not: 'CANCELLED' } } }, _sum: { baseQuantity: true } }),
+    client.returnItem.aggregate({ where: { productId, return: { settlementId: settlement.id, status: { in: ['APPROVED', 'COMPLETED'] } } }, _sum: { baseQuantity: true } }),
+  ]);
+  return assigned - (settledAgg._sum.baseQuantity || 0) - (retAgg._sum.baseQuantity || 0);
+}
 
-  const result = await prisma.$transaction(
-    async (tx) => {
-      const s = await tx.settlement.findUnique({ where: { id } });
-      if (!s) throw ApiError.notFound('Settlement not found');
-      if (s.status === 'SETTLED') throw ApiError.badRequest('This order is already settled');
+// The actual settle effect, run inside the caller's transaction: each settled
+// box becomes a CASH sale from the rep's stock (the single path that records
+// inventory-out AND business revenue), settledValue grows, and the order
+// auto-closes once every issued box is settled or returned. Re-validates the
+// outstanding quantity at call time. Returns the sale + decorated settlement.
+// Reached ONLY when The Doctor approves a settlement submission.
+async function settleBoxesTx(tx, { settlementId, productId, packagingUnitId, boxes, method }, actor) {
+  const s = await tx.settlement.findUnique({ where: { id: settlementId } });
+  if (!s) throw ApiError.notFound('Settlement not found');
+  if (s.status === 'SETTLED') throw ApiError.badRequest('This order is already settled');
 
-      const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, name: true } });
-      if (!product) throw ApiError.badRequest('Product not found');
-      const pkg = await tx.productPackaging.findFirst({ where: { productId, isBaseUnit: true } });
-      if (!pkg) throw ApiError.badRequest(`${product.name} has no base (Box) packaging configured`);
-
-      // Boxes of this product still outstanding on the order (issued − settled − returned).
-      const transfer = s.transferId
-        ? await tx.stockTransfer.findUnique({ where: { id: s.transferId }, include: { items: { where: { productId } } } })
-        : null;
-      const assigned = (transfer?.items || []).reduce((n, it) => n + it.baseQuantity, 0);
-      const [settledAgg, retAgg] = await Promise.all([
-        tx.saleItem.aggregate({ where: { productId, sale: { settlementId: id, status: { not: 'CANCELLED' } } }, _sum: { baseQuantity: true } }),
-        tx.returnItem.aggregate({ where: { productId, return: { settlementId: id, status: { in: ['APPROVED', 'COMPLETED'] } } }, _sum: { baseQuantity: true } }),
-      ]);
-      const remaining = assigned - (settledAgg._sum.baseQuantity || 0) - (retAgg._sum.baseQuantity || 0);
-      if (boxes > remaining) {
-        throw ApiError.badRequest(`Only ${remaining} box(es) of ${product.name} are still outstanding on this order`);
-      }
-
-      // Each settled box becomes a CASH sale from the rep's stock. This is the
-      // single path that records inventory-out AND business revenue.
-      const sale = await sales.createSaleTx(
-        tx,
-        {
-          type: 'CASH',
-          salesRepId: s.salesRepId,
-          settlementId: id,
-          items: [{ productId, packagingUnitId: pkg.packagingUnitId, quantity: boxes }],
-          notes: `Settlement ${s.settlementNumber}${payload.method ? ` · ${payload.method}` : ''}`,
-        },
-        actor,
-      );
-
-      // Record the settled value, then recompute status (auto-closes the order
-      // when every issued box is now settled or returned).
-      const newSettled = round2(toNumber(s.settledValue) + toNumber(sale.total));
-      await tx.settlement.update({ where: { id }, data: { settledValue: newSettled } });
-      await recomputeStatus(tx, id);
-
-      const updated = await tx.settlement.findUnique({ where: { id }, include: { ...INCLUDE, sales: SALES_INCLUDE } });
-      const dec = decorate(updated);
-      dec.order = await orderBreakdown(updated, tx);
-      return dec;
-    },
-    { timeout: 30000 },
-  );
-
-  const repName = result.salesRep?.user?.name || 'A rep';
-  const repUserId = result.salesRep?.user?.id;
-
-  if (result.status === 'SETTLED') {
-    notification.notifyAdmins({
-      type: 'GENERAL',
-      severity: 'INFO',
-      title: `Order closed: ${result.settlementNumber}`,
-      message: `${repName} fully settled order ${result.settlementNumber}. All boxes accounted for.`,
-      entityType: 'Settlement',
-      entityId: id,
-    }).catch(() => {});
-    notification.notifyUser(repUserId, {
-      type: 'GENERAL',
-      severity: 'INFO',
-      title: `Order closed: ${result.settlementNumber}`,
-      message: `All boxes on order ${result.settlementNumber} are accounted for. Your order is now closed.`,
-      entityType: 'Settlement',
-      entityId: id,
-    }).catch(() => {});
-  } else {
-    notification.notifyAdmins({
-      type: 'GENERAL',
-      severity: 'INFO',
-      title: `Payment received: ${result.settlementNumber}`,
-      message: `${repName} settled ${payload.boxes} box(es) on order ${result.settlementNumber}.`,
-      entityType: 'Settlement',
-      entityId: id,
-    }).catch(() => {});
-    notification.notifyUser(repUserId, {
-      type: 'GENERAL',
-      severity: 'INFO',
-      title: `Settlement updated: ${result.settlementNumber}`,
-      message: `${payload.boxes} box(es) settled on order ${result.settlementNumber}.`,
-      entityType: 'Settlement',
-      entityId: id,
-    }).catch(() => {});
+  const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, name: true } });
+  if (!product) throw ApiError.badRequest('Product not found');
+  let pkgUnitId = packagingUnitId;
+  if (!pkgUnitId) {
+    const pkg = await tx.productPackaging.findFirst({ where: { productId, isBaseUnit: true } });
+    if (!pkg) throw ApiError.badRequest(`${product.name} has no base (Box) packaging configured`);
+    pkgUnitId = pkg.packagingUnitId;
   }
 
-  return result;
+  const remaining = await productOutstanding(tx, s, productId);
+  if (boxes > remaining) {
+    throw ApiError.badRequest(`Only ${remaining} box(es) of ${product.name} are still outstanding on this order`);
+  }
+
+  const sale = await sales.createSaleTx(
+    tx,
+    {
+      type: 'CASH',
+      salesRepId: s.salesRepId,
+      settlementId,
+      items: [{ productId, packagingUnitId: pkgUnitId, quantity: boxes }],
+      notes: `Settlement ${s.settlementNumber}${method ? ` · ${method}` : ''}`,
+    },
+    actor,
+  );
+
+  const newSettled = round2(toNumber(s.settledValue) + toNumber(sale.total));
+  await tx.settlement.update({ where: { id: settlementId }, data: { settledValue: newSettled } });
+  await recomputeStatus(tx, settlementId);
+
+  const updated = await tx.settlement.findUnique({ where: { id: settlementId }, include: { ...INCLUDE, sales: SALES_INCLUDE } });
+  const dec = decorate(updated);
+  dec.order = await orderBreakdown(updated, tx);
+  return { sale, settlement: dec };
 }
 
 // Admin issues additional boxes to a rep, OUT of The Lab's warehouse. If the
@@ -661,8 +635,9 @@ module.exports = {
   list,
   get,
   orderBreakdown,
+  productOutstanding,
   settle,
-  settleBoxes,
+  settleBoxesTx,
   addStockToRep,
   recomputeStatus,
   refreshOverdue,

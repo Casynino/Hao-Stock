@@ -1,18 +1,19 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 import clsx from 'clsx';
+import toast from 'react-hot-toast';
 import {
   Timer, AlertTriangle, Clock, CheckCircle2, Eye,
-  ChevronRight, Wallet, TrendingDown,
+  ChevronRight, Wallet, TrendingDown, ShieldCheck,
 } from 'lucide-react';
-import api, { unwrap } from '@/lib/api';
+import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES, SETTLEMENT_STATUS_META } from '@/lib/constants';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import OrderDetailModal from '@/components/OrderDetail';
 import {
-  PageHeader, Card, StatCard, PageSpinner, EmptyState, Badge,
+  PageHeader, Card, StatCard, PageSpinner, EmptyState, Badge, Button,
   Pagination, Table, THead, TBody, TR, TH, TD,
 } from '@/components/ui';
 
@@ -166,6 +167,65 @@ function RepSettlements({ viewing, setViewing }) {
   );
 }
 
+// ── Approval center: settlements awaiting The Doctor's verification ──────────
+
+function PendingApprovals({ onReview }) {
+  const qc = useQueryClient();
+  const { data: pending = [] } = useQuery({
+    queryKey: ['settlements', 'pending-approvals'],
+    queryFn: async () => unwrap(await api.get('/settlements/pending-approvals')).data,
+    refetchInterval: 30_000,
+  });
+
+  const refresh = () => {
+    ['settlements', 'commissions', 'dashboard', 'inventory'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  };
+  const approve = useMutation({
+    mutationFn: (id) => api.post(`/settlements/submissions/${id}/approve`),
+    onSuccess: () => { toast.success('Settlement approved — sale & commission recorded'); refresh(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  const reject = useMutation({
+    mutationFn: (id) => api.post(`/settlements/submissions/${id}/reject`),
+    onSuccess: () => { toast.success('Settlement rejected'); refresh(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  if (!pending.length) return null;
+
+  return (
+    <Card className="mb-6 border-sky-500/30">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <ShieldCheck className="h-4 w-4 text-sky-400" />
+        <h2 className="text-sm font-bold text-foreground">Pending settlement approvals</h2>
+        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-bold text-sky-400">{pending.length}</span>
+        <span className="ml-auto text-xs text-faint">Verify the money before approving</span>
+      </div>
+      <div className="divide-y divide-border">
+        {pending.map((p) => {
+          const busy = (approve.isPending && approve.variables === p.id) || (reject.isPending && reject.variables === p.id);
+          return (
+            <div key={p.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <button onClick={() => onReview(p.settlementId)} className="min-w-0 flex-1 text-left">
+                <div className="text-sm font-semibold text-foreground">{p.salesRep} · {formatCurrency(p.amount)}</div>
+                <div className="mt-0.5 text-xs text-faint">
+                  {p.boxes} box(es) {p.productName} · {p.settlementNumber}{p.method ? ` · ${p.method}` : ''} · {formatDateTime(p.submittedAt)}
+                </div>
+              </button>
+              <div className="flex shrink-0 gap-2">
+                <Button variant="ghost" className="text-rose-500" disabled={busy} onClick={() => reject.mutate(p.id)}>Reject</Button>
+                <Button loading={busy} onClick={() => approve.mutate(p.id)}>
+                  <CheckCircle2 className="h-4 w-4" /> Approve
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 // ── Staff / admin view: full table ──────────────────────────────────────────
 
 function StaffSettlements({ viewing, setViewing }) {
@@ -184,6 +244,7 @@ function StaffSettlements({ viewing, setViewing }) {
 
   return (
     <div>
+      <PendingApprovals onReview={setViewing} />
       {summary && (
         <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
           <StatCard label="Outstanding" value={summary.outstandingCount} icon={Timer} tone="brand" hint={formatCurrency(summary.outstandingValue)} />

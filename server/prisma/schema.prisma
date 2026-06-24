@@ -1096,6 +1096,45 @@ model Settlement {
   @@map("settlements")
 }
 
+enum SettlementSubmissionStatus {
+  PENDING  // submitted by rep, awaiting The Doctor's verification
+  APPROVED // money verified — sale recorded, commission generated
+  REJECTED // not accepted; no business impact
+}
+
+// A rep's request to settle boxes, awaiting admin approval. It has ZERO business
+// impact while PENDING — no Sale exists, so no revenue/profit/commission/today's
+// sales. On APPROVAL the actual sale is created (saleId links it). Mirrors the
+// Return approval flow. References are plain ids (no FK relations) so the model
+// stays self-contained, like Settlement.transferId.
+model SettlementSubmission {
+  id               String                     @id @default(cuid())
+  submissionNumber String                     @unique
+  settlementId     String
+  salesRepId       String
+  productId        String
+  packagingUnitId  String
+  productName      String // denormalized for display while pending
+  boxes            Int
+  baseQuantity     Int
+  amount           Decimal                    @db.Decimal(16, 2)
+  method           String?
+  status           SettlementSubmissionStatus @default(PENDING)
+  saleId           String? // the Sale created on approval
+  rejectionReason  String?
+  submittedById    String?
+  decidedById      String?
+  submittedAt      DateTime                   @default(now())
+  decidedAt        DateTime?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+
+  @@index([settlementId])
+  @@index([salesRepId])
+  @@index([status])
+  @@map("settlement_submissions")
+}
+
 // A settlement entry: the rep accounts for `boxes` of a product by settling
 // (paying for) them. `amount` = boxes * box price. Returns are tracked
 // separately; together settled + returned must equal the boxes issued.

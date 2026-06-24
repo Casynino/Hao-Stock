@@ -9,10 +9,16 @@
 // Matching is by product NAME, normalized so dash / whitespace / case variants
 // don't matter. Anything not in the list sorts last (alphabetically), so adding
 // a new product never breaks the UI — it just appends until it's listed here.
-// Civlily group first, then OHIS, exactly as specified by The Doctor.
+// OHIS group first (the main brand), then Civlily, as specified by The Doctor.
 // ============================================================================
 
 const CANONICAL = [
+  // ── OHIS (main brand — shown first) ──
+  'OHIS Pepa Ndogo (Brown) - Bila Filter',
+  'OHIS Pepa Ndogo (White) - Bila Filter',
+  'OHIS Pepa Ndogo (Brown) - Na Filter',
+  'OHIS Pepa Kubwa (Brown) - Na Filter',
+  'OHIS Pepa Kubwa (Brown) - Bila Filter',
   // ── Civlily ──
   'Civlily Pepa Ndogo (Brown) - Bila Filter',
   'Civlily Pepa Ndogo (White) - Bila Filter',
@@ -21,12 +27,6 @@ const CANONICAL = [
   'Civlily Pepa Kubwa (Brown) - Na Filter',
   'Civlily Pepa Kubwa (Mix Colors) - Na Filter',
   'Civlily Pepa Ndogo (Mix Colors) - Bila Filter',
-  // ── OHIS ──
-  'OHIS Pepa Ndogo (Brown) - Bila Filter',
-  'OHIS Pepa Ndogo (White) - Bila Filter',
-  'OHIS Pepa Ndogo (Brown) - Na Filter',
-  'OHIS Pepa Kubwa (Brown) - Na Filter',
-  'OHIS Pepa Kubwa (Brown) - Bila Filter',
 ];
 
 // Normalize a name so en/em dashes, double spaces and case don't affect matching.

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api, { unwrap } from '@/lib/api';
+import { sortByCanonical } from '@/lib/productOrder';
 
 // Fetch a (large) list and return just the array — handy for select options.
-function listHook(key, url, params = {}) {
+// `opts` is merged into the query (e.g. a `select` transform).
+function listHook(key, url, params = {}, opts = {}) {
   return function useList(extra = {}) {
     return useQuery({
       queryKey: [key, 'options', { ...params, ...extra }],
@@ -12,11 +14,19 @@ function listHook(key, url, params = {}) {
         return unwrap(res).data;
       },
       staleTime: 60_000,
+      ...opts,
     });
   };
 }
 
-export const useProducts = listHook('products', '/products', { isActive: true, sortBy: 'name', sortDir: 'asc' });
+// Products always come back in the one canonical order, so every selection list
+// across the app (rep + admin) shows them identically.
+export const useProducts = listHook(
+  'products',
+  '/products',
+  { isActive: true, sortBy: 'name', sortDir: 'asc' },
+  { select: (rows) => sortByCanonical(rows) },
+);
 export const useBrands = listHook('brands', '/brands');
 export const useCategories = listHook('categories', '/categories');
 export const useWarehouses = listHook('warehouses', '/warehouses', { isActive: true });

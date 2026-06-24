@@ -1,8 +1,10 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES } from '@/lib/constants';
+import { PageSpinner } from '@/components/ui';
 
 import Login from '@/pages/Login';
 import Dashboard from '@/pages/Dashboard';
@@ -31,6 +33,10 @@ import DailyReports from '@/pages/DailyReports';
 import Activity from '@/pages/Activity';
 import Profile from '@/pages/Profile';
 import NotFound from '@/pages/NotFound';
+
+// Lazy-loaded so the PDF library (jspdf) only downloads when a user actually
+// opens the Invoice Generator, keeping the main bundle small.
+const InvoiceGenerator = lazy(() => import('@/pages/InvoiceGenerator'));
 
 // Sales reps get a personal dashboard; everyone else gets the management one.
 function DashboardRouter() {
@@ -61,6 +67,7 @@ export default function App() {
         <Route path="/settlements" element={<Settlements />} />
         <Route path="/commissions" element={<Commissions />} />
         <Route path="/daily-reports" element={<DailyReports />} />
+        <Route path="/invoice-generator" element={<Suspense fallback={<PageSpinner />}><InvoiceGenerator /></Suspense>} />
         <Route path="/activity" element={<ProtectedRoute roles={W}><Activity /></ProtectedRoute>} />
         <Route path="/sales" element={<ProtectedRoute roles={W}><Sales /></ProtectedRoute>} />
         <Route path="/customers" element={<ProtectedRoute roles={W}><Customers /></ProtectedRoute>} />

@@ -356,6 +356,7 @@ const resetData = asyncHandler(async (req, res) => {
     await tx.creditSale.deleteMany({ where: { salesRepId: repId } });
     await tx.return.deleteMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] } });
     await tx.settlementPenalty.deleteMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] } });
+    await tx.settlementSubmission.deleteMany({ where: { OR: [{ salesRepId: repId }, { settlementId: { in: settlementIds } }] } });
     await tx.commissionWithdrawal.deleteMany({ where: { salesRepId: repId } });
     await tx.settlement.deleteMany({ where: { salesRepId: repId } });
     await tx.stockRequest.deleteMany({ where: { salesRepId: repId } });

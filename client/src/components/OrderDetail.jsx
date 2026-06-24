@@ -12,47 +12,58 @@ import {
   Table, THead, TBody, TR, TH, TD,
 } from '@/components/ui';
 
-// --- Settle boxes: the rep accounts for boxes by paying for them -----------
-// Reps do NOT record customer sales. They settle stock box by box; the money
-// is derived (boxes × box price) and those boxes leave the rep's holding.
+// --- Submit settlement: the rep submits boxes + cash for The Doctor's approval
+// Nothing is recorded (no sale, commission, revenue or profit) until approved.
+function pendingBoxesByProduct(order) {
+  const m = {};
+  (order.pendingSubmissionsList || []).forEach((p) => { m[p.productId] = (m[p.productId] || 0) + p.boxes; });
+  return m;
+}
+
 function SettleBoxesModal({ order, onClose, onDone }) {
-  const lines = order.order.lines.filter((l) => l.remaining > 0);
+  const pendingMap = pendingBoxesByProduct(order);
+  const availFor = (l) => Math.max(0, l.remaining - (pendingMap[l.productId] || 0));
+  const lines = order.order.lines.filter((l) => availFor(l) > 0);
   const [productId, setProductId] = useState(lines[0]?.productId || '');
   const [boxes, setBoxes] = useState('');
   const [method, setMethod] = useState('CASH');
 
   const line = lines.find((l) => l.productId === productId);
-  const max = line?.remaining || 0;
+  const max = line ? availFor(line) : 0;
   const value = (Number(boxes) || 0) * (line?.sellingPrice || 0);
 
   const settle = useMutation({
     mutationFn: () => api.post(`/settlements/${order.id}/settle-boxes`, { productId, boxes: Number(boxes), method }),
-    onSuccess: () => { toast.success('Settlement recorded'); onDone(); onClose(); },
+    onSuccess: () => { toast.success('Settlement submitted — awaiting The Lab approval'); onDone(); onClose(); },
     onError: (e) => toast.error(apiError(e)),
   });
 
   return (
-    <Modal open onClose={onClose} title={`Settle boxes · ${order.settlementNumber}`}
+    <Modal open onClose={onClose} title={`Submit settlement · ${order.settlementNumber}`}
       footer={<>
         <div className="mr-auto text-sm"><span className="text-muted">Amount</span> <b>{formatCurrency(value)}</b></div>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button loading={settle.isPending} disabled={!productId || !boxes || Number(boxes) <= 0 || Number(boxes) > max} onClick={() => settle.mutate()}>Record settlement</Button>
+        <Button loading={settle.isPending} disabled={!productId || !boxes || Number(boxes) <= 0 || Number(boxes) > max} onClick={() => settle.mutate()}>Submit for approval</Button>
       </>}>
       <div className="space-y-4">
-        <p className="text-sm text-muted">The rep is paying for boxes they've sold. The amount is calculated automatically and these boxes leave the rep's stock.</p>
-        <Field label="Product">
-          <Select value={productId} onChange={(e) => { setProductId(e.target.value); setBoxes(''); }}>
-            {lines.map((l) => <option key={l.productId} value={l.productId}>{l.name} — {formatNumber(l.remaining)} left</option>)}
-          </Select>
-        </Field>
-        <Field label="Boxes to settle" required hint={`Max ${formatNumber(max)} · ${formatCurrency(line?.sellingPrice || 0)} / box`}>
-          <Input type="number" min="1" max={max} value={boxes} onChange={(e) => setBoxes(e.target.value)} autoFocus />
-        </Field>
-        <Field label="Method">
-          <Select value={method} onChange={(e) => setMethod(e.target.value)}>
-            <option value="CASH">Cash</option><option value="MOBILE_MONEY">Mobile money</option><option value="BANK">Bank</option><option value="OTHER">Other</option>
-          </Select>
-        </Field>
+        <p className="text-sm text-muted">Submit the boxes you've sold and the cash collected. The Doctor verifies the money and approves — your sale and commission are recorded <b>only after approval</b>.</p>
+        {lines.length === 0 ? (
+          <p className="rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-faint">Every outstanding box is already submitted and awaiting approval.</p>
+        ) : (<>
+          <Field label="Product">
+            <Select value={productId} onChange={(e) => { setProductId(e.target.value); setBoxes(''); }}>
+              {lines.map((l) => <option key={l.productId} value={l.productId}>{l.name} — {formatNumber(availFor(l))} left</option>)}
+            </Select>
+          </Field>
+          <Field label="Boxes to settle" required hint={`Max ${formatNumber(max)} · ${formatCurrency(line?.sellingPrice || 0)} / box`}>
+            <Input type="number" min="1" max={max} value={boxes} onChange={(e) => setBoxes(e.target.value)} autoFocus />
+          </Field>
+          <Field label="Method">
+            <Select value={method} onChange={(e) => setMethod(e.target.value)}>
+              <option value="CASH">Cash</option><option value="MOBILE_MONEY">Mobile money</option><option value="BANK">Bank</option><option value="OTHER">Other</option>
+            </Select>
+          </Field>
+        </>)}
       </div>
     </Modal>
   );
@@ -263,6 +274,27 @@ function RejectReturnModal({ ret, onClose, onDone }) {
   );
 }
 
+// --- Reject a pending settlement submission (staff / admin) -----------------
+function RejectSubmissionModal({ submission, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const reject = useMutation({
+    mutationFn: () => api.post(`/settlements/submissions/${submission.id}/reject`, { reason: reason || undefined }),
+    onSuccess: () => { toast.success('Settlement rejected'); onDone(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  return (
+    <Modal open onClose={onClose} title={`Reject settlement · ${submission.submissionNumber}`}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={reject.isPending} onClick={() => reject.mutate()} className="bg-rose-600 text-white hover:bg-rose-500">Reject settlement</Button></>}>
+      <div className="space-y-3">
+        <p className="text-sm text-muted">Rejecting records nothing — the boxes stay outstanding and the rep must resubmit. No sale or commission is created.</p>
+        <Field label="Reason (optional)">
+          <textarea className="input min-h-[90px]" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. amount doesn't match cash received" autoFocus />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
 function MoneyCard({ label, value, tone }) {
   const tones = { brand: 'text-brand-600', emerald: 'text-emerald-500', rose: 'text-rose-500', default: 'text-foreground' };
   return (
@@ -279,6 +311,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
   const staff = hasRole(ROLES.WAREHOUSE_STAFF);
   const [sub, setSub] = useState(null); // 'settle' | 'return' | 'flag' | 'extend'
   const [rejectingReturn, setRejectingReturn] = useState(null); // pending return being rejected
+  const [rejectingSubmission, setRejectingSubmission] = useState(null); // pending settlement being rejected
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['settlement', settlementId],
@@ -305,6 +338,12 @@ export default function OrderDetailModal({ settlementId, onClose }) {
     onError: (e) => toast.error(apiError(e)),
   });
 
+  const approveSubmission = useMutation({
+    mutationFn: (id) => api.post(`/settlements/submissions/${id}/approve`),
+    onSuccess: () => { toast.success('Settlement approved — sale & commission recorded'); refresh(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
   const isOwnRep = user?.role === ROLES.SALES_REP && order?.salesRepId === user?.salesRepId;
   const canAct = staff || isOwnRep;
   const active = order && order.status !== 'SETTLED';
@@ -319,7 +358,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
             <Button variant="secondary" onClick={onClose}>Close</Button>
             {staff && active && <Button variant="ghost" onClick={() => setSub('extend')}><Clock className="h-4 w-4" /> Extend deadline</Button>}
             {canAct && active && remaining > 0 && <Button variant="secondary" onClick={() => setSub('return')}><Undo2 className="h-4 w-4" /> Return</Button>}
-            {canAct && active && remaining > 0 && <Button onClick={() => setSub('settle')}><Wallet className="h-4 w-4" /> Settle boxes</Button>}
+            {canAct && active && remaining > 0 && <Button onClick={() => setSub('settle')}><Wallet className="h-4 w-4" /> Submit settlement</Button>}
             {staff && active && (remaining <= 0
               ? <Button variant="ghost" className="text-emerald-500" loading={settle.isPending} onClick={() => settle.mutate()}><CheckCircle2 className="h-4 w-4" /> Close order</Button>
               : <span className="self-center text-xs text-faint">{formatNumber(remaining)} box(es) left to account for</span>)}
@@ -363,6 +402,34 @@ export default function OrderDetailModal({ settlementId, onClose }) {
                         <Button variant="ghost" className="text-rose-500" disabled={approveReturn.isPending} onClick={() => setRejectingReturn(r)}>Reject</Button>
                         <Button loading={approveReturn.isPending && approveReturn.variables === r.id} onClick={() => approveReturn.mutate(r.id)}>
                           <CheckCircle2 className="h-4 w-4" /> Approve return
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pending settlement submissions — awaiting The Doctor's approval */}
+            {order.pendingSubmissions > 0 && (
+              <div className="flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2.5 text-sm text-sky-300">
+                <Clock className="h-4 w-4 shrink-0" />
+                <span>{order.pendingSubmissions} settlement{order.pendingSubmissions !== 1 ? 's' : ''} awaiting approval — no sale or commission is recorded until The Doctor approves.</span>
+              </div>
+            )}
+            {staff && order.pendingSubmissionsList?.length > 0 && (
+              <div className="space-y-2">
+                {order.pendingSubmissionsList.map((p) => (
+                  <div key={p.id} className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-foreground">{p.submissionNumber} · {formatCurrency(p.amount)}</div>
+                        <div className="mt-0.5 text-xs text-faint">{formatNumber(p.boxes)} box(es) {p.productName}{p.method ? ` · ${p.method}` : ''}</div>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button variant="ghost" className="text-rose-500" disabled={approveSubmission.isPending} onClick={() => setRejectingSubmission(p)}>Reject</Button>
+                        <Button loading={approveSubmission.isPending && approveSubmission.variables === p.id} onClick={() => approveSubmission.mutate(p.id)}>
+                          <CheckCircle2 className="h-4 w-4" /> Approve settlement
                         </Button>
                       </div>
                     </div>
@@ -429,6 +496,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
       {order && sub === 'return' && <RecordReturnModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'extend' && <ExtendDeadlineModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {rejectingReturn && <RejectReturnModal ret={rejectingReturn} onClose={() => setRejectingReturn(null)} onDone={refresh} />}
+      {rejectingSubmission && <RejectSubmissionModal submission={rejectingSubmission} onClose={() => setRejectingSubmission(null)} onDone={refresh} />}
     </>
   );
 }

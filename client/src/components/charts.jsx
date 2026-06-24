@@ -54,6 +54,7 @@ export function BarChartCard({ data, dataKey = 'value', labelKey = 'name', money
         <XAxis type="number" tick={AXIS} tickLine={false} axisLine={false} tickFormatter={(v) => formatNumber(v, { compact: true })} />
         <YAxis type="category" dataKey={labelKey} tick={AXIS} tickLine={false} axisLine={false} width={130} />
         <Tooltip
+          cursor={false}
           formatter={(v) => (money ? formatCurrency(v) : formatNumber(v))}
           contentStyle={{ fontSize: 12, borderRadius: 8, background: '#151517', border: '1px solid #2a2a30', color: '#f4f4f5' }}
         />

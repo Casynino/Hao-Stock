@@ -167,25 +167,39 @@ async function productPerformance(params = {}) {
 
 async function regionalPerformance(params = {}) {
   const range = resolveRange(params);
-  const grouped = await prisma.sale.groupBy({
-    by: ['region'],
-    where: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } },
-    _sum: { total: true, costTotal: true },
-    _count: true,
-  });
+  // Bucket revenue by the rep's CURRENT region (live join), not a region copied
+  // onto the sale when it happened — so editing a rep's region immediately
+  // re-buckets all their sales. Sales with no rep (admin direct) → "Unspecified".
+  const [grouped, reps] = await Promise.all([
+    prisma.sale.groupBy({
+      by: ['salesRepId'],
+      where: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } },
+      _sum: { total: true, costTotal: true },
+      _count: true,
+    }),
+    prisma.salesRepresentative.findMany({ select: { id: true, region: true } }),
+  ]);
 
-  const items = grouped
-    .map((g) => {
-      const revenue = round2(toNumber(g._sum.total));
-      const cost = round2(toNumber(g._sum.costTotal));
-      return {
-        region: g.region || 'Unspecified',
-        revenue,
-        cost,
-        profit: round2(revenue - cost),
-        orders: g._count,
-      };
-    })
+  const regionByRep = new Map(reps.map((r) => [r.id, (r.region || '').trim() || 'Unspecified']));
+
+  const byRegion = new Map();
+  for (const g of grouped) {
+    const region = (g.salesRepId && regionByRep.get(g.salesRepId)) || 'Unspecified';
+    const cur = byRegion.get(region) || { region, revenue: 0, cost: 0, orders: 0 };
+    cur.revenue += toNumber(g._sum.total);
+    cur.cost += toNumber(g._sum.costTotal);
+    cur.orders += g._count;
+    byRegion.set(region, cur);
+  }
+
+  const items = [...byRegion.values()]
+    .map((x) => ({
+      region: x.region,
+      revenue: round2(x.revenue),
+      cost: round2(x.cost),
+      profit: round2(x.revenue - x.cost),
+      orders: x.orders,
+    }))
     .sort((a, b) => b.revenue - a.revenue);
 
   return { range: { start: range.start, end: range.end, label: range.label }, items };

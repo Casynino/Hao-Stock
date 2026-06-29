@@ -9,6 +9,7 @@
 const express = require('express');
 const asyncHandler = require('../utils/asyncHandler');
 const settlement = require('../services/settlement.service');
+const penalty = require('../services/penalty.service');
 
 const router = express.Router();
 
@@ -28,7 +29,8 @@ router.get(
   asyncHandler(async (_req, res) => {
     const overdue = await settlement.refreshOverdue();
     const reminders = await settlement.sendDueReminders();
-    return res.json({ success: true, data: { overdue, reminders, at: new Date().toISOString() } });
+    const penalties = await penalty.applyDuePenalties();
+    return res.json({ success: true, data: { overdue, reminders, penalties, at: new Date().toISOString() } });
   }),
 );
 

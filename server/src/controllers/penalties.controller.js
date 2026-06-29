@@ -7,18 +7,16 @@ const penaltyService = require('../services/penalty.service');
 const audit = require('../services/audit.service');
 const { ROLES } = require('../middleware/authorize');
 
-// POST /penalties/apply  — admin triggers daily penalty pass + deadline warnings.
+// POST /penalties/apply  — admin manually triggers the due-penalty pass (also
+// runs automatically via the settlement sweep / cron).
 const apply = asyncHandler(async (req, res) => {
-  const [penalties, warnings] = await Promise.all([
-    penaltyService.applyDailyPenalties(),
-    penaltyService.checkApproachingDeadlines(),
-  ]);
+  const penalties = await penaltyService.applyDuePenalties();
   await audit.record(req, {
     action: 'CREATE',
     entityType: 'SettlementPenalty',
-    newValues: { applied: penalties.applied, skipped: penalties.skipped, deadlineWarnings: warnings.notified },
+    newValues: { applied: penalties.applied },
   });
-  return ok(res, { penalties, warnings });
+  return ok(res, { penalties });
 });
 
 // GET /penalties  — list stored penalty audit records (admin) or own (rep).

@@ -283,6 +283,22 @@ async function rejectReturn(id, actor, reason) {
     include: RETURN_INCLUDE,
   });
 
+  // Resume the penalty countdown: give back the hours the return sat pending, so
+  // the rep is never fined for the approval window. Prior penalties stay (the
+  // order simply becomes active again and the daily fine resumes).
+  if (updated.settlementId) {
+    const stl = await prisma.settlement.findUnique({ where: { id: updated.settlementId }, select: { status: true, deadlineAt: true } });
+    if (stl && stl.status !== 'SETTLED') {
+      const pauseMs = Math.max(0, new Date(updated.decidedAt).getTime() - new Date(updated.processedAt).getTime());
+      if (pauseMs > 0) {
+        await prisma.settlement.update({
+          where: { id: updated.settlementId },
+          data: { deadlineAt: new Date(new Date(stl.deadlineAt).getTime() + pauseMs) },
+        });
+      }
+    }
+  }
+
   const repUserId = updated.salesRep?.user?.id;
   if (repUserId) {
     const totalBoxes = (updated.items || []).reduce((s, i) => s + i.quantity, 0);

@@ -8,6 +8,7 @@ const dashboard = require('../services/dashboard.service');
 const inventory = require('../services/inventory.service');
 const commission = require('../services/commission.service');
 const settlement = require('../services/settlement.service');
+const penalty = require('../services/penalty.service');
 const { toNumber, round2 } = require('../utils/money');
 
 const overview = asyncHandler(async (_req, res) => {
@@ -33,8 +34,9 @@ const myOverview = asyncHandler(async (req, res) => {
   if (!salesRepId) throw ApiError.forbidden('Your account has no sales-rep profile');
 
   // Reps poll this every ~60s, so it doubles as the heartbeat that fires due
-  // 24h/6h/1h settlement reminders. Fire-and-forget — never blocks the response.
+  // reminders AND applies any overdue penalties. Fire-and-forget — never blocks.
   settlement.sendDueReminders().catch(() => {});
+  penalty.applyDuePenalties().catch(() => {});
 
   const [balances, commissionData, openOrders, pendingRequests] = await Promise.all([
     inventory.repBalances(prisma, salesRepId),

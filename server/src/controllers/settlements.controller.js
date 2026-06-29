@@ -6,6 +6,7 @@ const { ok, created, paginated } = require('../utils/response');
 const { parsePagination } = require('../utils/pagination');
 const settlement = require('../services/settlement.service');
 const submission = require('../services/settlementSubmission.service');
+const penalty = require('../services/penalty.service');
 const audit = require('../services/audit.service');
 const { ROLES } = require('../middleware/authorize');
 
@@ -19,7 +20,9 @@ const list = asyncHandler(async (req, res) => {
 });
 
 const summary = asyncHandler(async (_req, res) => {
-  settlement.sendDueReminders().catch(() => {}); // fire-and-forget 24h/6h/1h reminders
+  // Fire-and-forget: keep reminders + real penalty deductions current.
+  settlement.sendDueReminders().catch(() => {});
+  penalty.applyDuePenalties().catch(() => {});
   return ok(res, await settlement.summary());
 });
 

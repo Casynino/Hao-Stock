@@ -3,7 +3,7 @@
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const notification = require('./notification.service');
-const { computePenaltiesForRep } = require('./penalty.service');
+const { penaltyBreakdownForRep } = require('./penalty.service');
 const { toNumber, round2, formatCurrency } = require('../utils/money');
 
 // Commission rule is configurable via settings:
@@ -50,11 +50,15 @@ async function computeForRep(salesRepId) {
     getRule(),
     boxesSettledByRep(salesRepId),
     withdrawalTotals(salesRepId),
-    computePenaltiesForRep(salesRepId),
+    penaltyBreakdownForRep(salesRepId),
   ]);
   const earned = round2(boxes * rule.perBox);
-  const pending = round2(earned - wt.paid);
+  // Penalties are REAL applied deductions (persisted transactions). The balance
+  // is earned − paid − pending withdrawals − penalties, and is NOT clamped, so a
+  // rep with more fines than earnings goes negative (owes The Lab). Future
+  // earnings raise `earned`, automatically offsetting the debt.
   const penalties = penaltyData.total;
+  const pending = round2(earned - wt.paid);
   const available = round2(earned - wt.paid - wt.pendingRequests - penalties);
   return {
     rule,

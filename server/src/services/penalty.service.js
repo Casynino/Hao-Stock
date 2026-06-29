@@ -1,172 +1,148 @@
 'use strict';
 
+// ===========================================================================
+// COMMISSION PENALTIES — a real financial ledger, not a display.
+//
+// Every late-settlement fine is a PERSISTED SettlementPenalty row (a permanent
+// transaction). The commission balance is earned − paid − Σ(persisted
+// penalties), so applying a penalty genuinely reduces the rep's balance and may
+// take it negative (the rep then owes The Lab; future earnings offset it).
+//
+// Timing: the first TZS 10,000 lands the moment the 72h deadline passes (no
+// grace), then another TZS 10,000 for every further 24h, until the order is
+// completed (settlement or return approved). While a return is pending approval
+// the countdown pauses (no new fines); rejecting the return shifts the deadline
+// forward by the pending duration so those hours are never charged — but prior
+// penalties are never erased.
+// ===========================================================================
+
 const prisma = require('../config/prisma');
 const notification = require('./notification.service');
-const { round2 } = require('../utils/money');
+const { round2, toNumber, formatCurrency } = require('../utils/money');
 
 const PENALTY_PER_DAY = 10000; // TZS
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-// Live penalty calculation for a rep — always authoritative for commission balance.
-// Exemptions: settlement already closed; pending return on that settlement.
-// Days overdue = full 24h periods since deadlineAt (first penalty after 24h past deadline).
-async function computePenaltiesForRep(salesRepId) {
-  const now = Date.now();
-
-  const overdue = await prisma.settlement.findMany({
-    where: {
-      salesRepId,
-      status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] },
-      deadlineAt: { lt: new Date(now) },
-    },
-    select: { id: true, settlementNumber: true, deadlineAt: true },
-  });
-
-  if (overdue.length === 0) return { total: 0, breakdown: [] };
-
-  let total = 0;
-  const breakdown = [];
-
-  for (const s of overdue) {
-    const pendingReturns = await prisma.return.count({
-      where: { settlementId: s.id, status: 'PENDING' },
-    });
-
-    const msOverdue = now - new Date(s.deadlineAt).getTime();
-    const daysOverdue = Math.floor(msOverdue / MS_PER_DAY);
-
-    const penalty = daysOverdue * PENALTY_PER_DAY;
-    total += penalty;
-    breakdown.push({
-      settlementId: s.id,
-      settlementNumber: s.settlementNumber,
-      daysOverdue,
-      penaltyPerDay: PENALTY_PER_DAY,
-      totalPenalty: penalty,
-      exemptPendingReturn: pendingReturns > 0,
-    });
-  }
-
-  return { total: round2(total), breakdown };
+// Penalty-days owed for an overdue settlement: 1 the instant the deadline passes,
+// then +1 every 24h. (deadlineAt <= now is guaranteed by the caller.)
+function penaltyDaysDue(deadlineAt, now) {
+  const msOverdue = now - new Date(deadlineAt).getTime();
+  return 1 + Math.floor(msOverdue / MS_PER_DAY);
 }
 
-// Apply today's penalty audit records and send rep notifications.
-// Safe to call multiple times — skips settlements already penalised today.
-async function applyDailyPenalties() {
-  const now = new Date();
-  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-
+// Apply every penalty-day that is owed but not yet charged, across all overdue
+// orders. Idempotent: it only ever creates the missing rows, so it's safe to
+// run on a schedule AND opportunistically. Orders with a pending return are
+// paused. Returns how many fines were applied.
+async function applyDuePenalties() {
+  const now = Date.now();
   const overdue = await prisma.settlement.findMany({
-    where: {
-      status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] },
-      deadlineAt: { lt: now },
-    },
-    include: {
-      salesRep: { include: { user: { select: { id: true, name: true } } } },
-    },
+    where: { status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] }, deadlineAt: { lte: new Date(now) } },
+    include: { salesRep: { include: { user: { select: { id: true, name: true } } } } },
   });
 
   let applied = 0;
-  let skipped = 0;
-
   for (const s of overdue) {
-    const msOverdue = now.getTime() - new Date(s.deadlineAt).getTime();
-    const daysOverdue = Math.floor(msOverdue / MS_PER_DAY);
-    if (daysOverdue < 1) { skipped++; continue; }
+    // Pause while a return is awaiting The Doctor's decision.
+    const pendingReturns = await prisma.return.count({ where: { settlementId: s.id, status: 'PENDING' } });
+    if (pendingReturns > 0) continue;
 
-    const existing = await prisma.settlementPenalty.findFirst({
-      where: { settlementId: s.id, appliedAt: { gte: todayUtc } },
-    });
-    if (existing) { skipped++; continue; }
+    const due = penaltyDaysDue(s.deadlineAt, now);
+    const charged = await prisma.settlementPenalty.count({ where: { settlementId: s.id } });
+    if (due <= charged) continue;
 
-    const pendingReturns = await prisma.return.count({
-      where: { settlementId: s.id, status: 'PENDING' },
-    });
-    if (pendingReturns > 0) { skipped++; continue; }
+    for (let day = charged + 1; day <= due; day++) {
+      await prisma.settlementPenalty.create({
+        data: {
+          salesRepId: s.salesRepId,
+          settlementId: s.id,
+          amount: PENALTY_PER_DAY,
+          daysOverdue: day,
+          notes: `Late settlement fine — failed to complete ${s.settlementNumber} within 72 hours (day ${day}).`,
+        },
+      });
+      applied++;
+    }
 
-    await prisma.settlementPenalty.create({
-      data: {
-        salesRepId: s.salesRepId,
-        settlementId: s.id,
-        amount: PENALTY_PER_DAY,
-        daysOverdue,
-        notes: `Day ${daysOverdue} overdue — ${s.settlementNumber}`,
-      },
-    });
-
+    const newFines = due - charged;
+    const fineValue = newFines * PENALTY_PER_DAY;
     const repUserId = s.salesRep?.user?.id;
     const repName = s.salesRep?.user?.name || 'A rep';
-
     if (repUserId) {
       notification.notifyUser(repUserId, {
         type: 'GENERAL',
-        severity: 'WARNING',
-        title: 'Overdue penalty applied',
-        message: `TZS 10,000 has been deducted from your commission — order ${s.settlementNumber} is ${daysOverdue} day(s) overdue. Settle immediately to stop penalties.`,
+        severity: 'CRITICAL',
+        title: `${formatCurrency(fineValue)} late settlement fine applied`,
+        message: `${formatCurrency(fineValue)} has been deducted from your commission because order ${s.settlementNumber} is overdue (${due} day${due !== 1 ? 's' : ''}). Settle or return to stop the daily fine.`,
         entityType: 'Settlement',
         entityId: s.id,
       }).catch(() => {});
     }
-
     notification.notifyAdmins({
       type: 'GENERAL',
       severity: 'INFO',
       title: 'Settlement penalty applied',
-      message: `TZS 10,000 penalty applied to ${repName} for ${s.settlementNumber} (day ${daysOverdue} overdue).`,
+      message: `${formatCurrency(fineValue)} penalty applied to ${repName} for ${s.settlementNumber} (now ${due} day${due !== 1 ? 's' : ''} overdue).`,
       entityType: 'Settlement',
       entityId: s.id,
     }).catch(() => {});
-
-    applied++;
   }
 
-  return { applied, skipped };
+  return { applied };
 }
 
-// Send approaching-deadline notifications (< 24h remaining, not yet overdue).
-// Safe to call multiple times — createIfAbsent deduplicates by entityId while unread.
-async function checkApproachingDeadlines() {
-  const now = new Date();
-  const in24h = new Date(now.getTime() + MS_PER_DAY);
-
-  const approaching = await prisma.settlement.findMany({
-    where: {
-      status: { in: ['OPEN', 'PARTIAL'] },
-      deadlineAt: { gt: now, lte: in24h },
-    },
-    include: {
-      salesRep: { include: { user: { select: { id: true, name: true } } } },
-    },
+// Persisted penalties for a rep, grouped per order — for the commission UI.
+async function penaltyBreakdownForRep(salesRepId) {
+  const grouped = await prisma.settlementPenalty.groupBy({
+    by: ['settlementId'],
+    where: { salesRepId },
+    _sum: { amount: true },
+    _count: true,
+    _max: { daysOverdue: true },
   });
+  if (grouped.length === 0) return { total: 0, breakdown: [] };
 
-  let notified = 0;
+  const ids = grouped.map((g) => g.settlementId);
+  const [settlements, pendingRets] = await Promise.all([
+    prisma.settlement.findMany({ where: { id: { in: ids } }, select: { id: true, settlementNumber: true, status: true } }),
+    prisma.return.groupBy({ by: ['settlementId'], where: { settlementId: { in: ids }, status: 'PENDING' }, _count: true }),
+  ]);
+  const sMap = new Map(settlements.map((s) => [s.id, s]));
+  const pendingMap = new Map(pendingRets.map((r) => [r.settlementId, r._count]));
 
-  for (const s of approaching) {
-    const repUserId = s.salesRep?.user?.id;
-    if (!repUserId) continue;
+  let total = 0;
+  const breakdown = grouped
+    .map((g) => {
+      const amt = round2(toNumber(g._sum.amount));
+      total += amt;
+      const s = sMap.get(g.settlementId);
+      return {
+        settlementId: g.settlementId,
+        settlementNumber: s?.settlementNumber || '—',
+        daysOverdue: g._max.daysOverdue || g._count,
+        fines: g._count,
+        penaltyPerDay: PENALTY_PER_DAY,
+        totalPenalty: amt,
+        closed: s?.status === 'SETTLED',
+        exemptPendingReturn: (pendingMap.get(g.settlementId) || 0) > 0,
+      };
+    })
+    .sort((a, b) => b.totalPenalty - a.totalPenalty);
 
-    await notification.createIfAbsent({
-      type: 'GENERAL',
-      severity: 'WARNING',
-      title: 'Settlement deadline in under 24 hours',
-      message: `Order ${s.settlementNumber} must be settled by ${new Date(s.deadlineAt).toLocaleString('en-TZ', { timeZone: 'Africa/Dar_es_Salaam' })}. Unsettled orders incur TZS 10,000/day penalties.`,
-      entityType: 'Settlement',
-      entityId: `${s.id}_approaching`,
-      userId: repUserId,
-    });
-
-    notified++;
-  }
-
-  return { notified };
+  return { total: round2(total), breakdown };
 }
 
-// Stored penalty audit records for a rep (most recent first).
+// Total penalties charged to a rep (drives the commission balance).
+async function totalPenaltiesForRep(salesRepId) {
+  const agg = await prisma.settlementPenalty.aggregate({ where: { salesRepId }, _sum: { amount: true } });
+  return round2(toNumber(agg._sum.amount));
+}
+
+// Stored penalty transactions (history), most recent first.
 async function listPenalties({ salesRepId, settlementId, page = 1, limit = 20 }) {
   const where = {};
   if (salesRepId) where.salesRepId = salesRepId;
   if (settlementId) where.settlementId = settlementId;
-
   const skip = (page - 1) * limit;
   const [items, total] = await Promise.all([
     prisma.settlementPenalty.findMany({
@@ -181,8 +157,14 @@ async function listPenalties({ salesRepId, settlementId, page = 1, limit = 20 })
     }),
     prisma.settlementPenalty.count({ where }),
   ]);
-
   return { items, total };
 }
 
-module.exports = { computePenaltiesForRep, applyDailyPenalties, checkApproachingDeadlines, listPenalties, PENALTY_PER_DAY };
+module.exports = {
+  applyDuePenalties,
+  penaltyBreakdownForRep,
+  totalPenaltiesForRep,
+  listPenalties,
+  penaltyDaysDue,
+  PENALTY_PER_DAY,
+};

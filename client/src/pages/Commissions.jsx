@@ -43,8 +43,8 @@ function PenaltyBreakdown({ breakdown }) {
   return (
     <Card className="mt-4 border border-rose-500/20 bg-rose-500/5">
       <CardHeader
-        title="Active overdue penalties"
-        subtitle="Penalties are deducted from your available balance until each order is settled."
+        title="Penalty deductions by order"
+        subtitle="Late-settlement fines (TZS 10,000/day) actually deducted from your commission balance."
       />
       <Table>
         <THead>
@@ -53,7 +53,7 @@ function PenaltyBreakdown({ breakdown }) {
             <TH>Days overdue</TH>
             <TH>Daily rate</TH>
             <TH className="text-right">Total deducted</TH>
-            <TH>Note</TH>
+            <TH>Status</TH>
           </TR>
         </THead>
         <TBody>
@@ -62,10 +62,43 @@ function PenaltyBreakdown({ breakdown }) {
               <TD className="font-medium">{p.settlementNumber}</TD>
               <TD className="text-rose-400">{p.daysOverdue}</TD>
               <TD>{formatCurrency(p.penaltyPerDay)}</TD>
-              <TD className="text-right font-semibold text-rose-400">{formatCurrency(p.totalPenalty)}</TD>
-              <TD className="text-xs text-faint">
-                {p.exemptPendingReturn ? 'Exempt — return pending' : ''}
+              <TD className="text-right font-semibold text-rose-400">−{formatCurrency(p.totalPenalty)}</TD>
+              <TD className="text-xs">
+                {p.closed ? <span className="text-emerald-500">Order closed</span>
+                  : p.exemptPendingReturn ? <span className="text-sky-400">Paused — return under review</span>
+                    : <span className="text-rose-400">Still accruing daily</span>}
               </TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+    </Card>
+  );
+}
+
+// Permanent fine transactions (Commission/Wallet history). Each row is a real
+// deduction record, like any other financial transaction.
+function FinesHistory({ admin }) {
+  const { data } = useQuery({
+    queryKey: ['penalties', admin ? 'all' : 'mine'],
+    queryFn: async () => unwrap(await api.get('/penalties', { params: { limit: 50 } })),
+  });
+  const items = data?.data || [];
+  if (!items.length) return null;
+  return (
+    <Card className="mt-6">
+      <CardHeader title="Penalty transactions" subtitle="Every late-settlement fine — a permanent record in commission history." />
+      <Table>
+        <THead><TR>{admin && <TH>Rep</TH>}<TH>Type</TH><TH>Order</TH><TH className="text-right">Amount</TH><TH>Status</TH><TH>Date</TH></TR></THead>
+        <TBody>
+          {items.map((p) => (
+            <TR key={p.id}>
+              {admin && <TD className="font-medium">{p.salesRep?.user?.name}</TD>}
+              <TD>Late Settlement Fine</TD>
+              <TD className="text-faint">{p.settlement?.settlementNumber || '—'}</TD>
+              <TD className="text-right font-semibold text-rose-400">−{formatCurrency(p.amount)}</TD>
+              <TD><Badge className="bg-rose-100 text-rose-700">Applied</Badge></TD>
+              <TD className="text-faint">{formatDateTime(p.appliedAt)}</TD>
             </TR>
           ))}
         </TBody>
@@ -154,6 +187,8 @@ function RepView() {
         )}
       </Card>
 
+      <FinesHistory admin={false} />
+
       <PenaltyPolicyCard />
 
       {open && <WithdrawModal available={c.available} minWithdrawal={c.rule.amountPerThreshold} onClose={() => setOpen(false)} />}
@@ -170,8 +205,9 @@ function AdminView() {
     mutationFn: () => api.post('/penalties/apply'),
     onSuccess: (res) => {
       const d = res.data?.data;
-      toast.success(`Penalties: ${d?.penalties?.applied ?? 0} applied, ${d?.warnings?.notified ?? 0} deadline warnings sent`);
+      toast.success(`${d?.penalties?.applied ?? 0} penalty deduction(s) applied`);
       qc.invalidateQueries({ queryKey: ['commissions'] });
+      qc.invalidateQueries({ queryKey: ['penalties'] });
     },
     onError: (e) => toast.error(apiError(e)),
   });
@@ -227,6 +263,8 @@ function AdminView() {
           ))}</TBody>
         </Table>
       </Card>
+
+      <FinesHistory admin />
 
       <Card className="mt-6">
         <CardHeader title="Withdrawal requests" />

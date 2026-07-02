@@ -21,7 +21,8 @@ const TXN_TYPE_LABEL = {
   TRANSFER: 'Transfer', ADJUSTMENT: 'Adjustment',
 };
 
-function usePeriod() { return useState('month'); }
+// Default to All time so the dashboard opens showing the full business history.
+function usePeriod() { return useState('all'); }
 
 const invalidateFinance = (qc) => ['finance'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
 

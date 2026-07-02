@@ -109,6 +109,94 @@ async function updateAccount(id, data) {
   return { updated: await prisma.businessAccount.update({ where: { id }, data: patch }), previous: existing };
 }
 
+// --- Historical backfill -----------------------------------------------------
+// Rebuild the finance ledger from the REAL business records that already exist:
+// every settled sale and direct warehouse CASH sale becomes an IN transaction
+// (dated when the money actually arrived), every PAID commission withdrawal an
+// OUT. Idempotent — keyed by refId — so it never double-counts and self-heals
+// if an auto-post hook was ever missed. No fake data: only derived records.
+async function backfillFromHistory() {
+  await ensureDefaults();
+  const acc = await defaultAccount();
+  if (!acc) return { incomeCreated: 0, paymentsCreated: 0 };
+
+  // Money in: settlement-linked sales (settled boxes = cash received) and
+  // direct warehouse CASH sales (no rep).
+  const [sales, existingSaleTxns] = await Promise.all([
+    prisma.sale.findMany({
+      where: {
+        status: { not: 'CANCELLED' },
+        type: 'CASH',
+        OR: [{ settlementId: { not: null } }, { salesRepId: null }],
+      },
+      select: {
+        id: true, saleNumber: true, total: true, soldAt: true, settlementId: true,
+        salesRep: { select: { user: { select: { name: true } } } },
+      },
+      orderBy: { soldAt: 'asc' },
+    }),
+    prisma.financeTransaction.findMany({ where: { refType: 'Sale' }, select: { refId: true } }),
+  ]);
+  const have = new Set(existingSaleTxns.map((t) => t.refId));
+
+  let incomeCreated = 0;
+  for (const s of sales) {
+    if (have.has(s.id)) continue;
+    const fromSettlement = !!s.settlementId;
+    const txnNumber = await nextDocNumber(prisma.financeTransaction, 'txnNumber', 'FTX');
+    await prisma.financeTransaction.create({
+      data: {
+        txnNumber,
+        accountId: acc.id,
+        direction: 'IN',
+        type: fromSettlement ? 'SETTLEMENT' : 'WAREHOUSE_SALE',
+        amount: round2(toNumber(s.total)),
+        category: fromSettlement ? 'Settlement received' : 'Warehouse sale',
+        description: fromSettlement
+          ? `Settlement received${s.salesRep?.user?.name ? ` — ${s.salesRep.user.name}` : ''}`
+          : 'Direct warehouse sale',
+        reference: s.saleNumber,
+        refType: 'Sale',
+        refId: s.id,
+        occurredAt: s.soldAt,
+      },
+    });
+    incomeCreated++;
+  }
+
+  // Money out: commission withdrawals already PAID.
+  const [paidWithdrawals, existingWTxns] = await Promise.all([
+    prisma.commissionWithdrawal.findMany({
+      where: { status: 'PAID' },
+      include: { salesRep: { include: { user: { select: { name: true } } } } },
+    }),
+    prisma.financeTransaction.findMany({ where: { refType: 'CommissionWithdrawal' }, select: { refId: true } }),
+  ]);
+  const haveW = new Set(existingWTxns.map((t) => t.refId));
+  let paymentsCreated = 0;
+  for (const w of paidWithdrawals) {
+    if (haveW.has(w.id)) continue;
+    const txnNumber = await nextDocNumber(prisma.financeTransaction, 'txnNumber', 'FTX');
+    await prisma.financeTransaction.create({
+      data: {
+        txnNumber,
+        accountId: acc.id,
+        direction: 'OUT',
+        type: 'COMMISSION_PAYMENT',
+        amount: round2(toNumber(w.amount)),
+        category: 'Commission Payments',
+        description: `Commission paid${w.salesRep?.user?.name ? ` — ${w.salesRep.user.name}` : ''}`,
+        refType: 'CommissionWithdrawal',
+        refId: w.id,
+        occurredAt: w.paidAt || w.decidedAt || w.createdAt,
+      },
+    });
+    paymentsCreated++;
+  }
+
+  return { incomeCreated, paymentsCreated };
+}
+
 // --- Transactions ----------------------------------------------------------
 
 async function recordTransaction(data, actor) {
@@ -258,6 +346,9 @@ async function createCategory(name) {
 
 async function overview(period = 'month') {
   await ensureDefaults();
+  // Self-healing sync: fold any business activity not yet in the ledger
+  // (historical or missed) into finance before computing. Idempotent by refId.
+  await backfillFromHistory().catch(() => {});
   const [accounts, prof, inv, commSummary] = await Promise.all([
     accountBalances(),
     reports.profitOverview(period),
@@ -320,6 +411,7 @@ async function overview(period = 'month') {
 
 module.exports = {
   ensureDefaults,
+  backfillFromHistory,
   accountBalances,
   defaultAccount,
   createAccount,

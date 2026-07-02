@@ -1232,3 +1232,90 @@ model DailyReport {
   @@index([salesRepId])
   @@map("daily_reports")
 }
+
+// ===========================================================================
+// BUSINESS FINANCE — accounts + a single transaction ledger.
+//
+// Every money movement is a FinanceTransaction row (the single source of truth).
+// An account's balance = openingBalance + Σ(IN) − Σ(OUT). Auto-income posts when
+// settlements/sales are approved; expenses post OUT. Designed to extend to
+// transfers, stock purchases, multi-currency and multi-account without redesign.
+// ===========================================================================
+
+enum FinanceDirection {
+  IN
+  OUT
+}
+
+enum FinanceAccountType {
+  CASH
+  BANK
+  MOBILE_MONEY
+  OTHER
+}
+
+enum FinanceTxnType {
+  SETTLEMENT
+  WAREHOUSE_SALE
+  INCOME
+  EXPENSE
+  STOCK_PURCHASE
+  COMMISSION_PAYMENT
+  TRANSFER
+  ADJUSTMENT
+}
+
+model BusinessAccount {
+  id             String             @id @default(cuid())
+  name           String
+  type           FinanceAccountType @default(CASH)
+  currency       String             @default("TZS")
+  openingBalance Decimal            @default(0) @db.Decimal(16, 2)
+  isActive       Boolean            @default(true)
+  isDefault      Boolean            @default(false) // default target for auto money-in (Cash)
+  sortOrder      Int                @default(0)
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  transactions FinanceTransaction[]
+
+  @@map("business_accounts")
+}
+
+model FinanceTransaction {
+  id          String           @id @default(cuid())
+  txnNumber   String           @unique
+  accountId   String
+  account     BusinessAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  direction   FinanceDirection
+  type        FinanceTxnType   @default(INCOME)
+  amount      Decimal          @db.Decimal(16, 2)
+  category    String? // expense category or income source label
+  description String?
+  reference   String? // human reference, e.g. a settlement/sale number
+  refType     String? // 'Settlement' | 'Sale' | 'Expense' | ...
+  refId       String?
+  receiptUrl  String?
+  notes       String?
+  occurredAt  DateTime         @default(now())
+  createdById String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([accountId])
+  @@index([direction])
+  @@index([type])
+  @@index([occurredAt])
+  @@map("finance_transactions")
+}
+
+model ExpenseCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("expense_categories")
+}

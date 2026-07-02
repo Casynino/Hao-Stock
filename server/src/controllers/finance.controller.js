@@ -8,6 +8,13 @@ const audit = require('../services/audit.service');
 
 const overview = asyncHandler(async (req, res) => ok(res, await finance.overview(req.query.period || 'month')));
 
+// Rebuild the ledger from existing business records (idempotent, real data only).
+const sync = asyncHandler(async (req, res) => {
+  const result = await finance.backfillFromHistory();
+  await audit.record(req, { action: 'SYNC', entityType: 'FinanceTransaction', newValues: result });
+  return ok(res, result);
+});
+
 const accounts = asyncHandler(async (_req, res) => ok(res, await finance.accountBalances()));
 
 const createAccount = asyncHandler(async (req, res) => {
@@ -90,6 +97,6 @@ const deleteTransaction = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  overview, accounts, createAccount, updateAccount, categories, createCategory,
+  overview, sync, accounts, createAccount, updateAccount, categories, createCategory,
   transactions, recordExpense, recordIncome, updateTransaction, deleteTransaction,
 };

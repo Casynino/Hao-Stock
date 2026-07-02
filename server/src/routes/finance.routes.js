@@ -11,6 +11,7 @@ const router = express.Router();
 router.use(authenticate, requireRoles(ROLES.WAREHOUSE_STAFF));
 
 router.get('/overview', ctrl.overview);
+router.post('/sync', ctrl.sync); // rebuild ledger from existing records (idempotent)
 router.get('/accounts', ctrl.accounts);
 router.post('/accounts', ctrl.createAccount);
 router.put('/accounts/:id', ctrl.updateAccount);

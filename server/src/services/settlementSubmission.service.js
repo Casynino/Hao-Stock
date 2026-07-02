@@ -103,16 +103,18 @@ async function approve(submissionId, actor) {
       where: { id: submissionId },
       data: { status: 'APPROVED', saleId: sale.id, decidedById: actor ? actor.id : null, decidedAt: new Date() },
     });
-    return { dec };
+    return { dec, sale };
   }, { timeout: 30000 });
 
   // Approved settlement money lands in the business ledger (Cash by default).
+  // Keyed to the sale (refId) so the historical backfill never double-counts it.
   finance.recordSaleIncome({
-    saleNumber: out.dec.settlementNumber,
-    amount: toNumber(sub.amount),
+    saleId: out.sale.id,
+    saleNumber: out.sale.saleNumber,
+    amount: toNumber(out.sale.total),
     fromSettlement: true,
     who: out.dec.salesRep?.user?.name,
-    occurredAt: new Date(),
+    occurredAt: out.sale.soldAt,
   }, actor).catch(() => {});
 
   const rep = await prisma.salesRepresentative.findUnique({ where: { id: sub.salesRepId }, select: { userId: true } });

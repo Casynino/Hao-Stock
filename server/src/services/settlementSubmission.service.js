@@ -10,6 +10,7 @@ const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const inventory = require('./inventory.service');
 const settlement = require('./settlement.service');
+const finance = require('./finance.service');
 const notification = require('./notification.service');
 const { nextDocNumber } = require('../utils/numbering');
 const { toNumber, round2, formatCurrency } = require('../utils/money');
@@ -104,6 +105,15 @@ async function approve(submissionId, actor) {
     });
     return { dec };
   }, { timeout: 30000 });
+
+  // Approved settlement money lands in the business ledger (Cash by default).
+  finance.recordSaleIncome({
+    saleNumber: out.dec.settlementNumber,
+    amount: toNumber(sub.amount),
+    fromSettlement: true,
+    who: out.dec.salesRep?.user?.name,
+    occurredAt: new Date(),
+  }, actor).catch(() => {});
 
   const rep = await prisma.salesRepresentative.findUnique({ where: { id: sub.salesRepId }, select: { userId: true } });
   const closed = out.dec.status === 'SETTLED';

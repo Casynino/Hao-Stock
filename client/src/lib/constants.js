@@ -27,6 +27,7 @@ export const NAV = [
   { to: '/reps', label: 'Sales Reps', icon: 'UserCog', roles: STAFF },
   { to: '/reports', label: 'Reports', icon: 'BarChart3', roles: STAFF },
   { to: '/profit', label: 'Profit', icon: 'TrendingUp', roles: STAFF },
+  { to: '/finance', label: 'Finance', icon: 'Wallet', roles: STAFF },
 
   // --- Advanced (tucked under "More") ---
   { to: '/purchases', label: 'Imports & POs', icon: 'Ship', roles: STAFF, group: 'advanced' },

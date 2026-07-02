@@ -5,6 +5,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { ok, created, paginated } = require('../utils/response');
 const { parsePagination } = require('../utils/pagination');
 const salesService = require('../services/sales.service');
+const finance = require('../services/finance.service');
 const audit = require('../services/audit.service');
 const { ROLES } = require('../middleware/authorize');
 
@@ -19,6 +20,10 @@ const create = asyncHandler(async (req, res) => {
   }
 
   const sale = await salesService.createSale(payload, req.user);
+  // A direct warehouse cash sale (no rep) is money into the business.
+  if (sale.type === 'CASH' && !sale.salesRepId) {
+    finance.recordSaleIncome({ saleId: sale.id, saleNumber: sale.saleNumber, amount: sale.total, fromSettlement: false, occurredAt: sale.soldAt }, req.user).catch(() => {});
+  }
   await audit.record(req, {
     action: 'CREATE',
     entityType: 'Sale',

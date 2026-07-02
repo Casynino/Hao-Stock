@@ -5,6 +5,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { ok, created, paginated } = require('../utils/response');
 const { parsePagination } = require('../utils/pagination');
 const commission = require('../services/commission.service');
+const finance = require('../services/finance.service');
 const audit = require('../services/audit.service');
 const { ROLES } = require('../middleware/authorize');
 
@@ -37,6 +38,10 @@ const requestWithdrawal = asyncHandler(async (req, res) => {
 
 const decideWithdrawal = asyncHandler(async (req, res) => {
   const w = await commission.decideWithdrawal(req.params.id, req.body.action, req.user);
+  // Paying a withdrawal is real money out of a business account.
+  if (w.status === 'PAID') {
+    finance.recordCommissionPayment({ amount: w.amount, who: w.salesRep?.user?.name, refId: w.id, occurredAt: w.paidAt || new Date() }, req.user).catch(() => {});
+  }
   await audit.record(req, { action: req.body.action, entityType: 'CommissionWithdrawal', entityId: req.params.id });
   return ok(res, w);
 });

@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Package, Boxes, Truck, ShoppingCart, Users, HandCoins, Undo2,
   ClipboardCheck, UserCog, Repeat, BarChart3, ScrollText, ShieldCheck, Settings,
   Bell, Menu, X, LogOut, ChevronDown, User, Lock, Eye, EyeOff, Loader2,
-  Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag, TrendingUp, Receipt,
+  Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag, TrendingUp, Receipt, Wallet,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { NAV, ROLE_LABELS, ROLES } from '@/lib/constants';

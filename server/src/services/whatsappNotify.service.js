@@ -120,7 +120,22 @@ async function sendRaw(text) {
   return { sent, status: res.status, provider: body.slice(0, 160) };
 }
 
+// CallMeBot's free tier delivers ~16 messages per 240 minutes immediately;
+// past that, messages sit in THEIR queue and arrive late, grouped. Spend that
+// budget on what matters: when it's nearly gone, hold INFO-priority rows in
+// our own queue (flush retries them once the window frees) so action-required
+// and critical alerts still land instantly.
+async function providerBudgetUsed() {
+  return prisma.whatsAppNotification.count({
+    where: { status: 'SENT', sentAt: { gt: new Date(Date.now() - 240 * 60 * 1000) } },
+  });
+}
+
 async function deliver(row) {
+  if (row.priority === 'INFO' && row.type !== 'TEST' && (await providerBudgetUsed()) >= 14) {
+    return { queued: true, sent: false, status: 'PENDING', reason: 'provider-budget', id: row.id };
+  }
+
   // Optimistic claim: bump attempts only if nobody else has. Two concurrent
   // flushes (separate serverless instances) can pick the same PENDING row;
   // the loser of this update skips, so a message is never sent twice.

@@ -83,6 +83,23 @@ async function buildWeeklyData(weekKey) {
   const supplierDue = suppliers.reduce((s, x) => s + x.outstanding, 0);
   const outOfStock = val.items.filter((i) => i.totalBase <= 0).length;
 
+  // Top sales rep for the period (by approved sales value).
+  let topRep = null;
+  const topRepRows = await prisma.sale.groupBy({
+    by: ['salesRepId'],
+    where: { soldAt: { gte: start.startOf('day').toDate(), lte: end.endOf('day').toDate() }, status: { not: 'CANCELLED' }, salesRepId: { not: null } },
+    _sum: { total: true },
+    orderBy: { _sum: { total: 'desc' } },
+    take: 1,
+  }).catch(() => []);
+  if (topRepRows.length) {
+    const r = await prisma.salesRepresentative.findUnique({
+      where: { id: topRepRows[0].salesRepId },
+      include: { user: { select: { name: true } } },
+    }).catch(() => null);
+    if (r) topRep = { name: r.user?.name || r.code, revenue: Number(topRepRows[0]._sum.total) || 0 };
+  }
+
   const attention = [];
   if (pending[0]) attention.push(`${pending[0]} stock request(s) waiting for approval`);
   if (pending[1]) attention.push(`${pending[1]} settlement(s) waiting for approval`);
@@ -115,6 +132,8 @@ async function buildWeeklyData(weekKey) {
     brands: (prof.byBrand || []).map((b) => ({
       name: b.name, revenue: b.revenue, cost: b.cost, profit: b.profit, margin: b.margin, boxes: b.boxes,
     })),
+    topProducts: (rep.topProducts || []).slice(0, 3).map((p) => ({ name: p.name, revenue: p.revenue })),
+    topRep,
     stock: {
       costValue: val.totals.totalValue,
       retailValue: val.totals.retailValue,
@@ -164,6 +183,14 @@ function buildWhatsAppText(d) {
       ? d.brands.map((b) => `${b.name}: ${fmt(b.revenue)} rev / ${fmt(b.profit)} profit / ${b.boxes} boxes`)
       : ['No sales this week']),
     `Boxes sold: ${d.finance.boxesSold}`,
+    ...((d.topProducts || []).length || d.topRep
+      ? [
+          '',
+          '🏆 *HIGHLIGHTS*',
+          ...(d.topProducts || []).map((p, i) => `${i + 1}. ${p.name}: ${fmt(p.revenue)}`),
+          ...(d.topRep ? [`Top rep: ${d.topRep.name} (${fmt(d.topRep.revenue)})`] : []),
+        ]
+      : []),
     '',
     '📦 *STOCK*',
     `Value: ${fmt(d.stock.costValue)} (${d.stock.units} boxes)`,
@@ -180,32 +207,30 @@ function buildWhatsAppText(d) {
 }
 
 // ── Delivery ──────────────────────────────────────────────────────────────────
-async function sendWhatsApp(text) {
-  const phone = await getSetting('whatsapp.phone');
-  const apikey = await getSetting('whatsapp.apikey');
-  if (!phone || !apikey) {
-    return { sent: false, reason: 'WhatsApp not configured — set whatsapp.phone and whatsapp.apikey in Settings' };
-  }
-  const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&apikey=${encodeURIComponent(apikey)}&text=${encodeURIComponent(text)}`;
-  // CallMeBot's firewall 403s link-bearing messages sent with Node's default
-  // user agent; a browser-style UA is accepted.
-  const res = await fetch(url, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' } });
-  const body = await res.text().catch(() => '');
-  const okBody = /message queued|sent|will be delivered/i.test(body);
-  return { sent: res.ok && okBody, status: res.status, provider: body.slice(0, 160) };
-}
+// One raw sender for the whole app lives in whatsappNotify.service; this
+// re-export keeps older callers working.
+const sendWhatsApp = (text) => require('./whatsappNotify.service').sendRaw(text);
 
-// Compose + send. Idempotent per reported week (a retried cron never
-// double-sends); `force` overrides for tests.
+// Compose + queue through the notification log (dedupe per reported week, so a
+// retried cron never double-sends; failed sends are retried by flush()).
+// `force` bypasses the dedupe for tests.
 async function sendWeeklyReport({ force = false } = {}) {
+  const wa = require('./whatsappNotify.service');
   const data = await buildWeeklyData();
   const weekKey = data.period.weekKey;
-  const lastKey = await getSetting('whatsapp.lastWeeklySent');
-  if (!force && lastKey === weekKey) {
-    return { sent: false, reason: `Already sent for ${weekKey}` };
+  // Legacy dedupe guard (pre-dated the notification log) — still honored so
+  // weeks sent before the log existed can't repeat.
+  if (!force && (await getSetting('whatsapp.lastWeeklySent')) === weekKey) {
+    return { sent: false, reason: `Already sent for ${weekKey}`, weekKey };
   }
   const text = buildWhatsAppText(data);
-  const result = await sendWhatsApp(text);
+  const result = await wa.queue('WEEKLY_REPORT', {
+    dedupeKey: force ? `weekly:${weekKey}:${Date.now()}` : `weekly:${weekKey}`,
+    refType: 'WeeklyReport',
+    refId: weekKey,
+    text,
+  });
+  if (result.reason === 'duplicate') return { sent: false, reason: `Already sent for ${weekKey}`, weekKey };
   if (result.sent) await setSetting('whatsapp.lastWeeklySent', weekKey);
   return { ...result, weekKey, pdf: pdfLink(weekKey), chars: text.length };
 }

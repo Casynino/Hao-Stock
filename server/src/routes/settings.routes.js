@@ -11,6 +11,12 @@ const router = express.Router();
 
 router.use(authenticate);
 router.get('/', ctrl.list);
+
+// WhatsApp notification centre (two-segment paths — never shadowed by /:key).
+router.get('/whatsapp/types', requireAdmin, ctrl.whatsappTypes);
+router.get('/whatsapp/history', requireAdmin, ctrl.whatsappHistory);
+router.post('/whatsapp/test', requireAdmin, ctrl.whatsappTest);
+
 router.get('/:key', ctrl.get);
 router.put('/:key', requireAdmin, validate(settingUpsert), ctrl.upsert);
 

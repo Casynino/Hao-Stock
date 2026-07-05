@@ -23,14 +23,31 @@ function guard(req, res, next) {
 
 // Flip past-deadline orders to OVERDUE (so penalties apply) and send any due
 // 24h/6h/1h settlement reminders. Safe to call repeatedly — fully idempotent.
+// Also retries undelivered WhatsApp notifications and re-scans stock alerts.
 router.get(
   '/settlement-sweep',
   guard,
   asyncHandler(async (_req, res) => {
+    const wa = require('../services/whatsappNotify.service');
     const overdue = await settlement.refreshOverdue();
     const reminders = await settlement.sendDueReminders();
     const penalties = await penalty.applyDuePenalties();
-    return res.json({ success: true, data: { overdue, reminders, penalties, at: new Date().toISOString() } });
+    const stockAlerts = await wa.scanStockAlerts().catch(() => null);
+    const whatsappRetries = await wa.flush({ throttleMs: 0 }).catch(() => null);
+    return res.json({ success: true, data: { overdue, reminders, penalties, stockAlerts, whatsappRetries, at: new Date().toISOString() } });
+  }),
+);
+
+// Evening WhatsApp pulse: today's sales, profit, cash position, activity and
+// alerts. Deduped per day; ?force=1 resends (for testing).
+router.get(
+  '/daily-summary',
+  guard,
+  asyncHandler(async (req, res) => {
+    const wa = require('../services/whatsappNotify.service');
+    const result = await wa.dailySummary({ force: req.query.force === '1' });
+    await wa.flush({ throttleMs: 0 }).catch(() => null);
+    return res.json({ success: true, data: result });
   }),
 );
 

@@ -111,6 +111,12 @@ const myStats = asyncHandler(async (req, res) => {
 // Counts of items awaiting The Doctor's action — drives the sidebar badges.
 // Each stays counted until it's approved or rejected (i.e. acted on).
 const pendingActions = asyncHandler(async (_req, res) => {
+  // Admin polls this every ~30s — piggyback WhatsApp delivery retries and the
+  // evening-summary fallback here (both internally throttled, never block).
+  const wa = require('../services/whatsappNotify.service');
+  wa.flush().catch(() => {});
+  wa.dailySummaryCatchup().catch(() => {});
+
   const [stockRequests, pendingSubs, returns, overdue] = await Promise.all([
     prisma.stockRequest.count({ where: { status: 'PENDING' } }),
     prisma.settlementSubmission.count({ where: { status: 'PENDING' } }),

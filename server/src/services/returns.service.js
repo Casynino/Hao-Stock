@@ -146,6 +146,7 @@ async function createReturn(payload, actor) {
     entityType: 'Return',
     entityId: result.id,
   }).catch(() => {});
+  require('./whatsappNotify.service').returnSubmitted(result).catch(() => {});
 
   return result;
 }

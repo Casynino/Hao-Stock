@@ -40,4 +40,24 @@ const upsert = asyncHandler(async (req, res) => {
   return ok(res, setting);
 });
 
-module.exports = { list, get, upsert };
+// ── WhatsApp notification centre (admin) ─────────────────────────────────────
+const whatsappTypes = asyncHandler(async (_req, res) => {
+  const wa = require('../services/whatsappNotify.service');
+  return ok(res, Object.entries(wa.TYPES)
+    .filter(([key]) => key !== 'TEST')
+    .map(([key, t]) => ({ key, label: t.label, priority: t.priority })));
+});
+
+const whatsappHistory = asyncHandler(async (req, res) => {
+  const wa = require('../services/whatsappNotify.service');
+  return ok(res, await wa.history(req.query.limit));
+});
+
+const whatsappTest = asyncHandler(async (req, res) => {
+  const wa = require('../services/whatsappNotify.service');
+  const result = await wa.test();
+  await audit.record(req, { action: 'CREATE', entityType: 'WhatsAppNotification', entityId: 'test', newValues: { sent: result.sent ?? false } });
+  return ok(res, result);
+});
+
+module.exports = { list, get, upsert, whatsappTypes, whatsappHistory, whatsappTest };

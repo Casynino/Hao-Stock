@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   Wallet, TrendingUp, TrendingDown, Banknote, Landmark, Smartphone, Coins,
   Plus, Trash2, ArrowDownLeft, ArrowUpRight, Boxes, Receipt, PiggyBank,
+  Factory, Package, Scale, FileBarChart, ChevronRight,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { formatCurrency, formatNumber, formatDate, formatDateTime } from '@/lib/format';
@@ -309,18 +311,440 @@ function Ledger({ expensesOnly }) {
   );
 }
 
+// ── Profit tab (absorbed from the old Profit & Margins page) ─────────────────
+const PROFIT_PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['all', 'All time']];
+
+function ProfitTab() {
+  const [period, setPeriod] = useState('all');
+  const { data, isLoading } = useQuery({
+    queryKey: ['reports', 'profit-overview', period],
+    queryFn: async () => unwrap(await api.get('/reports/profit-overview', { params: { period } })).data,
+  });
+  const { data: brandStock = [] } = useQuery({
+    queryKey: ['dashboard', 'brands'],
+    queryFn: async () => unwrap(await api.get('/dashboard/brands')).data,
+  });
+  if (isLoading || !data) return <PageSpinner />;
+  const stockByBrand = new Map(brandStock.map((b) => [b.brandId, b]));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-1.5">
+        {PROFIT_PERIODS.map(([k, label]) => (
+          <button key={k} onClick={() => setPeriod(k)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${period === k ? 'bg-brand-500 text-slate-950' : 'border border-border text-muted hover:bg-elevated'}`}>{label}</button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Total revenue" value={formatCurrency(data.totals.revenue)} icon={TrendingUp} tone="emerald" hint={`${formatNumber(data.totals.boxes)} boxes sold`} />
+        <StatCard label="Cost of goods sold" value={formatCurrency(data.totals.cost)} icon={Package} tone="slate" />
+        <StatCard label="Gross profit" value={formatCurrency(data.totals.profit)} icon={Wallet} tone="brand" />
+        <StatCard label="Profit margin" value={`${data.totals.margin}%`} icon={Scale} tone="violet" />
+      </div>
+
+      {/* Brand performance — scales to any number of brands */}
+      {data.byBrand.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Brand performance</h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {data.byBrand.map((b) => {
+              const stock = stockByBrand.get(b.brandId);
+              return (
+                <Card key={b.brandId}>
+                  <CardBody>
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="rounded-full bg-brand-500/15 px-2.5 py-0.5 text-xs font-bold text-brand-400">{b.name}</span>
+                      <span className="text-sm font-bold text-foreground">{b.margin}% margin</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2.5">
+                      <Money label="Revenue" value={b.revenue} />
+                      <Money label="Cost" value={b.cost} tone="slate" />
+                      <Money label="Profit" value={b.profit} tone="emerald" />
+                    </div>
+                    <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-faint">
+                      <span>{formatNumber(b.boxes)} boxes sold</span>
+                      {stock && <span>Inventory value {formatCurrency(stock.stockValue)} ({formatNumber(stock.stockUnits)} boxes)</span>}
+                    </div>
+                  </CardBody>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard label="Inventory value (cost)" value={formatCurrency(data.inventoryValue.costValue)} icon={Boxes} tone="slate" hint={`${formatNumber(data.inventoryValue.units)} boxes on hand`} />
+        <StatCard label="Potential revenue" value={formatCurrency(data.inventoryValue.potentialRevenue)} icon={TrendingUp} tone="emerald" hint="if all sold at selling price" />
+        <StatCard label="Potential profit" value={formatCurrency(data.inventoryValue.potentialProfit)} icon={Wallet} tone="brand" hint="locked in current stock" />
+      </div>
+
+      <Card>
+        <CardHeader title="Most profitable products" subtitle="By profit in the selected period" />
+        <CardBody>
+          {!data.byProduct.length ? <EmptyState title="No sales in this period" icon={Package} /> : (
+            <Table>
+              <THead><TR><TH>Product</TH><TH>Boxes sold</TH><TH>Profit / box</TH><TH>Revenue</TH><TH>Profit</TH><TH>Margin</TH></TR></THead>
+              <TBody>
+                {data.byProduct.map((p) => (
+                  <TR key={p.productId}>
+                    <TD className="font-medium text-foreground">{p.name}</TD>
+                    <TD>{formatNumber(p.boxes)}</TD>
+                    <TD>{formatCurrency(p.profitPerBox)}</TD>
+                    <TD>{formatCurrency(p.revenue)}</TD>
+                    <TD className="font-semibold text-emerald-500">{formatCurrency(p.profit)}</TD>
+                    <TD>{p.margin}%</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Profit by sales rep" subtitle="Revenue & profit from settled boxes" />
+        <CardBody>
+          {!data.byRep.length ? <EmptyState title="No rep sales in this period" icon={TrendingUp} /> : (
+            <Table>
+              <THead><TR><TH>Sales rep</TH><TH>Boxes sold</TH><TH>Revenue</TH><TH>Profit</TH><TH>Margin</TH></TR></THead>
+              <TBody>
+                {data.byRep.map((r) => (
+                  <TR key={r.salesRepId}>
+                    <TD className="font-medium text-foreground">{r.name}</TD>
+                    <TD>{formatNumber(r.boxes)}</TD>
+                    <TD>{formatCurrency(r.revenue)}</TD>
+                    <TD className="font-semibold text-emerald-500">{formatCurrency(r.profit)}</TD>
+                    <TD>{r.margin}%</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+// ── Cash Flow tab ─────────────────────────────────────────────────────────────
+const CF_PERIODS = [['today', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly'], ['year', 'Yearly'], ['all', 'All time']];
+
+function CashFlowTab() {
+  const [period, setPeriod] = useState('month');
+  const { data, isLoading } = useQuery({
+    queryKey: ['finance', 'cashflow', period],
+    queryFn: async () => unwrap(await api.get('/finance/cashflow', { params: { period } })).data,
+  });
+  if (isLoading || !data) return <PageSpinner />;
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-1.5">
+        {CF_PERIODS.map(([k, label]) => (
+          <button key={k} onClick={() => setPeriod(k)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${period === k ? 'bg-brand-500 text-slate-950' : 'border border-border text-muted hover:bg-elevated'}`}>{label}</button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Opening balance" value={formatCurrency(data.openingBalance)} icon={PiggyBank} tone="slate" hint="at period start" />
+        <StatCard label="Money in" value={formatCurrency(data.moneyIn)} icon={ArrowDownLeft} tone="emerald" />
+        <StatCard label="Money out" value={formatCurrency(data.moneyOut)} icon={ArrowUpRight} tone="rose" />
+        <StatCard label="Closing balance" value={formatCurrency(data.closingBalance)} icon={Wallet} tone={data.closingBalance >= 0 ? 'brand' : 'rose'} hint={`net ${formatCurrency(data.net)}`} />
+      </div>
+      <Card>
+        <CardBody>
+          <div className="flex flex-wrap items-center justify-center gap-3 py-2 text-sm">
+            <span className="text-muted">Opening <b className="text-foreground">{formatCurrency(data.openingBalance)}</b></span>
+            <ChevronRight className="h-4 w-4 text-faint" />
+            <span className="text-emerald-500">+ {formatCurrency(data.moneyIn)}</span>
+            <ChevronRight className="h-4 w-4 text-faint" />
+            <span className="text-rose-400">− {formatCurrency(data.moneyOut)}</span>
+            <ChevronRight className="h-4 w-4 text-faint" />
+            <span className="text-muted">Closing <b className={data.closingBalance >= 0 ? 'text-brand-400' : 'text-rose-500'}>{formatCurrency(data.closingBalance)}</b></span>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+// ── Suppliers tab (accounts payable) ─────────────────────────────────────────
+function AddSupplierModal({ onClose }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({ name: '', country: 'China', contactName: '', phone: '', email: '' });
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const save = useMutation({
+    mutationFn: () => api.post('/suppliers', {
+      name: form.name.trim(), country: form.country.trim() || undefined,
+      contactName: form.contactName.trim() || undefined, phone: form.phone.trim() || undefined, email: form.email.trim() || undefined,
+    }),
+    onSuccess: () => { toast.success('Supplier added'); invalidateFinance(qc); qc.invalidateQueries({ queryKey: ['suppliers'] }); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  return (
+    <Modal open onClose={onClose} title="New supplier"
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={save.isPending} disabled={!form.name.trim()} onClick={() => save.mutate()}>Add supplier</Button></>}>
+      <div className="space-y-4">
+        <Field label="Supplier name" required><Input value={form.name} onChange={set('name')} placeholder="e.g. Guangzhou Paper Co." autoFocus /></Field>
+        <Field label="Country"><Input value={form.country} onChange={set('country')} /></Field>
+        <Field label="Contact person"><Input value={form.contactName} onChange={set('contactName')} /></Field>
+        <Field label="Phone"><Input value={form.phone} onChange={set('phone')} /></Field>
+        <Field label="Email"><Input type="email" value={form.email} onChange={set('email')} /></Field>
+      </div>
+    </Modal>
+  );
+}
+
+function PaySupplierModal({ order, accounts, onClose, onDone }) {
+  const [accountId, setAccountId] = useState(accounts.find((a) => a.isDefault)?.id || accounts[0]?.id || '');
+  const [amount, setAmount] = useState(String(order.outstanding || ''));
+  const [notes, setNotes] = useState('');
+  const pay = useMutation({
+    mutationFn: () => api.post('/finance/supplier-payments', {
+      purchaseOrderId: order.id, accountId, amount: Number(amount), notes: notes.trim() || undefined,
+    }),
+    onSuccess: () => { toast.success('Supplier payment recorded'); onDone(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  const amt = Number(amount);
+  const valid = accountId && amt > 0 && amt <= order.outstanding + 0.001;
+  return (
+    <Modal open onClose={onClose} title={`Pay supplier · ${order.poNumber}`}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={pay.isPending} disabled={!valid} onClick={() => pay.mutate()}><Wallet className="h-4 w-4" /> Record payment</Button></>}>
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-muted">
+          Order total {formatCurrency(order.totalCost)} · paid {formatCurrency(order.paid)} · <b className="text-rose-400">outstanding {formatCurrency(order.outstanding)}</b>
+        </div>
+        <Field label="Amount (TZS)" required error={amt > order.outstanding + 0.001 ? 'More than what is outstanding' : undefined}>
+          <Input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Paid from account" required>
+          <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {formatCurrency(a.balance)}</option>)}
+          </Select>
+        </Field>
+        <Field label="Notes"><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+      </div>
+    </Modal>
+  );
+}
+
+function SupplierDetailModal({ supplierId, accounts, onClose }) {
+  const qc = useQueryClient();
+  const [paying, setPaying] = useState(null); // PO row being paid
+  const { data, isLoading } = useQuery({
+    queryKey: ['finance', 'supplier', supplierId],
+    queryFn: async () => unwrap(await api.get(`/finance/suppliers/${supplierId}`)).data,
+  });
+  const refresh = () => { invalidateFinance(qc); };
+  return (
+    <>
+      <Modal open onClose={onClose} size="xl" title={data ? data.supplier.name : 'Supplier'}>
+        {isLoading || !data ? <PageSpinner /> : (
+          <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-3">
+              <Money label="Total purchased" value={data.totals.purchased} />
+              <Money label="Total paid" value={data.totals.paid} tone="emerald" />
+              <Money label="Outstanding" value={data.totals.outstanding} tone={data.totals.outstanding > 0 ? 'rose' : 'emerald'} big />
+            </div>
+            <div>
+              <div className="mb-2 text-sm font-semibold text-foreground">Purchase history</div>
+              {!data.orders.length ? <p className="text-sm text-faint">No purchase orders yet — create them in Imports &amp; POs.</p> : (
+                <Table>
+                  <THead><TR><TH>PO</TH><TH>Status</TH><TH>Total</TH><TH>Paid</TH><TH>Outstanding</TH><TH /></TR></THead>
+                  <TBody>
+                    {data.orders.map((o) => (
+                      <TR key={o.id}>
+                        <TD className="font-medium">{o.poNumber}</TD>
+                        <TD><Badge className={o.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}>{o.status}</Badge></TD>
+                        <TD>{formatCurrency(o.totalCost)}</TD>
+                        <TD className="text-emerald-500">{formatCurrency(o.paid)}</TD>
+                        <TD className={o.outstanding > 0 ? 'font-semibold text-rose-400' : 'text-faint'}>{formatCurrency(o.outstanding)}</TD>
+                        <TD>
+                          {o.outstanding > 0 && (
+                            <Button variant="secondary" className="px-2 py-1 text-xs" onClick={() => setPaying(o)}>Pay</Button>
+                          )}
+                        </TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              )}
+            </div>
+            <div>
+              <div className="mb-2 text-sm font-semibold text-foreground">Payments</div>
+              {!data.payments.length ? <p className="text-sm text-faint">No payments recorded yet.</p> : (
+                <ul className="space-y-1 text-sm">
+                  {data.payments.map((p) => (
+                    <li key={p.id} className="flex justify-between text-muted">
+                      <span>{formatDate(p.occurredAt)} · {p.reference} · {p.account}</span>
+                      <span className="font-semibold text-rose-400">−{formatCurrency(p.amount)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+      {paying && <PaySupplierModal order={paying} accounts={accounts} onClose={() => setPaying(null)} onDone={refresh} />}
+    </>
+  );
+}
+
+function SuppliersTab({ accounts }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [viewing, setViewing] = useState(null);
+  const { data: suppliers = [], isLoading } = useQuery({
+    queryKey: ['finance', 'suppliers'],
+    queryFn: async () => unwrap(await api.get('/finance/suppliers')).data,
+  });
+  if (isLoading) return <PageSpinner />;
+  const totals = suppliers.reduce((s, x) => ({ purchased: s.purchased + x.totalPurchased, paid: s.paid + x.totalPaid, out: s.out + x.outstanding }), { purchased: 0, paid: 0, out: 0 });
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Suppliers" value={formatNumber(suppliers.length)} icon={Factory} tone="slate" />
+        <StatCard label="Total purchased" value={formatCurrency(totals.purchased)} icon={Package} tone="brand" />
+        <StatCard label="Total paid" value={formatCurrency(totals.paid)} icon={Wallet} tone="emerald" />
+        <StatCard label="Outstanding (owed)" value={formatCurrency(totals.out)} icon={Scale} tone={totals.out > 0 ? 'rose' : 'emerald'} />
+      </div>
+      <Card>
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <div className="text-sm text-faint">Purchases are created in <b>Imports &amp; POs</b>; record payments here.</div>
+          <Button onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" /> Supplier</Button>
+        </div>
+        {!suppliers.length ? <EmptyState title="No suppliers yet" message="Add your suppliers to start tracking purchases and payments." icon={Factory} /> : (
+          <Table>
+            <THead><TR><TH>Supplier</TH><TH>Country</TH><TH>Orders</TH><TH>Purchased</TH><TH>Paid</TH><TH>Outstanding</TH></TR></THead>
+            <TBody>
+              {suppliers.map((s) => (
+                <TR key={s.id} className="cursor-pointer" onClick={() => setViewing(s.id)}>
+                  <TD className="font-medium text-foreground">{s.name}{s.contactName ? <span className="ml-1.5 text-xs text-faint">· {s.contactName}</span> : null}</TD>
+                  <TD className="text-muted">{s.country}</TD>
+                  <TD>{s.poCount}</TD>
+                  <TD>{formatCurrency(s.totalPurchased)}</TD>
+                  <TD className="text-emerald-500">{formatCurrency(s.totalPaid)}</TD>
+                  <TD className={s.outstanding > 0 ? 'font-semibold text-rose-400' : 'text-faint'}>{formatCurrency(s.outstanding)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+      {addOpen && <AddSupplierModal onClose={() => setAddOpen(false)} />}
+      {viewing && <SupplierDetailModal supplierId={viewing} accounts={accounts} onClose={() => setViewing(null)} />}
+    </div>
+  );
+}
+
+// ── Reports tab ───────────────────────────────────────────────────────────────
+const REPORT_PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time']];
+
+function ReportsTab() {
+  const [period, setPeriod] = useState('month');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const custom = !!(from || to);
+  const params = custom ? { from: from || undefined, to: to || undefined } : { period };
+  const { data, isLoading } = useQuery({
+    queryKey: ['finance', 'report', custom ? { from, to } : period],
+    queryFn: async () => unwrap(await api.get('/finance/report', { params })).data,
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {REPORT_PERIODS.map(([k, label]) => (
+          <button key={k} onClick={() => { setPeriod(k); setFrom(''); setTo(''); }}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${!custom && period === k ? 'bg-brand-500 text-slate-950' : 'border border-border text-muted hover:bg-elevated'}`}>{label}</button>
+        ))}
+        <span className="mx-1 text-xs text-faint">or custom:</span>
+        <Input type="date" className="w-auto" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <span className="text-xs text-faint">to</span>
+        <Input type="date" className="w-auto" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+
+      {isLoading || !data ? <PageSpinner /> : (
+        <>
+          <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+            <StatCard label="Revenue" value={formatCurrency(data.revenue)} icon={TrendingUp} tone="emerald" hint={`${formatNumber(data.boxesSold)} boxes sold`} />
+            <StatCard label="Expenses" value={formatCurrency(data.expenses)} icon={Receipt} tone="rose" />
+            <StatCard label="Net profit" value={formatCurrency(data.netProfit)} icon={Wallet} tone={data.netProfit >= 0 ? 'brand' : 'rose'} hint={`gross ${formatCurrency(data.grossProfit)}`} />
+            <StatCard label="Net cash flow" value={formatCurrency(data.cashFlow.net)} icon={FileBarChart} tone={data.cashFlow.net >= 0 ? 'emerald' : 'rose'} hint={`closing ${formatCurrency(data.cashFlow.closingBalance)}`} />
+          </div>
+
+          <Card>
+            <CardHeader title="Money movements" subtitle="Payments in the selected period" />
+            <CardBody>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Money label="Supplier payments" value={data.supplierPayments} tone="rose" />
+                <Money label="Commission paid" value={data.commissionPaid} tone="rose" />
+                <Money label="Other income" value={data.otherIncome} tone="emerald" />
+                <Money label="COGS" value={data.cogs} tone="slate" />
+              </div>
+            </CardBody>
+          </Card>
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader title="Top products" subtitle="By profit" />
+              <CardBody>
+                {!data.topProducts.length ? <EmptyState title="No sales in this period" icon={Package} /> : (
+                  <Table>
+                    <THead><TR><TH>Product</TH><TH>Boxes</TH><TH>Profit</TH></TR></THead>
+                    <TBody>
+                      {data.topProducts.map((p) => (
+                        <TR key={p.productId}><TD className="font-medium text-foreground">{p.name}</TD><TD>{formatNumber(p.boxes)}</TD><TD className="font-semibold text-emerald-500">{formatCurrency(p.profit)}</TD></TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                )}
+              </CardBody>
+            </Card>
+            <Card>
+              <CardHeader title="Top brands" subtitle="Revenue · profit" />
+              <CardBody>
+                {!data.topBrands.length ? <EmptyState title="No sales in this period" icon={Package} /> : (
+                  <Table>
+                    <THead><TR><TH>Brand</TH><TH>Boxes</TH><TH>Revenue</TH><TH>Profit</TH><TH>Margin</TH></TR></THead>
+                    <TBody>
+                      {data.topBrands.map((b) => (
+                        <TR key={b.brandId}><TD className="font-medium text-foreground">{b.name}</TD><TD>{formatNumber(b.boxes)}</TD><TD>{formatCurrency(b.revenue)}</TD><TD className="font-semibold text-emerald-500">{formatCurrency(b.profit)}</TD><TD>{b.margin}%</TD></TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                )}
+              </CardBody>
+            </Card>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Page shell ────────────────────────────────────────────────────────────────
+const TABS = [
+  ['overview', 'Overview'], ['profit', 'Profit'], ['cashflow', 'Cash Flow'],
+  ['suppliers', 'Suppliers'], ['expenses', 'Expenses'], ['accounts', 'Accounts'],
+  ['ledger', 'Transactions'], ['reports', 'Reports'],
+];
+
 export default function Finance() {
-  const [tab, setTab] = useState('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const [tab, setTabState] = useState(TABS.some(([k]) => k === urlTab) ? urlTab : 'overview');
+  const setTab = (k) => { setTabState(k); setSearchParams(k === 'overview' ? {} : { tab: k }, { replace: true }); };
   const [money, setMoney] = useState(null); // 'income' | 'expense'
   const { data: accounts = [] } = useQuery({ queryKey: ['finance', 'accounts'], queryFn: async () => unwrap(await api.get('/finance/accounts')).data });
   const { data: categories = [] } = useQuery({ queryKey: ['finance', 'categories'], queryFn: async () => unwrap(await api.get('/finance/categories')).data });
 
-  const TABS = [['overview', 'Overview'], ['accounts', 'Accounts'], ['expenses', 'Expenses'], ['ledger', 'Transactions']];
-
   return (
     <div>
-      <PageHeader title="Finance" subtitle="Your complete business money picture — accounts, cash flow, expenses and real profit.">
+      <PageHeader title="Finance" subtitle="The accounting department of The Lab — accounts, profit, cash flow, suppliers and reports.">
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => setMoney('income')}><ArrowDownLeft className="h-4 w-4" /> Income</Button>
           <Button onClick={() => setMoney('expense')}><ArrowUpRight className="h-4 w-4" /> Expense</Button>
@@ -335,9 +759,13 @@ export default function Finance() {
       </div>
 
       {tab === 'overview' && <Overview />}
+      {tab === 'profit' && <ProfitTab />}
+      {tab === 'cashflow' && <CashFlowTab />}
+      {tab === 'suppliers' && <SuppliersTab accounts={accounts} />}
       {tab === 'accounts' && <Accounts onQuick={setMoney} />}
       {tab === 'expenses' && <Ledger expensesOnly />}
       {tab === 'ledger' && <Ledger />}
+      {tab === 'reports' && <ReportsTab />}
 
       {money && <MoneyModal mode={money} accounts={accounts} categories={categories} onClose={() => setMoney(null)} />}
     </div>

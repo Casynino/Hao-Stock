@@ -209,7 +209,7 @@ export default function Dashboard() {
       <div className="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-4">
         <StatCard label="Sales today" value={formatCurrency(sales.daily.revenue)} icon={TrendingUp} tone="emerald" hint={`${sales.daily.orders} orders`} />
         <StatCard label="Sales this month" value={formatCurrency(sales.monthly.revenue)} icon={TrendingUp} tone="emerald" hint={`${sales.monthly.orders} orders`} onClick={() => navigate('/reports')} />
-        <StatCard label="Gross profit (month)" value={formatCurrency(profit.grossProfit)} icon={Wallet} tone="violet" hint={`Margin ${profit.grossMargin}% · view profit`} onClick={() => navigate('/profit')} />
+        <StatCard label="Gross profit (month)" value={formatCurrency(profit.grossProfit)} icon={Wallet} tone="violet" hint={`Margin ${profit.grossMargin}% · view profit`} onClick={() => navigate('/finance?tab=profit')} />
         <StatCard label="Collected (month)" value={formatCurrency(paymentsCollected.total)} icon={Wallet} tone="slate" />
       </div>
 

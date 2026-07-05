@@ -12,6 +12,11 @@ router.use(authenticate, requireRoles(ROLES.WAREHOUSE_STAFF));
 
 router.get('/overview', ctrl.overview);
 router.post('/sync', ctrl.sync); // rebuild ledger from existing records (idempotent)
+router.get('/cashflow', ctrl.cashflow);
+router.get('/report', ctrl.report);
+router.get('/suppliers', ctrl.suppliers);
+router.get('/suppliers/:id', ctrl.supplierDetail);
+router.post('/supplier-payments', ctrl.paySupplier);
 router.get('/accounts', ctrl.accounts);
 router.post('/accounts', ctrl.createAccount);
 router.put('/accounts/:id', ctrl.updateAccount);

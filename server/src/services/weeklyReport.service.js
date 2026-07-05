@@ -184,7 +184,9 @@ async function sendWhatsApp(text) {
     return { sent: false, reason: 'WhatsApp not configured — set whatsapp.phone and whatsapp.apikey in Settings' };
   }
   const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&apikey=${encodeURIComponent(apikey)}&text=${encodeURIComponent(text)}`;
-  const res = await fetch(url, { method: 'GET' });
+  // CallMeBot's firewall 403s link-bearing messages sent with Node's default
+  // user agent; a browser-style UA is accepted.
+  const res = await fetch(url, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' } });
   const body = await res.text().catch(() => '');
   const okBody = /message queued|sent|will be delivered/i.test(body);
   return { sent: res.ok && okBody, status: res.status, provider: body.slice(0, 160) };

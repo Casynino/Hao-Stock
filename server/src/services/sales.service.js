@@ -312,6 +312,28 @@ async function cancelSale(id, actor, reason) {
       });
     }
 
+    // Settlement-linked sale: the boxes go back to being OWED on the order —
+    // roll back the settled value, un-close the order if needed, and recompute
+    // its status. (Lazy require: settlement.service requires this module.)
+    if (sale.settlementId) {
+      const stl = await tx.settlement.findUnique({ where: { id: sale.settlementId } });
+      if (stl) {
+        const newSettled = Math.max(0, round2(toNumber(stl.settledValue) - toNumber(sale.total)));
+        await tx.settlement.update({
+          where: { id: sale.settlementId },
+          data: { settledValue: newSettled, settledAt: null },
+        });
+        // eslint-disable-next-line global-require
+        const settlementSvc = require('./settlement.service');
+        await settlementSvc.recomputeStatus(tx, sale.settlementId);
+      }
+    }
+
+    // Reverse the money: remove the ledger income posted for this sale so the
+    // account gives the cash back. The backfill skips cancelled sales, so the
+    // row will never be re-created.
+    await tx.financeTransaction.deleteMany({ where: { refType: 'Sale', refId: sale.id, direction: 'IN' } });
+
     return tx.sale.update({
       where: { id: sale.id },
       data: { status: 'CANCELLED', balanceDue: 0, notes: reason ? `${sale.notes || ''}\nCancelled: ${reason}`.trim() : sale.notes },

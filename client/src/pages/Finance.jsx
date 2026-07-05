@@ -384,12 +384,14 @@ function ProfitTab() {
     queryKey: ['reports', 'profit-overview', period],
     queryFn: async () => unwrap(await api.get('/reports/profit-overview', { params: { period } })).data,
   });
-  const { data: brandStock = [] } = useQuery({
+  const { data: brandStockData } = useQuery({
     queryKey: ['dashboard', 'brands'],
     queryFn: async () => unwrap(await api.get('/dashboard/brands')).data,
   });
   if (isLoading || !data) return <PageSpinner />;
-  const stockByBrand = new Map(brandStock.map((b) => [b.brandId, b]));
+  // /dashboard/brands returns { brands: [...], totals } — the per-brand rows
+  // live under .brands (same shape the Dashboard consumes).
+  const stockByBrand = new Map((brandStockData?.brands || []).map((b) => [b.brandId, b]));
 
   return (
     <div className="space-y-6">

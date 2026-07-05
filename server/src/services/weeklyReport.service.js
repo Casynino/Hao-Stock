@@ -108,7 +108,8 @@ async function sendWhatsApp(text) {
 // Compose + send the weekly report. Guarded so a retried cron never sends the
 // same week's report twice.
 async function sendWeeklyReport({ force = false } = {}) {
-  const weekKey = dayjs().format('GGGG-[W]WW'); // ISO week, e.g. 2026-W28
+  const now = dayjs();
+  const weekKey = `${now.isoWeekYear()}-W${String(now.isoWeek()).padStart(2, '0')}`; // e.g. 2026-W28
   const lastKey = await getSetting('whatsapp.lastWeeklySent');
   if (!force && lastKey === weekKey) {
     return { sent: false, reason: `Already sent for ${weekKey}` };

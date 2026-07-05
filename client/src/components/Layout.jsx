@@ -35,16 +35,9 @@ function NavItems({ items, counts = {}, onNavigate }) {
   const location = useLocation();
   const countFor = (item) => (item.badge ? counts[item.badge] || 0 : 0);
 
-  // Query-aware active state: "Profit Analysis" (/finance?tab=profit) and
-  // "Finance" (/finance) must never highlight together.
   const isItemActive = (item) => {
-    const { pathname, search } = location;
-    if (item.to.includes('?')) {
-      const [path, query] = item.to.split('?');
-      return pathname === path && search.includes(query);
-    }
+    const { pathname } = location;
     if (item.to === '/') return pathname === '/';
-    if (item.to === '/finance') return pathname === '/finance' && !search.includes('tab=profit');
     return pathname === item.to || pathname.startsWith(`${item.to}/`);
   };
 

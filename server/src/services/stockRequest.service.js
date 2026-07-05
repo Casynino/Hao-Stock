@@ -109,7 +109,8 @@ async function create(salesRepId, payload) {
     entityType: 'StockRequest',
     entityId: result.id,
   }).catch(() => {});
-  require('./whatsappNotify.service').stockRequestSubmitted(result).catch(() => {});
+  const wa = require('./whatsappNotify.service');
+  wa.background(wa.stockRequestSubmitted(result));
 
   return result;
 }

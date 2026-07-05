@@ -34,9 +34,12 @@ const myOverview = asyncHandler(async (req, res) => {
   if (!salesRepId) throw ApiError.forbidden('Your account has no sales-rep profile');
 
   // Reps poll this every ~60s, so it doubles as the heartbeat that fires due
-  // reminders AND applies any overdue penalties. Fire-and-forget — never blocks.
-  settlement.sendDueReminders().catch(() => {});
-  penalty.applyDuePenalties().catch(() => {});
+  // reminders, applies overdue penalties and retries queued WhatsApp sends.
+  // background() keeps the work alive after the response (Vercel freeze).
+  const wa = require('../services/whatsappNotify.service');
+  wa.background(settlement.sendDueReminders());
+  wa.background(penalty.applyDuePenalties());
+  wa.background(wa.flush());
 
   const [balances, commissionData, openOrders, pendingRequests] = await Promise.all([
     inventory.repBalances(prisma, salesRepId),
@@ -114,8 +117,8 @@ const pendingActions = asyncHandler(async (_req, res) => {
   // Admin polls this every ~30s — piggyback WhatsApp delivery retries and the
   // evening-summary fallback here (both internally throttled, never block).
   const wa = require('../services/whatsappNotify.service');
-  wa.flush().catch(() => {});
-  wa.dailySummaryCatchup().catch(() => {});
+  wa.background(wa.flush());
+  wa.background(wa.dailySummaryCatchup());
 
   const [stockRequests, pendingSubs, returns, overdue] = await Promise.all([
     prisma.stockRequest.count({ where: { status: 'PENDING' } }),

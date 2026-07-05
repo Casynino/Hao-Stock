@@ -21,9 +21,11 @@ const list = asyncHandler(async (req, res) => {
 });
 
 const summary = asyncHandler(async (_req, res) => {
-  // Fire-and-forget: keep reminders + real penalty deductions current.
-  settlement.sendDueReminders().catch(() => {});
-  penalty.applyDuePenalties().catch(() => {});
+  // Keep reminders + real penalty deductions current without blocking the
+  // response — background() survives the post-response serverless freeze.
+  const wa = require('../services/whatsappNotify.service');
+  wa.background(settlement.sendDueReminders());
+  wa.background(penalty.applyDuePenalties());
   return ok(res, await settlement.summary());
 });
 

@@ -89,18 +89,49 @@ function compose({ priority = 'INFO', title, ref, when, who, lines = [], status,
 }
 
 // ── Delivery ─────────────────────────────────────────────────────────────────
+
+// Run a notification without blocking the caller's response — but keep the
+// serverless function alive until it finishes. Vercel freezes the lambda the
+// moment the HTTP response is sent, which kills plain fire-and-forget fetches
+// ("fetch failed"); waitUntil() is the sanctioned way to outlive the response.
+// Outside Vercel (local dev server) it just runs as a normal promise.
+function background(promise) {
+  const p = Promise.resolve(promise).catch(() => {});
+  try {
+    require('@vercel/functions').waitUntil(p);
+  } catch {
+    // Not on Vercel — long-running process keeps the promise alive anyway.
+  }
+  return p;
+}
+
 async function sendRaw(text) {
   const { phone, apikey, configured } = await getConfig();
   if (!configured) return { sent: false, reason: 'WhatsApp not configured' };
   const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&apikey=${encodeURIComponent(apikey)}&text=${encodeURIComponent(text)}`;
   // Browser UA on purpose — CallMeBot's firewall 403s bot user agents.
-  const res = await fetch(url, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' } });
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+    signal: AbortSignal.timeout(15000),
+  });
   const body = await res.text().catch(() => '');
   const sent = res.ok && /message queued|sent|will be delivered/i.test(body);
   return { sent, status: res.status, provider: body.slice(0, 160) };
 }
 
 async function deliver(row) {
+  // Optimistic claim: bump attempts only if nobody else has. Two concurrent
+  // flushes (separate serverless instances) can pick the same PENDING row;
+  // the loser of this update skips, so a message is never sent twice.
+  const claimed = await prisma.whatsAppNotification.updateMany({
+    where: { id: row.id, status: 'PENDING', attempts: row.attempts },
+    data: { attempts: row.attempts + 1 },
+  });
+  if (claimed.count === 0) {
+    return { queued: true, sent: false, status: 'PENDING', reason: 'claimed-elsewhere', id: row.id };
+  }
+
   const result = await sendRaw(row.text).catch((e) => ({ sent: false, provider: e.message }));
   const attempts = row.attempts + 1;
   const status = result.sent ? 'SENT' : attempts >= MAX_ATTEMPTS ? 'FAILED' : 'PENDING';
@@ -108,7 +139,6 @@ async function deliver(row) {
     where: { id: row.id },
     data: {
       status,
-      attempts,
       sentAt: result.sent ? new Date() : null,
       lastError: result.sent ? null : String(result.reason || result.provider || 'send failed').slice(0, 300),
     },
@@ -448,6 +478,7 @@ async function test() {
 module.exports = {
   TYPES,
   compose,
+  background,
   sendRaw,
   queue,
   flush,

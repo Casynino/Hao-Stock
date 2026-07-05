@@ -940,6 +940,7 @@ model Supplier {
   id          String   @id @default(cuid())
   name        String
   country     String   @default("China")
+  brandId     String? // brand this supplier belongs to (null = general)
   contactName String?
   phone       String?
   email       String?
@@ -1119,6 +1120,7 @@ model SettlementSubmission {
   baseQuantity     Int
   amount           Decimal                    @db.Decimal(16, 2)
   method           String?
+  accountId        String? // payment account the rep says the money went to
   status           SettlementSubmissionStatus @default(PENDING)
   saleId           String? // the Sale created on approval
   rejectionReason  String?
@@ -1291,6 +1293,7 @@ model FinanceTransaction {
   direction   FinanceDirection
   type        FinanceTxnType   @default(INCOME)
   amount      Decimal          @db.Decimal(16, 2)
+  brandId     String? // which brand this money belongs to (null = general business)
   category    String? // expense category or income source label
   description String?
   reference   String? // human reference, e.g. a settlement/sale number
@@ -1306,6 +1309,7 @@ model FinanceTransaction {
   @@index([accountId])
   @@index([direction])
   @@index([type])
+  @@index([brandId])
   @@index([occurredAt])
   @@map("finance_transactions")
 }

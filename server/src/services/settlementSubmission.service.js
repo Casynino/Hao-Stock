@@ -36,6 +36,14 @@ async function submit(settlementId, payload, actor) {
 
     const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, name: true, sellingPrice: true } });
     if (!product) throw ApiError.badRequest('Product not found');
+
+    // Where the rep says the money went (Cash / M-Pesa / Airtel...). Stored on
+    // the submission; on approval the income lands in THIS account.
+    let account = null;
+    if (payload.accountId) {
+      account = await tx.businessAccount.findFirst({ where: { id: payload.accountId, isActive: true } });
+      if (!account) throw ApiError.badRequest('Select a valid payment account');
+    }
     const pkg = await tx.productPackaging.findFirst({ where: { productId, isBaseUnit: true } });
     if (!pkg) throw ApiError.badRequest(`${product.name} has no base (Box) packaging configured`);
     const { baseQuantity } = await inventory.convertToBase(tx, productId, pkg.packagingUnitId, boxes);
@@ -65,7 +73,8 @@ async function submit(settlementId, payload, actor) {
         boxes,
         baseQuantity,
         amount,
-        method: payload.method || null,
+        method: account ? account.name : payload.method || null,
+        accountId: account ? account.id : null,
         status: 'PENDING',
         submittedById: actor ? actor.id : null,
       },
@@ -106,8 +115,11 @@ async function approve(submissionId, actor) {
     return { dec, sale };
   }, { timeout: 30000 });
 
-  // Approved settlement money lands in the business ledger (Cash by default).
-  // Keyed to the sale (refId) so the historical backfill never double-counts it.
+  // Approved settlement money lands in the ledger — in the payment account the
+  // rep chose on submission (falls back to Cash), tagged with the product's
+  // brand so OHIS and Civlily books stay separate. Keyed to the sale (refId) so
+  // the historical backfill never double-counts it.
+  const prod = await prisma.product.findUnique({ where: { id: sub.productId }, select: { brandId: true } }).catch(() => null);
   finance.recordSaleIncome({
     saleId: out.sale.id,
     saleNumber: out.sale.saleNumber,
@@ -115,6 +127,8 @@ async function approve(submissionId, actor) {
     fromSettlement: true,
     who: out.dec.salesRep?.user?.name,
     occurredAt: out.sale.soldAt,
+    accountId: sub.accountId || null,
+    brandId: prod?.brandId || null,
   }, actor).catch(() => {});
 
   const rep = await prisma.salesRepresentative.findUnique({ where: { id: sub.salesRepId }, select: { userId: true } });

@@ -1,5 +1,6 @@
 'use strict';
 
+const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { ok, created, paginated } = require('../utils/response');
@@ -53,6 +54,17 @@ const submitSettlement = asyncHandler(async (req, res) => {
   return created(res, sub);
 });
 
+// Payment accounts a rep can choose when submitting a settlement — names and
+// payment details only, never balances (those are The Doctor's business).
+const paymentAccounts = asyncHandler(async (_req, res) => {
+  const accounts = await prisma.businessAccount.findMany({
+    where: { isActive: true },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true, name: true, type: true, notes: true, isDefault: true },
+  });
+  return ok(res, accounts);
+});
+
 // Admin approval center: all settlements awaiting verification.
 const pendingApprovals = asyncHandler(async (_req, res) => ok(res, await submission.listPending()));
 
@@ -83,5 +95,5 @@ const extendDeadline = asyncHandler(async (req, res) => {
 
 module.exports = {
   list, summary, get, settle, refreshOverdue, extendDeadline,
-  submitSettlement, pendingApprovals, approveSubmission, rejectSubmission,
+  submitSettlement, pendingApprovals, approveSubmission, rejectSubmission, paymentAccounts,
 };

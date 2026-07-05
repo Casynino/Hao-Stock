@@ -44,7 +44,6 @@ export const NAV = [
   // ── Reports & Analytics ──
   { to: '/finance', label: 'Finance', icon: 'Wallet', roles: STAFF, group: 'reports' },
   { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'reports' },
-  { to: '/reports', label: 'Reports', icon: 'BarChart3', roles: STAFF, group: 'reports' },
   { to: '/activity', label: 'Activity', icon: 'Activity', roles: STAFF, group: 'reports' },
   { to: '/audit', label: 'Audit Log', icon: 'ScrollText', roles: ['ADMIN'], group: 'reports' },
 

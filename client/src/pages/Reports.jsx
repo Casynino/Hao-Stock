@@ -77,7 +77,9 @@ function Metric({ label, value }) {
   return <div className="card p-4"><div className="text-xs text-muted">{label}</div><div className="mt-1 text-xl font-bold text-foreground">{value}</div></div>;
 }
 
-export default function Reports() {
+// Renders standalone (own page header) or embedded inside Finance's Reports
+// tab (compact toolbar, no page title).
+export default function Reports({ embedded = false }) {
   const [tab, setTab] = useState('sales');
   const [period, setPeriod] = useState('month');
   const active = TABS.find((t) => t.key === tab);
@@ -88,15 +90,25 @@ export default function Reports() {
     queryFn: async () => unwrap(await api.get(active.path, { params })).data,
   });
 
+  const controls = (
+    <>
+      <Select value={period} onChange={(e) => setPeriod(e.target.value)} className="w-36">
+        <option value="today">Today</option><option value="week">This week</option><option value="month">This month</option><option value="year">This year</option>
+      </Select>
+      <Button variant="secondary" onClick={() => downloadReport(active.path, params, 'pdf', active.file)}><FileText className="h-4 w-4" /> PDF</Button>
+      <Button variant="secondary" onClick={() => downloadReport(active.path, params, 'excel', active.file)}><FileSpreadsheet className="h-4 w-4" /> Excel</Button>
+    </>
+  );
+
   return (
     <div>
-      <PageHeader title="Reports" subtitle="Sales, profit, performance and valuation — with PDF & Excel export.">
-        <Select value={period} onChange={(e) => setPeriod(e.target.value)} className="w-36">
-          <option value="today">Today</option><option value="week">This week</option><option value="month">This month</option><option value="year">This year</option>
-        </Select>
-        <Button variant="secondary" onClick={() => downloadReport(active.path, params, 'pdf', active.file)}><FileText className="h-4 w-4" /> PDF</Button>
-        <Button variant="secondary" onClick={() => downloadReport(active.path, params, 'excel', active.file)}><FileSpreadsheet className="h-4 w-4" /> Excel</Button>
-      </PageHeader>
+      {embedded ? (
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">{controls}</div>
+      ) : (
+        <PageHeader title="Reports" subtitle="Sales, profit, performance and valuation — with PDF & Excel export.">
+          {controls}
+        </PageHeader>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-2">
         {TABS.map((t) => (

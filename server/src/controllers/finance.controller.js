@@ -72,6 +72,34 @@ const recordIncome = asyncHandler(async (req, res) => {
   return created(res, txn);
 });
 
+// Manual balance correction (admin): a signed ADJUSTMENT transaction. Not an
+// expense — it moves the account balance without touching net profit. Used for
+// go-live initialization and intentional corrections only.
+const recordAdjustment = asyncHandler(async (req, res) => {
+  const direction = req.body.direction === 'IN' ? 'IN' : 'OUT';
+  const txn = await finance.recordTransaction(
+    {
+      accountId: req.body.accountId,
+      direction,
+      type: 'ADJUSTMENT',
+      amount: req.body.amount,
+      brandId: req.body.brandId || null,
+      category: 'Manual adjustment',
+      description: req.body.description || 'Manual balance adjustment',
+      notes: req.body.notes || null,
+      occurredAt: req.body.occurredAt,
+    },
+    req.user,
+  );
+  await audit.record(req, {
+    action: 'CREATE',
+    entityType: 'FinanceTransaction',
+    entityId: txn.id,
+    newValues: { kind: 'ADJUSTMENT', direction, amount: txn.amount, accountId: txn.accountId, description: txn.description },
+  });
+  return created(res, txn);
+});
+
 const updateTransaction = asyncHandler(async (req, res) => {
   const { updated, previous } = await finance.updateTransaction(req.params.id, req.body);
   await audit.record(req, {
@@ -122,6 +150,6 @@ const paySupplier = asyncHandler(async (req, res) => {
 
 module.exports = {
   overview, sync, accounts, createAccount, updateAccount, categories, createCategory,
-  transactions, recordExpense, recordIncome, updateTransaction, deleteTransaction,
+  transactions, recordExpense, recordIncome, recordAdjustment, updateTransaction, deleteTransaction,
   cashflow, report, suppliers, supplierDetail, paySupplier,
 };

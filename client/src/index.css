@@ -8,6 +8,9 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    /* A stray wide element must scroll inside its own container (tables do),
+       never widen the page — kills the mobile zoom-out/pan effect. */
+    overflow-x: clip;
     font-family: 'Inter', system-ui, sans-serif;
     /* Near-black backdrop with faint lime/emerald glows for depth. */
     background-color: #0a0a0b;

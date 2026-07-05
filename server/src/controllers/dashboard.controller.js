@@ -111,12 +111,14 @@ const myStats = asyncHandler(async (req, res) => {
 // Counts of items awaiting The Doctor's action — drives the sidebar badges.
 // Each stays counted until it's approved or rejected (i.e. acted on).
 const pendingActions = asyncHandler(async (_req, res) => {
-  const [stockRequests, settlements, returns] = await Promise.all([
+  const [stockRequests, pendingSubs, returns, overdue] = await Promise.all([
     prisma.stockRequest.count({ where: { status: 'PENDING' } }),
     prisma.settlementSubmission.count({ where: { status: 'PENDING' } }),
     prisma.return.count({ where: { status: 'PENDING' } }),
+    prisma.settlement.count({ where: { status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] }, deadlineAt: { lt: new Date() } } }),
   ]);
-  return ok(res, { stockRequests, settlements, returns });
+  // Settlements badge = everything needing action there: approvals + overdue.
+  return ok(res, { stockRequests, settlements: pendingSubs + overdue, returns });
 });
 
 // The composed command-center payload for the admin dashboard.

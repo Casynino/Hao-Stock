@@ -13,32 +13,52 @@ export const ROLE_LABELS = {
 // Navigation. `roles` lists who can see the item; ADMIN sees everything.
 const ALL = ['ADMIN', 'WAREHOUSE_STAFF', 'SALES_REP'];
 const STAFF = ['ADMIN', 'WAREHOUSE_STAFF'];
-// `group: 'advanced'` items live under a collapsible "More" section so the
-// daily experience stays focused on the essentials. Nothing is removed.
-export const NAV = [
-  { to: '/', label: 'Dashboard', icon: 'LayoutDashboard', roles: ALL },
-  { to: '/products', label: 'Products', icon: 'Package', roles: STAFF },
-  { to: '/inventory', label: 'Inventory', icon: 'Boxes', roles: STAFF },
-  { to: '/stock-requests', label: 'Stock Requests', icon: 'ClipboardList', roles: ALL, badge: 'stockRequests' },
-  { to: '/sales', label: 'Sales', icon: 'ShoppingCart', roles: STAFF },
-  { to: '/customers', label: 'Customers', icon: 'Users', roles: STAFF },
-  { to: '/commissions', label: 'Commissions', icon: 'Coins', roles: ALL },
-  { to: '/reps', label: 'Sales Reps', icon: 'UserCog', roles: STAFF },
-  { to: '/reports', label: 'Reports', icon: 'BarChart3', roles: STAFF },
-  { to: '/finance', label: 'Finance', icon: 'Wallet', roles: STAFF },
 
-  // --- Advanced (tucked under "More") ---
-  { to: '/purchases', label: 'Imports & POs', icon: 'Ship', roles: STAFF, group: 'advanced' },
-  { to: '/transfers', label: 'Transfers', icon: 'Truck', roles: STAFF, group: 'advanced' },
-  { to: '/settlements', label: 'Settlements (72h)', icon: 'Timer', roles: ALL, group: 'advanced', badge: 'settlements' },
-  { to: '/returns', label: 'Returns', icon: 'Undo2', roles: ALL, group: 'advanced', badge: 'returns' },
-  { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'advanced' },
-  { to: '/invoice-generator', label: 'Generate Invoice', icon: 'Receipt', roles: ALL, group: 'advanced' },
-  { to: '/reorder', label: 'Reorder', icon: 'Repeat', roles: STAFF, group: 'advanced' },
-  { to: '/activity', label: 'Activity', icon: 'Activity', roles: STAFF, group: 'advanced' },
-  { to: '/audit', label: 'Audit Log', icon: 'ScrollText', roles: ['ADMIN'], group: 'advanced' },
-  { to: '/users', label: 'Users', icon: 'ShieldCheck', roles: ['ADMIN'], group: 'advanced' },
-  { to: '/settings', label: 'Settings', icon: 'Settings', roles: ['ADMIN'], group: 'advanced' },
+// Sidebar sections follow the daily workflow (most used at the top), not the
+// system's modules. A section header only renders when the role can see at
+// least one of its items.
+export const NAV_GROUPS = [
+  ['overview', 'Business Overview'],
+  ['operations', 'Operations'],
+  ['inventory', 'Inventory'],
+  ['reports', 'Reports & Analytics'],
+  ['tools', 'Tools'],
+  ['admin', 'Administration'],
+];
+
+export const NAV = [
+  // ── Business Overview ──
+  { to: '/', label: 'Dashboard', icon: 'LayoutDashboard', roles: ALL, group: 'overview' },
+  { to: '/finance', label: 'Finance', icon: 'Wallet', roles: STAFF, group: 'overview' },
+  { to: '/sales', label: 'Sales', icon: 'ShoppingCart', roles: STAFF, group: 'overview' },
+  { to: '/settlements', label: 'Settlements', icon: 'Timer', roles: ALL, group: 'overview', badge: 'settlements' },
+
+  // ── Operations ──
+  { to: '/stock-requests', label: 'Stock Requests', icon: 'ClipboardList', roles: ALL, group: 'operations', badge: 'stockRequests' },
+  { to: '/returns', label: 'Stock Returns', icon: 'Undo2', roles: ALL, group: 'operations', badge: 'returns' },
+  { to: '/reps', label: 'Sales Reps', icon: 'UserCog', roles: STAFF, group: 'operations' },
+  { to: '/customers', label: 'Customers', icon: 'Users', roles: STAFF, group: 'operations' },
+  { to: '/commissions', label: 'Commissions', icon: 'Coins', roles: ALL, group: 'operations' },
+
+  // ── Inventory ──
+  { to: '/inventory', label: 'Inventory', icon: 'Boxes', roles: STAFF, group: 'inventory' },
+  { to: '/products', label: 'Products', icon: 'Package', roles: STAFF, group: 'inventory' },
+  { to: '/purchases', label: 'Purchases & Imports', icon: 'Ship', roles: STAFF, group: 'inventory' },
+  { to: '/transfers', label: 'Stock Transfers', icon: 'Truck', roles: STAFF, group: 'inventory' },
+  { to: '/reorder', label: 'Reorder', icon: 'Repeat', roles: STAFF, group: 'inventory' },
+
+  // ── Reports & Analytics ──
+  { to: '/reports', label: 'Reports', icon: 'BarChart3', roles: STAFF, group: 'reports' },
+  { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'reports' },
+  { to: '/activity', label: 'Activity Feed', icon: 'Activity', roles: STAFF, group: 'reports' },
+  { to: '/audit', label: 'Audit Log', icon: 'ScrollText', roles: ['ADMIN'], group: 'reports' },
+
+  // ── Tools ──
+  { to: '/invoice-generator', label: 'Generate Invoice', icon: 'Receipt', roles: ALL, group: 'tools' },
+
+  // ── Administration ──
+  { to: '/users', label: 'Users', icon: 'ShieldCheck', roles: ['ADMIN'], group: 'admin' },
+  { to: '/settings', label: 'Settings', icon: 'Settings', roles: ['ADMIN'], group: 'admin' },
 ];
 
 export const SALE_STATUS_META = {

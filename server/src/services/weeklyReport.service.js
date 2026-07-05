@@ -38,7 +38,8 @@ function reportWeek(weekKey) {
   if (weekKey) {
     const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
     if (m) {
-      const start = dayjs().isoWeekYear(Number(m[1])).isoWeek(Number(m[2])).startOf('isoWeek');
+      // Jan 4 is always inside ISO week 1 of its year (isoWeekYear has no setter).
+      const start = dayjs(`${m[1]}-01-04`).isoWeek(Number(m[2])).startOf('isoWeek');
       return { start, end: start.add(6, 'day') };
     }
   }

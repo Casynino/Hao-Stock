@@ -119,4 +119,7 @@ const pendingActions = asyncHandler(async (_req, res) => {
   return ok(res, { stockRequests, settlements, returns });
 });
 
-module.exports = { overview, activity, brands, myOverview, myStats, pendingActions };
+// The composed command-center payload for the admin dashboard.
+const command = asyncHandler(async (_req, res) => ok(res, await dashboard.command()));
+
+module.exports = { overview, activity, brands, myOverview, myStats, pendingActions, command };

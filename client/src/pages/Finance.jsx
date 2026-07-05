@@ -54,10 +54,14 @@ function AddAccountModal({ onClose }) {
 function MoneyModal({ mode, accounts, categories, onClose }) {
   const qc = useQueryClient();
   const isExpense = mode === 'expense';
+  const { data: brands = [] } = useQuery({
+    queryKey: ['brands', 'all'],
+    queryFn: async () => unwrap(await api.get('/brands', { params: { limit: 50 } })).data,
+  });
   const [form, setForm] = useState({
     accountId: accounts.find((a) => a.isDefault)?.id || accounts[0]?.id || '',
     amount: '', category: isExpense ? (categories[0]?.name || '') : '', description: '',
-    occurredAt: new Date().toISOString().slice(0, 10), notes: '', newCategory: '',
+    occurredAt: new Date().toISOString().slice(0, 10), notes: '', newCategory: '', brandId: '',
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const save = useMutation({
@@ -71,6 +75,7 @@ function MoneyModal({ mode, accounts, categories, onClose }) {
         accountId: form.accountId, amount: Number(form.amount),
         category: category || undefined, description: form.description.trim() || undefined,
         occurredAt: form.occurredAt, notes: form.notes.trim() || undefined,
+        brandId: form.brandId || undefined,
       });
     },
     onSuccess: () => { toast.success(isExpense ? 'Expense recorded' : 'Income recorded'); invalidateFinance(qc); onClose(); },
@@ -97,6 +102,12 @@ function MoneyModal({ mode, accounts, categories, onClose }) {
         <Field label={isExpense ? 'Paid from account' : 'Deposit to account'} required>
           <Select value={form.accountId} onChange={set('accountId')}>
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {formatCurrency(a.balance)}</option>)}
+          </Select>
+        </Field>
+        <Field label="Brand" hint="Which brand's books this belongs to (optional)">
+          <Select value={form.brandId} onChange={set('brandId')}>
+            <option value="">General business</option>
+            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </Select>
         </Field>
         <Field label="Date"><Input type="date" value={form.occurredAt} onChange={set('occurredAt')} /></Field>
@@ -151,6 +162,37 @@ function Overview() {
         </CardBody>
       </Card>
 
+      {/* Brand finances — never mixed, always separated (scales to any brand) */}
+      {(data.brandFinance || []).length > 0 && (
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Brand finances</h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {data.brandFinance.map((b) => (
+              <Card key={b.brandId}>
+                <CardBody>
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="rounded-full bg-brand-500/15 px-2.5 py-0.5 text-xs font-bold text-brand-400">{b.name}</span>
+                    <span className="text-xs text-faint">{formatNumber(b.boxesSold)} boxes sold</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <Money label="Revenue" value={b.revenue} tone="emerald" />
+                    <Money label="− COGS" value={b.cogs} tone="slate" />
+                    <Money label="Gross profit" value={b.grossProfit} tone="brand" />
+                    <Money label="− Expenses" value={b.expenses} tone="rose" />
+                    <Money label="Net profit" value={b.netProfit} tone={b.netProfit >= 0 ? 'emerald' : 'rose'} big />
+                    <Money label="Net cash" value={b.netCash} tone={b.netCash >= 0 ? 'default' : 'rose'} />
+                  </div>
+                  <div className="mt-2 flex flex-wrap justify-between gap-2 border-t border-border pt-2 text-xs text-faint">
+                    <span>Money in {formatCurrency(b.moneyIn)} · out {formatCurrency(b.moneyOut)}</span>
+                    <span>Inventory {formatCurrency(b.inventoryValue)} ({formatNumber(b.inventoryUnits)} boxes)</span>
+                  </div>
+                </CardBody>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Accounts + expense breakdown */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
@@ -163,7 +205,7 @@ function Overview() {
                   <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-400"><Icon className="h-4 w-4" /></span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-foreground">{a.name}{a.isDefault && <span className="ml-1.5 text-[10px] text-faint">· default</span>}</div>
-                    <div className="text-xs text-faint">In {formatCurrency(a.moneyIn)} · Out {formatCurrency(a.moneyOut)}</div>
+                    <div className="truncate text-xs text-faint">{a.notes || `In ${formatCurrency(a.moneyIn)} · Out ${formatCurrency(a.moneyOut)}`}</div>
                   </div>
                   <div className={`text-right font-bold tabular-nums ${a.balance < 0 ? 'text-rose-500' : 'text-foreground'}`}>{formatCurrency(a.balance)}</div>
                 </div>
@@ -234,6 +276,7 @@ function Accounts({ onQuick }) {
                   {a.isDefault && <Badge className="bg-brand-500/15 text-brand-400">Default</Badge>}
                 </div>
                 <div className="mt-3 text-sm font-semibold text-foreground">{a.name}</div>
+                {a.notes && <div className="text-[11px] text-faint">{a.notes}</div>}
                 <div className={`text-2xl font-black tabular-nums ${a.balance < 0 ? 'text-rose-500' : 'text-foreground'}`}>{formatCurrency(a.balance)}</div>
                 <div className="mt-2 flex justify-between border-t border-border pt-2 text-xs">
                   <span className="text-emerald-500">In {formatCurrency(a.moneyIn)}</span>
@@ -256,12 +299,14 @@ function Ledger({ expensesOnly }) {
   const [page, setPage] = useState(1);
   const [account, setAccount] = useState('');
   const [type, setType] = useState('');
+  const [brand, setBrand] = useState('');
   const { data: accounts = [] } = useQuery({ queryKey: ['finance', 'accounts'], queryFn: async () => unwrap(await api.get('/finance/accounts')).data });
-  const params = { page, limit: 25, accountId: account || undefined };
+  const { data: brands = [] } = useQuery({ queryKey: ['brands', 'all'], queryFn: async () => unwrap(await api.get('/brands', { params: { limit: 50 } })).data });
+  const params = { page, limit: 25, accountId: account || undefined, brandId: brand || undefined };
   if (expensesOnly) params.direction = 'OUT';
   else if (type) params.type = type;
   const { data, isLoading } = useQuery({
-    queryKey: ['finance', 'transactions', { page, account, type, expensesOnly }],
+    queryKey: ['finance', 'transactions', { page, account, type, brand, expensesOnly }],
     queryFn: async () => unwrap(await api.get('/finance/transactions', { params })),
   });
   const del = useMutation({
@@ -284,18 +329,24 @@ function Ledger({ expensesOnly }) {
             {Object.entries(TXN_TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </Select>
         )}
+        <Select className="sm:w-40" value={brand} onChange={(e) => { setBrand(e.target.value); setPage(1); }}>
+          <option value="">All brands</option>
+          {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          <option value="none">General (no brand)</option>
+        </Select>
       </div>
       {isLoading ? <PageSpinner /> : !rows.length ? (
         <EmptyState title={expensesOnly ? 'No expenses yet' : 'No transactions yet'} message="Record income or expenses, or approve a settlement." icon={Receipt} />
       ) : (
         <>
           <Table>
-            <THead><TR><TH>Date</TH><TH>Type</TH><TH>Description</TH><TH>Account</TH><TH className="text-right">Amount</TH><TH /></TR></THead>
+            <THead><TR><TH>Date</TH><TH>Type</TH><TH>Brand</TH><TH>Description</TH><TH>Account</TH><TH className="text-right">Amount</TH><TH /></TR></THead>
             <TBody>
               {rows.map((t) => (
                 <TR key={t.id}>
                   <TD className="whitespace-nowrap text-faint">{formatDate(t.occurredAt)}</TD>
                   <TD><Badge className={t.direction === 'IN' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}>{TXN_TYPE_LABEL[t.type] || t.type}</Badge></TD>
+                  <TD>{t.brandName ? <Badge className="bg-brand-500/15 text-brand-400">{t.brandName}</Badge> : <span className="text-faint">—</span>}</TD>
                   <TD className="max-w-[220px] truncate text-foreground">{t.category || t.description || t.reference || '—'}</TD>
                   <TD className="text-muted">{t.account?.name}</TD>
                   <TD className={`text-right font-semibold tabular-nums ${t.direction === 'IN' ? 'text-emerald-500' : 'text-rose-500'}`}>{t.direction === 'IN' ? '+' : '−'}{formatCurrency(t.amount)}</TD>
@@ -472,11 +523,16 @@ function CashFlowTab() {
 // ── Suppliers tab (accounts payable) ─────────────────────────────────────────
 function AddSupplierModal({ onClose }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({ name: '', country: 'China', contactName: '', phone: '', email: '' });
+  const { data: brands = [] } = useQuery({
+    queryKey: ['brands', 'all'],
+    queryFn: async () => unwrap(await api.get('/brands', { params: { limit: 50 } })).data,
+  });
+  const [form, setForm] = useState({ name: '', country: 'China', brandId: '', contactName: '', phone: '', email: '' });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const save = useMutation({
     mutationFn: () => api.post('/suppliers', {
       name: form.name.trim(), country: form.country.trim() || undefined,
+      brandId: form.brandId || undefined,
       contactName: form.contactName.trim() || undefined, phone: form.phone.trim() || undefined, email: form.email.trim() || undefined,
     }),
     onSuccess: () => { toast.success('Supplier added'); invalidateFinance(qc); qc.invalidateQueries({ queryKey: ['suppliers'] }); onClose(); },
@@ -487,6 +543,12 @@ function AddSupplierModal({ onClose }) {
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={save.isPending} disabled={!form.name.trim()} onClick={() => save.mutate()}>Add supplier</Button></>}>
       <div className="space-y-4">
         <Field label="Supplier name" required><Input value={form.name} onChange={set('name')} placeholder="e.g. Guangzhou Paper Co." autoFocus /></Field>
+        <Field label="Brand" hint="Payments to this supplier count against this brand's books">
+          <Select value={form.brandId} onChange={set('brandId')}>
+            <option value="">General (no brand)</option>
+            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </Select>
+        </Field>
         <Field label="Country"><Input value={form.country} onChange={set('country')} /></Field>
         <Field label="Contact person"><Input value={form.contactName} onChange={set('contactName')} /></Field>
         <Field label="Phone"><Input value={form.phone} onChange={set('phone')} /></Field>
@@ -618,11 +680,12 @@ function SuppliersTab({ accounts }) {
         </div>
         {!suppliers.length ? <EmptyState title="No suppliers yet" message="Add your suppliers to start tracking purchases and payments." icon={Factory} /> : (
           <Table>
-            <THead><TR><TH>Supplier</TH><TH>Country</TH><TH>Orders</TH><TH>Purchased</TH><TH>Paid</TH><TH>Outstanding</TH></TR></THead>
+            <THead><TR><TH>Supplier</TH><TH>Brand</TH><TH>Country</TH><TH>Orders</TH><TH>Purchased</TH><TH>Paid</TH><TH>Outstanding</TH></TR></THead>
             <TBody>
               {suppliers.map((s) => (
                 <TR key={s.id} className="cursor-pointer" onClick={() => setViewing(s.id)}>
                   <TD className="font-medium text-foreground">{s.name}{s.contactName ? <span className="ml-1.5 text-xs text-faint">· {s.contactName}</span> : null}</TD>
+                  <TD>{s.brandName ? <Badge className="bg-brand-500/15 text-brand-400">{s.brandName}</Badge> : <span className="text-faint">—</span>}</TD>
                   <TD className="text-muted">{s.country}</TD>
                   <TD>{s.poCount}</TD>
                   <TD>{formatCurrency(s.totalPurchased)}</TD>

@@ -26,14 +26,22 @@ function SettleBoxesModal({ order, onClose, onDone }) {
   const lines = order.order.lines.filter((l) => availFor(l) > 0);
   const [productId, setProductId] = useState(lines[0]?.productId || '');
   const [boxes, setBoxes] = useState('');
-  const [method, setMethod] = useState('CASH');
+  const [accountId, setAccountId] = useState('');
+
+  // Where was the money paid? (Cash / M-Pesa / Airtel Money — names & numbers
+  // only, no balances.) The approved income lands in the chosen account.
+  const { data: payAccounts = [] } = useQuery({
+    queryKey: ['settlements', 'payment-accounts'],
+    queryFn: async () => unwrap(await api.get('/settlements/payment-accounts')).data,
+  });
+  const account = payAccounts.find((a) => a.id === accountId) || null;
 
   const line = lines.find((l) => l.productId === productId);
   const max = line ? availFor(line) : 0;
   const value = (Number(boxes) || 0) * (line?.sellingPrice || 0);
 
   const settle = useMutation({
-    mutationFn: () => api.post(`/settlements/${order.id}/settle-boxes`, { productId, boxes: Number(boxes), method }),
+    mutationFn: () => api.post(`/settlements/${order.id}/settle-boxes`, { productId, boxes: Number(boxes), accountId: accountId || undefined }),
     onSuccess: () => { toast.success('Settlement submitted — awaiting The Lab approval'); onDone(); onClose(); },
     onError: (e) => toast.error(apiError(e)),
   });
@@ -43,7 +51,7 @@ function SettleBoxesModal({ order, onClose, onDone }) {
       footer={<>
         <div className="mr-auto text-sm"><span className="text-muted">Amount</span> <b>{formatCurrency(value)}</b></div>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button loading={settle.isPending} disabled={!productId || !boxes || Number(boxes) <= 0 || Number(boxes) > max} onClick={() => settle.mutate()}>Submit for approval</Button>
+        <Button loading={settle.isPending} disabled={!productId || !boxes || Number(boxes) <= 0 || Number(boxes) > max || !accountId} onClick={() => settle.mutate()}>Submit for approval</Button>
       </>}>
       <div className="space-y-4">
         <p className="text-sm text-muted">Submit the boxes you've sold and the cash collected. The Doctor verifies the money and approves — your sale and commission are recorded <b>only after approval</b>.</p>
@@ -58,9 +66,10 @@ function SettleBoxesModal({ order, onClose, onDone }) {
           <Field label="Boxes to settle" required hint={`Max ${formatNumber(max)} · ${formatCurrency(line?.sellingPrice || 0)} / box`}>
             <Input type="number" min="1" max={max} value={boxes} onChange={(e) => setBoxes(e.target.value)} autoFocus />
           </Field>
-          <Field label="Method">
-            <Select value={method} onChange={(e) => setMethod(e.target.value)}>
-              <option value="CASH">Cash</option><option value="MOBILE_MONEY">Mobile money</option><option value="BANK">Bank</option><option value="OTHER">Other</option>
+          <Field label="Where was it paid?" required hint={account?.notes || 'Select the account the money went to'}>
+            <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+              <option value="">Select payment account…</option>
+              {payAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </Select>
           </Field>
         </>)}

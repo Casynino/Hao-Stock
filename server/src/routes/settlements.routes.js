@@ -16,6 +16,7 @@ router.use(authenticate);
 router.get('/', validate(settlementQuery), ctrl.list); // reps see their own (scoped in controller)
 router.get('/summary', staff, ctrl.summary);
 router.get('/pending-approvals', staff, ctrl.pendingApprovals); // approval center (before /:id)
+router.get('/payment-accounts', ctrl.paymentAccounts); // account choices for reps (no balances)
 // Approve / reject a settlement submission — The Doctor verifies the money.
 router.post('/submissions/:id/approve', staff, validate(idParam), ctrl.approveSubmission);
 router.post('/submissions/:id/reject', staff, validate(idParam), ctrl.rejectSubmission);

@@ -18,11 +18,13 @@ const { nextDocNumber } = require('../utils/numbering');
 const { toNumber, round2 } = require('../utils/money');
 const { dayjs, resolveRange } = require('../utils/dates');
 
+// Generic payment accounts — WHERE money sits. The brand a transaction belongs
+// to is a separate dimension (FinanceTransaction.brandId), so any brand can be
+// paid through any account and new accounts/brands never need a redesign.
 const DEFAULT_ACCOUNTS = [
-  { name: 'Cash', type: 'CASH', isDefault: true, sortOrder: 0 },
-  { name: 'CRDB Bank', type: 'BANK', sortOrder: 1 },
-  { name: 'NMB Bank', type: 'BANK', sortOrder: 2 },
-  { name: 'Airtel Money', type: 'MOBILE_MONEY', sortOrder: 3 },
+  { name: 'Cash', type: 'CASH', isDefault: true, sortOrder: 0, notes: 'Physical cash collected' },
+  { name: 'M-Pesa', type: 'MOBILE_MONEY', sortOrder: 1, notes: '0766 790 794 · CASMIRY CHUWA · OHIS payments' },
+  { name: 'Airtel Money', type: 'MOBILE_MONEY', sortOrder: 2, notes: '0788 734 003 · CASMIRY CHUWA · Civlily payments' },
 ];
 const DEFAULT_CATEGORIES = [
   'Stock Purchase', 'Shipping', 'Freight', 'Customs', 'Warehouse', 'Transport',
@@ -36,7 +38,7 @@ async function ensureDefaults() {
   if (ensured) return;
   if ((await prisma.businessAccount.count()) === 0) {
     for (const a of DEFAULT_ACCOUNTS) {
-      await prisma.businessAccount.create({ data: { name: a.name, type: a.type, isDefault: !!a.isDefault, sortOrder: a.sortOrder } });
+      await prisma.businessAccount.create({ data: { name: a.name, type: a.type, isDefault: !!a.isDefault, sortOrder: a.sortOrder, notes: a.notes || null } });
     }
   }
   if ((await prisma.expenseCategory.count()) === 0) {
@@ -70,7 +72,7 @@ async function accountBalances() {
     const moneyOut = round2(outMap.get(a.id) || 0);
     const opening = toNumber(a.openingBalance);
     return {
-      id: a.id, name: a.name, type: a.type, currency: a.currency, isDefault: a.isDefault,
+      id: a.id, name: a.name, type: a.type, currency: a.currency, isDefault: a.isDefault, notes: a.notes,
       openingBalance: opening, moneyIn, moneyOut, balance: round2(opening + moneyIn - moneyOut),
     };
   });
@@ -139,6 +141,25 @@ async function backfillFromHistory() {
   ]);
   const have = new Set(existingSaleTxns.map((t) => t.refId));
 
+  // Which brand each sale belongs to (single-brand sales only; mixed = null).
+  const saleIds = sales.map((s) => s.id);
+  const saleItems = saleIds.length
+    ? await prisma.saleItem.findMany({
+        where: { saleId: { in: saleIds } },
+        select: { saleId: true, product: { select: { brandId: true } } },
+      })
+    : [];
+  const brandsBySale = new Map();
+  for (const it of saleItems) {
+    const set = brandsBySale.get(it.saleId) || new Set();
+    if (it.product?.brandId) set.add(it.product.brandId);
+    brandsBySale.set(it.saleId, set);
+  }
+  const saleBrand = (saleId) => {
+    const set = brandsBySale.get(saleId);
+    return set && set.size === 1 ? [...set][0] : null;
+  };
+
   let incomeCreated = 0;
   for (const s of sales) {
     if (have.has(s.id)) continue;
@@ -151,6 +172,7 @@ async function backfillFromHistory() {
         direction: 'IN',
         type: fromSettlement ? 'SETTLEMENT' : 'WAREHOUSE_SALE',
         amount: round2(toNumber(s.total)),
+        brandId: saleBrand(s.id),
         category: fromSettlement ? 'Settlement received' : 'Warehouse sale',
         description: fromSettlement
           ? `Settlement received${s.salesRep?.user?.name ? ` — ${s.salesRep.user.name}` : ''}`
@@ -162,6 +184,20 @@ async function backfillFromHistory() {
       },
     });
     incomeCreated++;
+  }
+
+  // Retro-tag brand on sale-income rows created before the brand dimension
+  // existed (idempotent — only touches rows still missing a brand).
+  const untagged = await prisma.financeTransaction.findMany({
+    where: { refType: 'Sale', brandId: null, refId: { in: saleIds } },
+    select: { id: true, refId: true },
+  });
+  let brandTagged = 0;
+  for (const t of untagged) {
+    const b = saleBrand(t.refId);
+    if (!b) continue;
+    await prisma.financeTransaction.update({ where: { id: t.id }, data: { brandId: b } });
+    brandTagged++;
   }
 
   // Money out: commission withdrawals already PAID.
@@ -194,7 +230,7 @@ async function backfillFromHistory() {
     paymentsCreated++;
   }
 
-  return { incomeCreated, paymentsCreated };
+  return { incomeCreated, paymentsCreated, brandTagged };
 }
 
 // --- Transactions ----------------------------------------------------------
@@ -212,6 +248,7 @@ async function recordTransaction(data, actor) {
       direction: data.direction,
       type: data.type || (data.direction === 'IN' ? 'INCOME' : 'EXPENSE'),
       amount,
+      brandId: data.brandId || null,
       category: data.category || null,
       description: data.description || null,
       reference: data.reference || null,
@@ -229,19 +266,24 @@ const recordExpense = (data, actor) => recordTransaction({ ...data, direction: '
 const recordIncome = (data, actor) => recordTransaction({ ...data, direction: 'IN', type: 'INCOME' }, actor);
 
 // Automatic money-in for a completed cash sale (settlement or direct warehouse).
-// Best-effort — never throws into the sale/settlement flow.
-async function recordSaleIncome({ saleId, saleNumber, amount, fromSettlement, who, occurredAt }, actor) {
+// `accountId` = the payment account the money actually went to (rep's choice on
+// submission); falls back to the default (Cash). `brandId` tags whose money it
+// is. Best-effort — never throws into the sale/settlement flow.
+async function recordSaleIncome({ saleId, saleNumber, amount, fromSettlement, who, occurredAt, accountId, brandId }, actor) {
   try {
     const amt = round2(toNumber(amount));
     if (!(amt > 0)) return null;
-    const acc = await defaultAccount();
-    if (!acc) return null;
+    let account = null;
+    if (accountId) account = await prisma.businessAccount.findFirst({ where: { id: accountId, isActive: true } });
+    if (!account) account = await defaultAccount();
+    if (!account) return null;
     return await recordTransaction(
       {
-        accountId: acc.id,
+        accountId: account.id,
         direction: 'IN',
         type: fromSettlement ? 'SETTLEMENT' : 'WAREHOUSE_SALE',
         amount: amt,
+        brandId: brandId || null,
         category: fromSettlement ? 'Settlement received' : 'Warehouse sale',
         description: fromSettlement ? `Settlement received${who ? ` — ${who}` : ''}` : 'Direct warehouse sale',
         reference: saleNumber || null,
@@ -289,6 +331,7 @@ async function listTransactions(filters, pagination) {
   if (filters.direction) where.direction = filters.direction;
   if (filters.type) where.type = filters.type;
   if (filters.category) where.category = filters.category;
+  if (filters.brandId) where.brandId = filters.brandId === 'none' ? null : filters.brandId;
   if (filters.from || filters.to) {
     where.occurredAt = {};
     if (filters.from) where.occurredAt.gte = new Date(filters.from);
@@ -299,7 +342,7 @@ async function listTransactions(filters, pagination) {
     if (filters.minAmount != null) where.amount.gte = filters.minAmount;
     if (filters.maxAmount != null) where.amount.lte = filters.maxAmount;
   }
-  const [items, total] = await Promise.all([
+  const [items, total, brands] = await Promise.all([
     prisma.financeTransaction.findMany({
       where,
       include: { account: { select: { name: true, type: true } } },
@@ -308,8 +351,10 @@ async function listTransactions(filters, pagination) {
       orderBy: pagination.orderBy,
     }),
     prisma.financeTransaction.count({ where }),
+    prisma.brand.findMany({ select: { id: true, name: true } }),
   ]);
-  return { items, total };
+  const brandName = new Map(brands.map((b) => [b.id, b.name]));
+  return { items: items.map((t) => ({ ...t, brandName: t.brandId ? brandName.get(t.brandId) || null : null })), total };
 }
 
 async function updateTransaction(id, data) {
@@ -433,13 +478,15 @@ async function report(opts = {}) {
 // POs), total paid (ledger payments keyed to their POs), outstanding balance.
 async function supplierSummaries() {
   await ensureDefaults();
-  const [suppliers, pos] = await Promise.all([
+  const [suppliers, pos, brands] = await Promise.all([
     prisma.supplier.findMany({ orderBy: { name: 'asc' } }),
     prisma.purchaseOrder.findMany({
       where: { status: { not: 'CANCELLED' } },
       select: { id: true, supplierId: true, totalCost: true, receivedAt: true, createdAt: true },
     }),
+    prisma.brand.findMany({ select: { id: true, name: true } }),
   ]);
+  const brandName = new Map(brands.map((b) => [b.id, b.name]));
   const poIds = pos.map((p) => p.id);
   const payRows = poIds.length
     ? await prisma.financeTransaction.groupBy({
@@ -465,6 +512,7 @@ async function supplierSummaries() {
     return {
       id: s.id, name: s.name, country: s.country, contactName: s.contactName,
       phone: s.phone, email: s.email, isActive: s.isActive,
+      brandId: s.brandId || null, brandName: s.brandId ? brandName.get(s.brandId) || null : null,
       totalPurchased: round2(f.purchased),
       totalPaid: round2(f.paid),
       outstanding: round2(f.purchased - f.paid),
@@ -523,7 +571,7 @@ async function supplierDetail(id) {
 async function paySupplier({ purchaseOrderId, accountId, amount, notes, occurredAt }, actor) {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id: purchaseOrderId },
-    include: { supplier: { select: { name: true } } },
+    include: { supplier: { select: { name: true, brandId: true } } },
   });
   if (!po) throw ApiError.notFound('Purchase order not found');
   if (po.status === 'CANCELLED') throw ApiError.badRequest('This purchase order is cancelled');
@@ -544,6 +592,8 @@ async function paySupplier({ purchaseOrderId, accountId, amount, notes, occurred
       direction: 'OUT',
       type: 'STOCK_PURCHASE',
       amount: amt,
+      // Supplier's brand → this spend belongs to that brand's books.
+      brandId: po.supplier?.brandId || null,
       category: 'Stock Purchase',
       description: `Supplier payment — ${po.supplier?.name || 'supplier'} (${po.poNumber})`,
       reference: po.poNumber,
@@ -601,11 +651,67 @@ async function overview(period = 'month') {
   const grossProfit = prof.totals.profit;
   const netProfit = round2(grossProfit - expenses);
 
+  // ── Per-brand finance: each brand's P&L, cash movement and inventory value,
+  // computed from real transactions/records only. Scales to any brand count.
+  const [allBrands, brandTxnRows, products] = await Promise.all([
+    prisma.brand.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
+    prisma.financeTransaction.groupBy({
+      by: ['brandId', 'direction', 'type'],
+      where: range ? { occurredAt: { gte: range.start, lte: range.end } } : {},
+      _sum: { amount: true },
+    }),
+    prisma.product.findMany({ select: { id: true, brandId: true } }),
+  ]);
+  const productBrand = new Map(products.map((p) => [p.id, p.brandId]));
+  const invByBrand = new Map();
+  for (const it of inv.items) {
+    const b = productBrand.get(it.productId);
+    if (!b) continue;
+    const cur = invByBrand.get(b) || { cost: 0, units: 0 };
+    cur.cost += it.costValue;
+    cur.units += it.totalBase;
+    invByBrand.set(b, cur);
+  }
+  const profByBrand = new Map(prof.byBrand.map((b) => [b.brandId, b]));
+  const brandFinance = allBrands.map((b) => {
+    const p = profByBrand.get(b.id) || { revenue: 0, cost: 0, profit: 0, boxes: 0, margin: 0 };
+    let moneyIn = 0;
+    let moneyOut = 0;
+    let brandExpenses = 0;
+    for (const r of brandTxnRows) {
+      if (r.brandId !== b.id) continue;
+      const amt = toNumber(r._sum.amount);
+      if (r.direction === 'IN') moneyIn += amt;
+      else {
+        moneyOut += amt;
+        if (r.type === 'EXPENSE' || r.type === 'STOCK_PURCHASE') brandExpenses += amt;
+      }
+    }
+    const invB = invByBrand.get(b.id) || { cost: 0, units: 0 };
+    return {
+      brandId: b.id,
+      name: b.name,
+      revenue: p.revenue,
+      cogs: p.cost,
+      grossProfit: p.profit,
+      margin: p.margin,
+      boxesSold: p.boxes,
+      expenses: round2(brandExpenses),
+      netProfit: round2(p.profit - brandExpenses),
+      moneyIn: round2(moneyIn),
+      moneyOut: round2(moneyOut),
+      netCash: round2(moneyIn - moneyOut),
+      inventoryValue: round2(invB.cost),
+      inventoryUnits: invB.units,
+    };
+  });
+
   return {
     period,
     cashPosition,
     accounts,
     flow,
+    brandFinance,
     revenue: prof.totals.revenue,
     cogs: prof.totals.cost,
     grossProfit,

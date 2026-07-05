@@ -11,6 +11,7 @@ const supplierCreate = {
   body: z.object({
     name: z.string().trim().min(1).max(160),
     country: z.string().trim().max(80).optional(),
+    brandId: id.optional().nullable(), // brand this supplier belongs to
     contactName: z.string().trim().max(120).optional().nullable(),
     phone: z.string().trim().max(40).optional().nullable(),
     email: z.string().email().max(160).optional().nullable().or(z.literal('')),
@@ -109,6 +110,7 @@ const settlementSettleBoxes = {
     productId: id,
     boxes: z.number().int().positive(),
     method: z.enum(['CASH', 'MOBILE_MONEY', 'BANK', 'OTHER']).optional(),
+    accountId: id.optional().nullable(), // payment account the money went to
     reference: z.string().max(120).optional().nullable(),
     notes: z.string().max(500).optional().nullable(),
     paidAt: dateStr,

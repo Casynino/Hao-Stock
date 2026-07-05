@@ -532,14 +532,27 @@ async function supplierSummaries() {
   ]);
   const brandName = new Map(brands.map((b) => [b.id, b.name]));
   const poIds = pos.map((p) => p.id);
-  const payRows = poIds.length
-    ? await prisma.financeTransaction.groupBy({
-        by: ['refId'],
-        where: { refType: 'PurchaseOrder', refId: { in: poIds }, direction: 'OUT' },
-        _sum: { amount: true },
-      })
-    : [];
+  const supplierIds = suppliers.map((s) => s.id);
+  // Payments live at two levels: keyed to a specific PO, or to the supplier as
+  // a whole (paying down the running balance). Both reduce what is owed.
+  const [payRows, supplierPayRows] = await Promise.all([
+    poIds.length
+      ? prisma.financeTransaction.groupBy({
+          by: ['refId'],
+          where: { refType: 'PurchaseOrder', refId: { in: poIds }, direction: 'OUT' },
+          _sum: { amount: true },
+        })
+      : [],
+    prisma.financeTransaction.groupBy({
+      by: ['refId'],
+      where: { refType: 'Supplier', refId: { in: supplierIds }, direction: 'OUT' },
+      _sum: { amount: true },
+      _max: { occurredAt: true },
+    }),
+  ]);
   const paidByPo = new Map(payRows.map((p) => [p.refId, toNumber(p._sum.amount)]));
+  const paidBySupplier = new Map(supplierPayRows.map((p) => [p.refId, toNumber(p._sum.amount)]));
+  const lastPayBySupplier = new Map(supplierPayRows.map((p) => [p.refId, p._max.occurredAt]));
 
   const agg = new Map();
   for (const p of pos) {
@@ -550,6 +563,11 @@ async function supplierSummaries() {
     const d = p.receivedAt || p.createdAt;
     if (!cur.last || d > cur.last) cur.last = d;
     agg.set(p.supplierId, cur);
+  }
+  for (const [sid, amt] of paidBySupplier) {
+    const cur = agg.get(sid) || { purchased: 0, paid: 0, poCount: 0, last: null };
+    cur.paid += amt;
+    agg.set(sid, cur);
   }
   return suppliers.map((s) => {
     const f = agg.get(s.id) || { purchased: 0, paid: 0, poCount: 0, last: null };
@@ -562,29 +580,43 @@ async function supplierSummaries() {
       outstanding: round2(f.purchased - f.paid),
       poCount: f.poCount,
       lastActivity: f.last,
+      lastPayment: lastPayBySupplier.get(s.id) || null,
     };
   });
 }
 
-// One supplier's purchase history + payments, with per-PO paid/outstanding.
+// One supplier's full accounts-payable profile: purchases, payments (both
+// PO-level and supplier-level), products supplied, balances and last activity.
 async function supplierDetail(id) {
   const s = await prisma.supplier.findUnique({ where: { id } });
   if (!s) throw ApiError.notFound('Supplier not found');
-  const pos = await prisma.purchaseOrder.findMany({
-    where: { supplierId: id, status: { not: 'CANCELLED' } },
-    orderBy: { createdAt: 'desc' },
-    select: { id: true, poNumber: true, status: true, totalCost: true, receivedAt: true, createdAt: true },
-  });
+  const [pos, brand] = await Promise.all([
+    prisma.purchaseOrder.findMany({
+      where: { supplierId: id, status: { not: 'CANCELLED' } },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, poNumber: true, status: true, totalCost: true, receivedAt: true, createdAt: true,
+        items: { select: { quantity: true, product: { select: { name: true } } } },
+      },
+    }),
+    s.brandId ? prisma.brand.findUnique({ where: { id: s.brandId }, select: { name: true } }) : null,
+  ]);
   const poIds = pos.map((p) => p.id);
-  const txns = poIds.length
-    ? await prisma.financeTransaction.findMany({
-        where: { refType: 'PurchaseOrder', refId: { in: poIds }, direction: 'OUT' },
-        include: { account: { select: { name: true } } },
-        orderBy: { occurredAt: 'desc' },
-      })
-    : [];
+  const txns = await prisma.financeTransaction.findMany({
+    where: {
+      direction: 'OUT',
+      OR: [
+        ...(poIds.length ? [{ refType: 'PurchaseOrder', refId: { in: poIds } }] : []),
+        { refType: 'Supplier', refId: id },
+      ],
+    },
+    include: { account: { select: { name: true } } },
+    orderBy: { occurredAt: 'desc' },
+  });
   const paidByPo = new Map();
-  txns.forEach((t) => paidByPo.set(t.refId, (paidByPo.get(t.refId) || 0) + toNumber(t.amount)));
+  txns.forEach((t) => {
+    if (t.refType === 'PurchaseOrder') paidByPo.set(t.refId, (paidByPo.get(t.refId) || 0) + toNumber(t.amount));
+  });
 
   const orders = pos.map((p) => {
     const total = toNumber(p.totalCost);
@@ -592,20 +624,60 @@ async function supplierDetail(id) {
     return {
       id: p.id, poNumber: p.poNumber, status: p.status,
       totalCost: round2(total), paid, outstanding: round2(total - paid),
+      boxes: p.items.reduce((n, it) => n + it.quantity, 0),
+      products: [...new Set(p.items.map((it) => it.product?.name).filter(Boolean))],
       receivedAt: p.receivedAt, createdAt: p.createdAt,
     };
   });
   const purchased = round2(orders.reduce((x, o) => x + o.totalCost, 0));
-  const paid = round2(orders.reduce((x, o) => x + o.paid, 0));
+  const paid = round2(txns.reduce((x, t) => x + toNumber(t.amount), 0));
+  const productsPurchased = [...new Set(orders.flatMap((o) => o.products))];
   return {
-    supplier: s,
+    supplier: { ...s, brandName: brand?.name || null },
     orders,
     payments: txns.map((t) => ({
       id: t.id, txnNumber: t.txnNumber, amount: toNumber(t.amount), account: t.account?.name,
-      reference: t.reference, occurredAt: t.occurredAt, notes: t.notes,
+      reference: t.refType === 'Supplier' ? 'Balance payment' : t.reference,
+      occurredAt: t.occurredAt, notes: t.notes,
     })),
+    productsPurchased,
+    lastPurchase: orders[0]?.receivedAt || orders[0]?.createdAt || null,
+    lastPayment: txns[0]?.occurredAt || null,
     totals: { purchased, paid, outstanding: round2(purchased - paid) },
   };
+}
+
+// Pay down a supplier's overall balance (installments welcome): one OUT
+// transaction from the chosen account, keyed to the supplier, brand-tagged.
+// Not an expense — it settles the liability created when stock was received;
+// the P&L cost is recognised as COGS when boxes sell.
+async function paySupplierBalance(supplierId, { accountId, amount, notes, occurredAt }, actor) {
+  const s = await prisma.supplier.findUnique({ where: { id: supplierId } });
+  if (!s) throw ApiError.notFound('Supplier not found');
+  const detail = await supplierDetail(supplierId);
+  const outstanding = detail.totals.outstanding;
+  const amt = amount != null ? round2(toNumber(amount)) : outstanding;
+  if (!(amt > 0)) throw ApiError.badRequest('Payment amount must be greater than zero');
+  if (amt > outstanding + 0.001) {
+    throw ApiError.badRequest(`You only owe ${s.name} TZS ${outstanding.toLocaleString()}`);
+  }
+  return recordTransaction(
+    {
+      accountId,
+      direction: 'OUT',
+      type: 'STOCK_PURCHASE',
+      amount: amt,
+      brandId: s.brandId || null,
+      category: 'Supplier Payment',
+      description: `Supplier payment — ${s.name}`,
+      reference: s.name,
+      refType: 'Supplier',
+      refId: s.id,
+      notes,
+      occurredAt,
+    },
+    actor,
+  );
 }
 
 // Pay a supplier against a purchase order: posts a STOCK_PURCHASE OUT
@@ -729,7 +801,8 @@ async function overview(period = 'month') {
       if (r.direction === 'IN') moneyIn += amt;
       else {
         moneyOut += amt;
-        if (r.type === 'EXPENSE' || r.type === 'STOCK_PURCHASE') brandExpenses += amt;
+        // Stock purchases settle a supplier liability — cash out, not P&L.
+        if (r.type === 'EXPENSE') brandExpenses += amt;
       }
     }
     const invB = invByBrand.get(b.id) || { cost: 0, units: 0 };
@@ -797,4 +870,5 @@ module.exports = {
   supplierSummaries,
   supplierDetail,
   paySupplier,
+  paySupplierBalance,
 };

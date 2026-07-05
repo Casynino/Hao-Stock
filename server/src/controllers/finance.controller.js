@@ -148,8 +148,20 @@ const paySupplier = asyncHandler(async (req, res) => {
   return created(res, txn);
 });
 
+// Pay down a supplier's overall balance (installments) from a business account.
+const paySupplierBalance = asyncHandler(async (req, res) => {
+  const txn = await finance.paySupplierBalance(req.params.id, req.body, req.user);
+  await audit.record(req, {
+    action: 'CREATE',
+    entityType: 'FinanceTransaction',
+    entityId: txn.id,
+    newValues: { kind: 'SUPPLIER_BALANCE_PAYMENT', supplierId: req.params.id, amount: txn.amount, accountId: txn.accountId },
+  });
+  return created(res, txn);
+});
+
 module.exports = {
   overview, sync, accounts, createAccount, updateAccount, categories, createCategory,
   transactions, recordExpense, recordIncome, recordAdjustment, updateTransaction, deleteTransaction,
-  cashflow, report, suppliers, supplierDetail, paySupplier,
+  cashflow, report, suppliers, supplierDetail, paySupplier, paySupplierBalance,
 };

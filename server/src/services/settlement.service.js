@@ -115,7 +115,7 @@ async function orderBreakdown(s, client = prisma) {
   const retMap = new Map(retRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
 
   const productIds = [...new Set([...assignedMap.keys(), ...settledMap.keys(), ...retMap.keys()])];
-  const products = await client.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, sku: true, sellingPrice: true } });
+  const products = await client.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, sku: true, sellingPrice: true, brandId: true } });
   const pMap = new Map(products.map((p) => [p.id, p]));
 
   let assignedBoxes = 0;
@@ -136,7 +136,7 @@ async function orderBreakdown(s, client = prisma) {
     remainingBoxes += remaining;
     returnedValue += returned * toNumber(p.sellingPrice);
     remainingValue += remaining * toNumber(p.sellingPrice);
-    return { productId: pid, name: p.name, sku: p.sku, sellingPrice: toNumber(p.sellingPrice), assigned, settled, returned, remaining };
+    return { productId: pid, name: p.name, sku: p.sku, brandId: p.brandId || null, sellingPrice: toNumber(p.sellingPrice), assigned, settled, returned, remaining };
   });
 
   const orderValue = toNumber(s.assignedValue);

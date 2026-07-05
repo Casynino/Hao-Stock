@@ -29,16 +29,20 @@ function SettleBoxesModal({ order, onClose, onDone }) {
   const [accountId, setAccountId] = useState('');
 
   // Where was the money paid? (Cash / M-Pesa / Airtel Money — names & numbers
-  // only, no balances.) The approved income lands in the chosen account.
+  // only, no balances.) Brand-reserved accounts only show for their own brand:
+  // an OHIS product offers Cash + the OHIS account, never the Civlily one.
   const { data: payAccounts = [] } = useQuery({
     queryKey: ['settlements', 'payment-accounts'],
     queryFn: async () => unwrap(await api.get('/settlements/payment-accounts')).data,
   });
-  const account = payAccounts.find((a) => a.id === accountId) || null;
 
   const line = lines.find((l) => l.productId === productId);
   const max = line ? availFor(line) : 0;
   const value = (Number(boxes) || 0) * (line?.sellingPrice || 0);
+
+  const accountOptions = payAccounts.filter((a) => !a.brandId || a.brandId === line?.brandId);
+  const account = accountOptions.find((a) => a.id === accountId) || null;
+  if (accountId && !account && accountOptions.length) setAccountId(''); // product changed brand — reset choice
 
   const settle = useMutation({
     mutationFn: () => api.post(`/settlements/${order.id}/settle-boxes`, { productId, boxes: Number(boxes), accountId: accountId || undefined }),
@@ -69,7 +73,7 @@ function SettleBoxesModal({ order, onClose, onDone }) {
           <Field label="Where was it paid?" required hint={account?.notes || 'Select the account the money went to'}>
             <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
               <option value="">Select payment account…</option>
-              {payAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </Select>
           </Field>
         </>)}

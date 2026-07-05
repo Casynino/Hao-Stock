@@ -34,15 +34,20 @@ async function submit(settlementId, payload, actor) {
       throw ApiError.forbidden('This order is not yours');
     }
 
-    const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, name: true, sellingPrice: true } });
+    const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, name: true, sellingPrice: true, brandId: true } });
     if (!product) throw ApiError.badRequest('Product not found');
 
     // Where the rep says the money went (Cash / M-Pesa / Airtel...). Stored on
-    // the submission; on approval the income lands in THIS account.
+    // the submission; on approval the income lands in THIS account. A brand-
+    // reserved account only accepts payments for its own brand — an OHIS
+    // settlement can never go into the Civlily account.
     let account = null;
     if (payload.accountId) {
       account = await tx.businessAccount.findFirst({ where: { id: payload.accountId, isActive: true } });
       if (!account) throw ApiError.badRequest('Select a valid payment account');
+      if (account.brandId && product.brandId && account.brandId !== product.brandId) {
+        throw ApiError.badRequest(`${account.name} is not a payment account for this product's brand`);
+      }
     }
     const pkg = await tx.productPackaging.findFirst({ where: { productId, isBaseUnit: true } });
     if (!pkg) throw ApiError.badRequest(`${product.name} has no base (Box) packaging configured`);

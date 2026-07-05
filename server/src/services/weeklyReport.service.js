@@ -138,7 +138,9 @@ async function buildWeeklyData(weekKey) {
 }
 
 // ── WhatsApp message: the quick, sectioned business health check ─────────────
-const RULE = '━━━━━━━━━━━━━━━';
+// ASCII divider on purpose: CallMeBot rejects requests whose encoded text
+// exceeds ~2048 chars, and each unicode ━ costs 9 encoded chars vs 1 for '-'.
+const RULE = '---------------';
 
 function buildWhatsAppText(d) {
   const lines = [

@@ -202,7 +202,7 @@ export default function Layout() {
   return (
     <div className="flex min-h-screen bg-elevated">
       {/* Sidebar (desktop) */}
-      <aside className="hidden w-64 flex-col border-r border-border bg-[#0c0c0e] lg:flex">
+      <aside className="hidden w-60 flex-col border-r border-border bg-[#0c0c0e] md:flex xl:w-64">
         <Brand />
         <NavItems items={items} counts={pendingActions} />
         <div className="border-t border-white/5 p-3 text-[11px] text-faint"><span className="font-semibold uppercase tracking-wider">The Lab</span> · Developed by Nino</div>
@@ -210,7 +210,7 @@ export default function Layout() {
 
       {/* Sidebar (mobile drawer) */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
+        <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-slate-900/60" onClick={() => setMobileOpen(false)} />
           <aside className="absolute left-0 top-0 flex h-full w-64 flex-col border-r border-border bg-[#0c0c0e]">
             <div className="flex items-center justify-between pr-3">
@@ -227,7 +227,7 @@ export default function Layout() {
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="glass sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b px-4 lg:px-6">
-          <button className="rounded-lg p-2 text-muted hover:bg-elevated lg:hidden" onClick={() => setMobileOpen(true)}>
+          <button className="rounded-lg p-2 text-muted hover:bg-elevated md:hidden" onClick={() => setMobileOpen(true)}>
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex-1" />
@@ -347,14 +347,14 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="flex-1 p-4 lg:p-6">
+        <main className="flex-1 overflow-x-clip p-4 lg:p-6">
           {/* Cap width on ultra-wide monitors so content stays readable & centered. */}
           <motion.div
             key={location.pathname}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
-            className="mx-auto w-full max-w-[1600px]"
+            className="mx-auto w-full max-w-[1400px]"
           >
             <Outlet />
           </motion.div>

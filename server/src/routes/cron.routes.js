@@ -34,4 +34,16 @@ router.get(
   }),
 );
 
+// Weekly WhatsApp business report (Vercel cron, Mondays). ?force=1 resends
+// even if this week's report already went out (for testing).
+router.get(
+  '/weekly-report',
+  guard,
+  asyncHandler(async (req, res) => {
+    const weekly = require('../services/weeklyReport.service');
+    const result = await weekly.sendWeeklyReport({ force: req.query.force === '1' });
+    return res.json({ success: true, data: result });
+  }),
+);
+
 module.exports = router;

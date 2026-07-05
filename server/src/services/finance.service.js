@@ -249,6 +249,21 @@ async function backfillFromHistory() {
 
 // --- Transactions ----------------------------------------------------------
 
+// A date-only value ("2026-07-05") parses to midnight and would sort BEFORE
+// same-day transactions (and before the finance epoch on go-live day), silently
+// excluding it from balances. Anchor date-only inputs to the current clock time.
+function resolveOccurredAt(v) {
+  if (!v) return new Date();
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const now = new Date();
+    const d = new Date(`${s}T00:00:00Z`);
+    d.setUTCHours(now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds());
+    return d;
+  }
+  return new Date(v);
+}
+
 async function recordTransaction(data, actor) {
   const amount = round2(toNumber(data.amount));
   if (!(amount > 0)) throw ApiError.badRequest('Amount must be greater than zero');
@@ -270,7 +285,7 @@ async function recordTransaction(data, actor) {
       refId: data.refId || null,
       receiptUrl: data.receiptUrl || null,
       notes: data.notes || null,
-      occurredAt: data.occurredAt ? new Date(data.occurredAt) : new Date(),
+      occurredAt: resolveOccurredAt(data.occurredAt),
       createdById: actor ? actor.id : null,
     },
   });
@@ -377,7 +392,7 @@ async function updateTransaction(id, data) {
   const patch = {};
   ['category', 'description', 'notes', 'accountId', 'reference'].forEach((k) => { if (data[k] !== undefined) patch[k] = data[k]; });
   if (data.amount !== undefined) patch.amount = round2(toNumber(data.amount));
-  if (data.occurredAt !== undefined) patch.occurredAt = new Date(data.occurredAt);
+  if (data.occurredAt !== undefined) patch.occurredAt = resolveOccurredAt(data.occurredAt);
   const updated = await prisma.financeTransaction.update({ where: { id }, data: patch });
   return { updated, previous: existing };
 }

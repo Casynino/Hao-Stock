@@ -138,42 +138,43 @@ async function buildWeeklyData(weekKey) {
 }
 
 // ── WhatsApp message: the quick, sectioned business health check ─────────────
-// ASCII divider on purpose: CallMeBot rejects requests whose encoded text
-// exceeds ~2048 chars, and each unicode ━ costs 9 encoded chars vs 1 for '-'.
-const RULE = '---------------';
-
+// Formatting is deliberately conservative: CallMeBot sits behind a scoring
+// firewall that 403s messages accumulating too many "suspicious" tokens.
+// Divider runs (━━━ / ---) and an https:// link were enough to tip it, so
+// sections separate with blank lines and the PDF link is scheme-less
+// (WhatsApp still makes bare domains tappable).
 function buildWhatsAppText(d) {
   const lines = [
     '📊 *THE LAB — WEEKLY REPORT*',
-    `🗓️ ${d.period.label}`,
-    RULE,
+    `_${d.period.label}_`,
+    '',
     '💰 *FINANCE*',
     `Revenue: ${fmt(d.finance.revenue)}`,
     `Gross profit: ${fmt(d.finance.grossProfit)}`,
     `Expenses: ${fmt(d.finance.expenses)}`,
-    `Net profit: *${fmt(d.finance.netProfit)}*`,
-    `Cash flow: in ${fmt(d.finance.moneyIn)} · out ${fmt(d.finance.moneyOut)}`,
+    `*Net profit: ${fmt(d.finance.netProfit)}*`,
+    `Cash flow: in ${fmt(d.finance.moneyIn)} / out ${fmt(d.finance.moneyOut)}`,
     '',
-    '*Accounts*',
-    ...d.accounts.map((a) => `• ${a.name}: ${fmt(a.balance)}`),
+    '🏦 *ACCOUNTS*',
+    ...d.accounts.map((a) => `${a.name}: ${fmt(a.balance)}`),
     `*Total funds: ${fmt(d.cashPosition)}*`,
-    RULE,
+    '',
     '🏷️ *PERFORMANCE*',
     ...(d.brands.length
-      ? d.brands.map((b) => `${b.name}: ${fmt(b.revenue)} rev · ${fmt(b.profit)} profit · ${b.boxes} boxes`)
+      ? d.brands.map((b) => `${b.name}: ${fmt(b.revenue)} rev / ${fmt(b.profit)} profit / ${b.boxes} boxes`)
       : ['No sales this week']),
     `Boxes sold: ${d.finance.boxesSold}`,
-    RULE,
+    '',
     '📦 *STOCK*',
     `Value: ${fmt(d.stock.costValue)} (${d.stock.units} boxes)`,
-    `The Lab: ${d.stock.warehouseBoxes} · With reps: ${d.stock.repBoxes}`,
+    `The Lab: ${d.stock.warehouseBoxes} / With reps: ${d.stock.repBoxes}`,
     `Potential profit in stock: ${fmt(d.stock.potential)}`,
-    RULE,
+    '',
     d.attention.length ? '⚠️ *ALERTS*' : '✅ *ALL CLEAR*',
     ...d.attention.map((a) => `• ${a}`),
-    RULE,
+    '',
     '📄 *Full statement (PDF):*',
-    pdfLink(d.period.weekKey),
+    pdfLink(d.period.weekKey).replace(/^https:\/\//, ''),
   ];
   return lines.join('\n');
 }

@@ -24,6 +24,7 @@ const CANONICAL = [
   'Civlily Pepa Ndogo (White) - Bila Filter',
   'Civlily Pepa Ndogo (Brown) - Na Filter',
   'Civlily Pepa Kubwa (Brown) - Bila Filter',
+  'Civlily Pepa Kubwa (White) - Bila Filter',
   'Civlily Pepa Kubwa (Brown) - Na Filter',
   'Civlily Pepa Kubwa (Mix Colors) - Na Filter',
   'Civlily Pepa Ndogo (Mix Colors) - Bila Filter',

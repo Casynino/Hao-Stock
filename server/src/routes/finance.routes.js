@@ -17,6 +17,7 @@ router.get('/report', ctrl.report);
 router.get('/suppliers', ctrl.suppliers);
 router.get('/suppliers/:id', ctrl.supplierDetail);
 router.post('/supplier-payments', ctrl.paySupplier);
+router.post('/suppliers/:id/pay', ctrl.paySupplierBalance); // pay down overall balance (installments)
 router.get('/accounts', ctrl.accounts);
 router.post('/accounts', ctrl.createAccount);
 router.put('/accounts/:id', ctrl.updateAccount);

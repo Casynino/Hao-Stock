@@ -8,6 +8,7 @@ import {
   Factory, Package, Scale, FileBarChart, ChevronRight,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
+import { useProducts } from '@/lib/hooks';
 import { formatCurrency, formatNumber, formatDate, formatDateTime } from '@/lib/format';
 import { DonutChart, BarChartCard } from '@/components/charts';
 import {
@@ -607,40 +608,196 @@ function PaySupplierModal({ order, accounts, onClose, onDone }) {
   );
 }
 
+// Pay down the supplier's overall balance (installments) from any account.
+function PayBalanceModal({ supplier, outstanding, accounts, onClose, onDone }) {
+  const [accountId, setAccountId] = useState(accounts.find((a) => a.isDefault)?.id || accounts[0]?.id || '');
+  const [amount, setAmount] = useState(String(outstanding || ''));
+  const [occurredAt, setOccurredAt] = useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+  const pay = useMutation({
+    mutationFn: () => api.post(`/finance/suppliers/${supplier.id}/pay`, {
+      accountId, amount: Number(amount), occurredAt, notes: notes.trim() || undefined,
+    }),
+    onSuccess: () => { toast.success('Supplier payment recorded'); onDone(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  const amt = Number(amount);
+  const valid = accountId && amt > 0 && amt <= outstanding + 0.001;
+  return (
+    <Modal open onClose={onClose} title={`Pay ${supplier.name}`}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={pay.isPending} disabled={!valid} onClick={() => pay.mutate()}><Wallet className="h-4 w-4" /> Record payment</Button></>}>
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-muted">
+          You currently owe {supplier.name} <b className="text-rose-400">{formatCurrency(outstanding)}</b>. Partial payments are fine — pay in installments until it reaches zero.
+        </div>
+        <Field label="Amount (TZS)" required error={amt > outstanding + 0.001 ? 'More than you owe' : undefined}>
+          <Input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Paid from account" required>
+          <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {formatCurrency(a.balance)}</option>)}
+          </Select>
+        </Field>
+        <Field label="Date"><Input type="date" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} /></Field>
+        <Field label="Notes"><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+      </div>
+    </Modal>
+  );
+}
+
+// Record receiving stock from a supplier: creates + receives the purchase in
+// one step — inventory goes up, the supplier's balance (what you owe) goes up.
+// No payment happens here; pay later in installments.
+function NewPurchaseModal({ supplier, onClose, onDone }) {
+  const { data: products = [] } = useProducts();
+  const [lines, setLines] = useState([{ productId: '', quantity: '', unitCost: '' }]);
+  const [shippingCost, setShippingCost] = useState('');
+  const [otherCost, setOtherCost] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+
+  const patch = (i, p) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...p } : l)));
+  const pickProduct = (i, productId) => {
+    const prod = products.find((p) => p.id === productId);
+    patch(i, { productId, unitCost: prod ? String(Number(prod.purchasePrice) || '') : '' });
+  };
+  const supplierBrand = supplier.brandId || null;
+  const options = supplierBrand ? products.filter((p) => p.brandId === supplierBrand) : products;
+
+  const goods = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unitCost) || 0), 0);
+  const total = goods + (Number(shippingCost) || 0) + (Number(otherCost) || 0);
+  const validLines = lines.filter((l) => l.productId && Number(l.quantity) > 0 && Number(l.unitCost) >= 0);
+  const valid = validLines.length > 0;
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const items = validLines.map((l) => {
+        const prod = products.find((p) => p.id === l.productId);
+        const pkg = prod?.packagings?.find((pk) => pk.isBaseUnit) || prod?.packagings?.[0];
+        return { productId: l.productId, packagingUnitId: pkg?.packagingUnitId, quantity: Number(l.quantity), unitCost: Number(l.unitCost) };
+      });
+      const po = unwrap(await api.post('/purchase-orders', {
+        supplierId: supplier.id, currency: 'TZS', items,
+        shippingCost: Number(shippingCost) || 0, otherCost: Number(otherCost) || 0,
+        orderedAt: new Date(`${date}T12:00:00`).toISOString(), notes: notes.trim() || undefined,
+      })).data;
+      await api.post(`/purchase-orders/${po.id}/receive`, { actualArrival: new Date(`${date}T12:00:00`).toISOString() });
+      return po;
+    },
+    onSuccess: (po) => {
+      toast.success(`Purchase ${po.poNumber} received — stock added, you now owe ${supplier.name} ${formatCurrency(total)} more`);
+      onDone(); onClose();
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  return (
+    <Modal open onClose={onClose} size="lg" title={`New purchase from ${supplier.name}`}
+      footer={<>
+        <div className="mr-auto text-sm"><span className="text-muted">Total</span> <b>{formatCurrency(total)}</b></div>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button loading={save.isPending} disabled={!valid} onClick={() => save.mutate()}><Package className="h-4 w-4" /> Receive stock</Button>
+      </>}>
+      <div className="space-y-4">
+        <p className="rounded-lg border border-border bg-elevated px-3 py-2 text-xs text-muted">
+          Records stock received from {supplier.name}: inventory increases and the amount you owe them increases. No money moves now — pay later from any account.
+        </p>
+        <div className="space-y-2">
+          {lines.map((l, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <Select className="min-w-[200px] flex-1" value={l.productId} onChange={(e) => pickProduct(i, e.target.value)}>
+                <option value="">Select product…</option>
+                {options.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+              <Input type="number" min="1" className="w-20" placeholder="Boxes" value={l.quantity} onChange={(e) => patch(i, { quantity: e.target.value })} />
+              <Input type="number" min="0" className="w-28" placeholder="Cost/box" value={l.unitCost} onChange={(e) => patch(i, { unitCost: e.target.value })} />
+              <button onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))} className="text-faint hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+            </div>
+          ))}
+          <button onClick={() => setLines((ls) => [...ls, { productId: '', quantity: '', unitCost: '' }])}
+            className="inline-flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"><Plus className="h-3.5 w-3.5" /> Add product</button>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Shipping / transport (TZS)"><Input type="number" min="0" value={shippingCost} onChange={(e) => setShippingCost(e.target.value)} placeholder="0" /></Field>
+          <Field label="Other costs (TZS)"><Input type="number" min="0" value={otherCost} onChange={(e) => setOtherCost(e.target.value)} placeholder="0" /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Purchase date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          <Field label="Notes"><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" /></Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function SupplierDetailModal({ supplierId, accounts, onClose }) {
   const qc = useQueryClient();
   const [paying, setPaying] = useState(null); // PO row being paid
+  const [payingBalance, setPayingBalance] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ['finance', 'supplier', supplierId],
     queryFn: async () => unwrap(await api.get(`/finance/suppliers/${supplierId}`)).data,
   });
-  const refresh = () => { invalidateFinance(qc); };
+  const refresh = () => {
+    invalidateFinance(qc);
+    qc.invalidateQueries({ queryKey: ['inventory'] });
+    qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+  };
+  const s = data?.supplier;
   return (
     <>
-      <Modal open onClose={onClose} size="xl" title={data ? data.supplier.name : 'Supplier'}>
+      <Modal open onClose={onClose} size="xl" title={s ? s.name : 'Supplier'}
+        footer={data && (
+          <>
+            <Button variant="secondary" onClick={onClose}>Close</Button>
+            <Button variant="secondary" onClick={() => setPurchasing(true)}><Package className="h-4 w-4" /> New purchase</Button>
+            {data.totals.outstanding > 0 && (
+              <Button onClick={() => setPayingBalance(true)}><Wallet className="h-4 w-4" /> Pay supplier</Button>
+            )}
+          </>
+        )}>
         {isLoading || !data ? <PageSpinner /> : (
           <div className="space-y-5">
+            {/* Identity */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+              {s.brandName && <Badge className="bg-brand-500/15 text-brand-400">{s.brandName}</Badge>}
+              {s.country && <span>{s.country}</span>}
+              {s.contactName && <span>{s.contactName}</span>}
+              {s.phone && <span>{s.phone}</span>}
+              {s.email && <span>{s.email}</span>}
+            </div>
+
+            {/* Balances */}
             <div className="grid grid-cols-3 gap-3">
               <Money label="Total purchased" value={data.totals.purchased} />
               <Money label="Total paid" value={data.totals.paid} tone="emerald" />
-              <Money label="Outstanding" value={data.totals.outstanding} tone={data.totals.outstanding > 0 ? 'rose' : 'emerald'} big />
+              <Money label="Balance owed" value={data.totals.outstanding} tone={data.totals.outstanding > 0 ? 'rose' : 'emerald'} big />
             </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-faint">
+              {data.lastPurchase && <span>Last purchase {formatDate(data.lastPurchase)}</span>}
+              {data.lastPayment && <span>Last payment {formatDate(data.lastPayment)}</span>}
+              {data.productsPurchased.length > 0 && <span>Supplies: {data.productsPurchased.join(', ')}</span>}
+            </div>
+
+            {/* Purchases */}
             <div>
               <div className="mb-2 text-sm font-semibold text-foreground">Purchase history</div>
-              {!data.orders.length ? <p className="text-sm text-faint">No purchase orders yet — create them in Imports &amp; POs.</p> : (
+              {!data.orders.length ? <p className="text-sm text-faint">No purchases yet — use "New purchase" when stock arrives from {s.name}.</p> : (
                 <Table>
-                  <THead><TR><TH>PO</TH><TH>Status</TH><TH>Total</TH><TH>Paid</TH><TH>Outstanding</TH><TH /></TR></THead>
+                  <THead><TR><TH>PO</TH><TH>Date</TH><TH>Boxes</TH><TH>Total</TH><TH>Paid</TH><TH>Outstanding</TH><TH /></TR></THead>
                   <TBody>
                     {data.orders.map((o) => (
                       <TR key={o.id}>
                         <TD className="font-medium">{o.poNumber}</TD>
-                        <TD><Badge className={o.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}>{o.status}</Badge></TD>
+                        <TD className="text-faint">{formatDate(o.receivedAt || o.createdAt)}</TD>
+                        <TD>{formatNumber(o.boxes)}</TD>
                         <TD>{formatCurrency(o.totalCost)}</TD>
                         <TD className="text-emerald-500">{formatCurrency(o.paid)}</TD>
                         <TD className={o.outstanding > 0 ? 'font-semibold text-rose-400' : 'text-faint'}>{formatCurrency(o.outstanding)}</TD>
                         <TD>
                           {o.outstanding > 0 && (
-                            <Button variant="secondary" className="px-2 py-1 text-xs" onClick={() => setPaying(o)}>Pay</Button>
+                            <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setPaying(o)}>Pay PO</Button>
                           )}
                         </TD>
                       </TR>
@@ -649,13 +806,15 @@ function SupplierDetailModal({ supplierId, accounts, onClose }) {
                 </Table>
               )}
             </div>
+
+            {/* Payments */}
             <div>
-              <div className="mb-2 text-sm font-semibold text-foreground">Payments</div>
+              <div className="mb-2 text-sm font-semibold text-foreground">Payment history</div>
               {!data.payments.length ? <p className="text-sm text-faint">No payments recorded yet.</p> : (
                 <ul className="space-y-1 text-sm">
                   {data.payments.map((p) => (
                     <li key={p.id} className="flex justify-between text-muted">
-                      <span>{formatDate(p.occurredAt)} · {p.reference} · {p.account}</span>
+                      <span>{formatDate(p.occurredAt)} · {p.reference || 'Payment'} · {p.account}</span>
                       <span className="font-semibold text-rose-400">−{formatCurrency(p.amount)}</span>
                     </li>
                   ))}
@@ -666,6 +825,8 @@ function SupplierDetailModal({ supplierId, accounts, onClose }) {
         )}
       </Modal>
       {paying && <PaySupplierModal order={paying} accounts={accounts} onClose={() => setPaying(null)} onDone={refresh} />}
+      {payingBalance && s && <PayBalanceModal supplier={s} outstanding={data.totals.outstanding} accounts={accounts} onClose={() => setPayingBalance(false)} onDone={refresh} />}
+      {purchasing && s && <NewPurchaseModal supplier={s} onClose={() => setPurchasing(false)} onDone={refresh} />}
     </>
   );
 }

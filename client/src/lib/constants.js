@@ -22,7 +22,6 @@ export const NAV = [
   { to: '/stock-requests', label: 'Stock Requests', icon: 'ClipboardList', roles: ALL, badge: 'stockRequests' },
   { to: '/sales', label: 'Sales', icon: 'ShoppingCart', roles: STAFF },
   { to: '/customers', label: 'Customers', icon: 'Users', roles: STAFF },
-  { to: '/debts', label: 'Debts', icon: 'HandCoins', roles: STAFF },
   { to: '/commissions', label: 'Commissions', icon: 'Coins', roles: ALL },
   { to: '/reps', label: 'Sales Reps', icon: 'UserCog', roles: STAFF },
   { to: '/reports', label: 'Reports', icon: 'BarChart3', roles: STAFF },

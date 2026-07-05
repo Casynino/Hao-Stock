@@ -23,13 +23,12 @@ function NewSaleModal({ open, onClose }) {
   const { data: warehouses = [] } = useWarehouses();
   const { data: reps = [] } = useSalesReps();
 
-  const [type, setType] = useState('CASH');
+  const type = 'CASH'; // cash-only business — no credit sales
   const [customerId, setCustomerId] = useState('');
   const [source, setSource] = useState(''); // "w:<id>" or "r:<id>"
   const [items, setItems] = useState([]);
   const [discount, setDiscount] = useState(0);
   const [amountPaid, setAmountPaid] = useState('');
-  const [dueDate, setDueDate] = useState('');
 
   const subtotal = useMemo(
     () => items.reduce((s, l) => s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 0), 0),
@@ -47,11 +46,8 @@ function NewSaleModal({ open, onClose }) {
           .map((l) => ({ productId: l.productId, packagingUnitId: l.packagingUnitId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) || undefined })),
         discount: Number(discount) || 0,
       };
-      if (type === 'CASH') payload.amountPaid = amountPaid === '' ? total : Number(amountPaid);
-      else {
-        payload.amountPaid = Number(amountPaid) || 0;
-        if (dueDate) payload.dueDate = new Date(dueDate).toISOString();
-      }
+      // Cash-only business — every sale is paid in full at the counter.
+      payload.amountPaid = amountPaid === '' ? total : Number(amountPaid);
       if (!isRep) {
         if (source.startsWith('w:')) payload.warehouseId = source.slice(2);
         else if (source.startsWith('r:')) payload.salesRepId = source.slice(2);
@@ -89,19 +85,10 @@ function NewSaleModal({ open, onClose }) {
       }
     >
       <div className="space-y-4">
-        <div className="flex gap-2">
-          {['CASH', 'CREDIT'].map((t) => (
-            <button key={t} onClick={() => setType(t)}
-              className={`flex-1 rounded-lg border px-4 py-2 text-sm font-semibold ${type === t ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-border text-muted'}`}>
-              {t === 'CASH' ? 'Cash sale' : 'Credit sale'}
-            </button>
-          ))}
-        </div>
-
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Customer" required={type === 'CREDIT'} hint={type === 'CASH' ? 'Optional for walk-ins' : undefined}>
+          <Field label="Customer" hint="Optional for walk-ins">
             <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-              <option value="">{type === 'CASH' ? 'Walk-in customer' : 'Select customer…'}</option>
+              <option value="">Walk-in customer</option>
               {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.region ? ` · ${c.region}` : ''}</option>)}
             </Select>
           </Field>
@@ -124,12 +111,9 @@ function NewSaleModal({ open, onClose }) {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Discount"><Input type="number" min="0" value={discount} onChange={(e) => setDiscount(e.target.value)} /></Field>
-          <Field label={type === 'CASH' ? 'Amount paid' : 'Down payment'} hint={type === 'CASH' ? 'Defaults to total' : 'Optional'}>
+          <Field label="Amount paid" hint="Defaults to total">
             <Input type="number" min="0" value={amountPaid} onChange={(e) => setAmountPaid(e.target.value)} placeholder={String(total)} />
           </Field>
-          {type === 'CREDIT' && (
-            <Field label="Due date"><Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
-          )}
         </div>
 
         <div className="rounded-lg bg-elevated p-3 text-sm">
@@ -218,14 +202,14 @@ export default function Sales() {
 
   return (
     <div>
-      <PageHeader title="Sales" subtitle="Cash & credit sales across the business.">
+      <PageHeader title="Sales" subtitle="Cash sales across the business.">
         <Button onClick={() => setModalOpen(true)}><Plus className="h-4 w-4" /> New sale</Button>
       </PageHeader>
 
       <Card>
         <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row">
           <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1); }} className="sm:w-44">
-            <option value="">All types</option><option value="CASH">Cash</option><option value="CREDIT">Credit</option>
+            <option value="">All types</option><option value="CASH">Cash</option>
           </Select>
           <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className="sm:w-44">
             <option value="">All statuses</option>

@@ -17,7 +17,6 @@ const TABS = [
   { key: 'regional', label: 'Regional', path: '/reports/regional', file: 'regional-performance' },
   { key: 'salesReps', label: 'Sales reps', path: '/reports/sales-reps', file: 'salesrep-performance' },
   { key: 'valuation', label: 'Valuation', path: '/reports/inventory-valuation', file: 'inventory-valuation' },
-  { key: 'debts', label: 'Debts', path: '/reports/debts', file: 'debt-report' },
 ];
 
 async function downloadReport(path, params, format, file) {
@@ -91,7 +90,7 @@ export default function Reports() {
 
   return (
     <div>
-      <PageHeader title="Reports" subtitle="Sales, profit, performance, valuation and debt — with PDF & Excel export.">
+      <PageHeader title="Reports" subtitle="Sales, profit, performance and valuation — with PDF & Excel export.">
         <Select value={period} onChange={(e) => setPeriod(e.target.value)} className="w-36">
           <option value="today">Today</option><option value="week">This week</option><option value="month">This month</option><option value="year">This year</option>
         </Select>
@@ -150,15 +149,6 @@ export default function Reports() {
                 <TBody>{(data.items || []).map((p) => (
                   <TR key={p.productId}><TD>{p.name}</TD><TD>{formatNumber(p.warehouseBase)}</TD><TD>{formatNumber(p.repBase)}</TD><TD>{formatNumber(p.totalBase)}</TD><TD>{formatCurrency(p.costValue)}</TD><TD>{formatCurrency(p.retailValue)}</TD></TR>
                 ))}</TBody>
-              </Table>
-            </Card>
-          )}
-          {tab === 'debts' && (
-            <Card>
-              <CardHeader title="Debt summary" subtitle={`Outstanding ${formatCurrency(data.totalOutstanding)} · Overdue ${formatCurrency(data.overdueAmount)}`} />
-              <Table>
-                <THead><TR><TH>Customer</TH><TH>Phone</TH><TH>Region</TH><TH>Outstanding</TH></TR></THead>
-                <TBody>{(data.topDebtors || []).map((d) => (<TR key={d.customerId}><TD>{d.name}</TD><TD>{d.phone || '—'}</TD><TD>{d.region || '—'}</TD><TD className="font-semibold text-rose-600">{formatCurrency(d.outstanding)}</TD></TR>))}</TBody>
               </Table>
             </Card>
           )}

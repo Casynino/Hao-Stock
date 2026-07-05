@@ -57,10 +57,9 @@ function CustomerDetail({ id, onClose }) {
     <Modal open={!!id} onClose={onClose} size="lg" title={data?.name || 'Customer'}>
       {isLoading || !data ? <PageSpinner /> : (
         <div className="space-y-4 text-sm">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-lg bg-elevated p-3"><div className="text-xs text-muted">Total purchases</div><div className="text-lg font-bold">{formatCurrency(data.stats.totalPurchases)}</div></div>
             <div className="rounded-lg bg-elevated p-3"><div className="text-xs text-muted">Orders</div><div className="text-lg font-bold">{data.stats.orderCount}</div></div>
-            <div className="rounded-lg bg-rose-500/10 p-3"><div className="text-xs text-muted">Owes</div><div className="text-lg font-bold text-rose-400">{formatCurrency(data.stats.outstandingDebt)}</div></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div><span className="text-muted">Phone</span><div>{data.phone || '—'}</div></div>

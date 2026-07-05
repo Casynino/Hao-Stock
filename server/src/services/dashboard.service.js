@@ -247,4 +247,147 @@ async function brandBreakdown() {
   };
 }
 
-module.exports = { overview, recentActivity, outstandingRepStock, paymentsCollected, brandBreakdown };
+// ── Command center ───────────────────────────────────────────────────────────
+// One composed payload for the admin dashboard: where the money is, today's
+// business (all from Finance), per-brand performance, rep performance, what
+// needs attention, and the inventory picture. Every figure derives from the
+// same Finance/epoch sources, so the dashboard can never disagree with Finance.
+async function command() {
+  const finance = require('./finance.service'); // lazy: avoids import cycles
+  const reorderSvc = require('./reorder.service');
+  const commission = require('./commission.service');
+
+  const todayR = await epochRange('today');
+  const monthR = await epochRange('month');
+
+  const [fin, profMonth, bd, stl, low, val, repsRows, repBal, commAll, supplierRows, products, pendCounts, salesTodayRows, salesMonthRows, activeStl, retTodayAgg] = await Promise.all([
+    finance.overview('today'),
+    reports.profitOverview('month'),
+    brandBreakdown(),
+    settlement.summary(),
+    reorderSvc.lowStock(),
+    inventory.valuation(prisma),
+    prisma.salesRepresentative.findMany({ where: { isActive: true }, include: { user: { select: { name: true } } } }),
+    inventory.repBalances(prisma),
+    commission.summaryAllReps(),
+    finance.supplierSummaries(),
+    prisma.product.findMany({ where: { isActive: true }, select: { id: true, brandId: true } }),
+    prisma.$transaction([
+      prisma.stockRequest.count({ where: { status: 'PENDING' } }),
+      prisma.settlementSubmission.count({ where: { status: 'PENDING' } }),
+      prisma.return.count({ where: { status: 'PENDING' } }),
+    ]),
+    prisma.sale.groupBy({ by: ['salesRepId'], where: { status: { not: 'CANCELLED' }, soldAt: { gte: todayR.start, lte: todayR.end }, salesRepId: { not: null } }, _sum: { total: true } }),
+    prisma.sale.groupBy({ by: ['salesRepId'], where: { status: { not: 'CANCELLED' }, soldAt: { gte: monthR.start, lte: monthR.end }, salesRepId: { not: null } }, _sum: { total: true } }),
+    prisma.settlement.findMany({ where: { status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] } }, select: { salesRepId: true, deadlineAt: true } }),
+    prisma.returnItem.aggregate({
+      where: { return: { is: { status: { in: ['APPROVED', 'COMPLETED'] }, decidedAt: { gte: todayR.start, lte: todayR.end } } } },
+      _sum: { baseQuantity: true },
+    }),
+  ]);
+
+  // ── Brands: month P&L + stock split + top product ──
+  const brandOf = new Map(products.map((p) => [p.id, p.brandId]));
+  const topByBrand = new Map();
+  for (const pr of profMonth.byProduct) {
+    const b = brandOf.get(pr.productId);
+    if (!b) continue;
+    const cur = topByBrand.get(b);
+    if (!cur || pr.revenue > cur.revenue) topByBrand.set(b, { name: pr.name, revenue: pr.revenue, boxes: pr.boxes });
+  }
+  const profBrand = new Map(profMonth.byBrand.map((b) => [b.brandId, b]));
+  const brands = bd.brands.map((b) => {
+    const pm = profBrand.get(b.brandId) || { revenue: 0, profit: 0, margin: 0, boxes: 0 };
+    return {
+      brandId: b.brandId,
+      name: b.name,
+      revenueMonth: pm.revenue,
+      grossProfitMonth: pm.profit,
+      marginMonth: pm.margin,
+      boxesSoldMonth: pm.boxes,
+      inventoryValue: b.stockValue,
+      warehouseBoxes: b.warehouseUnits,
+      repBoxes: b.stockUnits - b.warehouseUnits,
+      topProduct: topByBrand.get(b.brandId) || null,
+    };
+  });
+
+  // ── Reps: boxes held, sales today/month, commission, order status ──
+  const heldByRep = new Map();
+  repBal.forEach((r) => { if (r.baseQuantity > 0) heldByRep.set(r.salesRepId, (heldByRep.get(r.salesRepId) || 0) + r.baseQuantity); });
+  const sToday = new Map(salesTodayRows.map((r) => [r.salesRepId, toNumber(r._sum.total)]));
+  const sMonth = new Map(salesMonthRows.map((r) => [r.salesRepId, toNumber(r._sum.total)]));
+  const commByRep = new Map(commAll.items.map((c) => [c.salesRepId, c]));
+  const stlByRep = new Map();
+  const now = Date.now();
+  for (const x of activeStl) {
+    const cur = stlByRep.get(x.salesRepId) || { active: 0, overdue: 0 };
+    cur.active += 1;
+    if (new Date(x.deadlineAt).getTime() < now) cur.overdue += 1;
+    stlByRep.set(x.salesRepId, cur);
+  }
+  const reps = repsRows
+    .map((r) => {
+      const c = commByRep.get(r.id) || {};
+      const st = stlByRep.get(r.id) || { active: 0, overdue: 0 };
+      return {
+        salesRepId: r.id,
+        name: r.user?.name || r.code,
+        code: r.code,
+        boxesHeld: heldByRep.get(r.id) || 0,
+        salesToday: round2(sToday.get(r.id) || 0),
+        salesMonth: round2(sMonth.get(r.id) || 0),
+        commissionAvailable: round2(c.available || 0),
+        activeOrders: st.active,
+        overdueOrders: st.overdue,
+      };
+    })
+    .sort((a, b) => b.salesMonth - a.salesMonth);
+
+  // ── Attention ──
+  const onHandTotals = new Map();
+  val.items.forEach((it) => onHandTotals.set(it.productId, it.totalBase));
+  const outOfStock = products.filter((p) => (onHandTotals.get(p.id) || 0) <= 0).length;
+  const supplierDue = round2(supplierRows.reduce((x, sup) => x + sup.outstanding, 0));
+
+  // ── Inventory split ──
+  const warehouseBoxes = val.items.reduce((x, it) => x + it.warehouseBase, 0);
+  const repBoxes = val.items.reduce((x, it) => x + it.repBase, 0);
+
+  return {
+    accounts: fin.accounts,
+    totalFunds: fin.cashPosition,
+    today: {
+      revenue: fin.revenue,
+      grossProfit: fin.grossProfit,
+      expenses: fin.expenses,
+      netProfit: fin.netProfit,
+      moneyIn: fin.flow.today.moneyIn,
+      moneyOut: fin.flow.today.moneyOut,
+      netCash: fin.flow.today.net,
+    },
+    month: { revenue: profMonth.totals.revenue, grossProfit: profMonth.totals.profit, boxes: profMonth.totals.boxes },
+    brands,
+    reps,
+    attention: {
+      stockRequests: pendCounts[0],
+      settlements: pendCounts[1],
+      returns: pendCounts[2],
+      overdueSettlements: stl.overdueCount,
+      overdueValue: stl.overdueValue,
+      lowStock: { count: low.length, items: low.slice(0, 5).map((l) => ({ name: l.name, onHand: l.onHand })) },
+      outOfStock,
+      supplierDue,
+    },
+    inventory: {
+      costValue: val.totals.totalValue,
+      sellingValue: val.totals.retailValue,
+      units: val.totals.totalBaseUnits,
+      warehouseBoxes,
+      repBoxes,
+      returnedToday: retTodayAgg._sum.baseQuantity || 0,
+    },
+  };
+}
+
+module.exports = { overview, recentActivity, outstandingRepStock, paymentsCollected, brandBreakdown, command };

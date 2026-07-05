@@ -73,6 +73,7 @@ async function accountBalances() {
     const opening = toNumber(a.openingBalance);
     return {
       id: a.id, name: a.name, type: a.type, currency: a.currency, isDefault: a.isDefault, notes: a.notes,
+      brandId: a.brandId || null,
       openingBalance: opening, moneyIn, moneyOut, balance: round2(opening + moneyIn - moneyOut),
     };
   });
@@ -94,6 +95,7 @@ async function createAccount(data) {
     data: {
       name,
       type: data.type || 'OTHER',
+      brandId: data.brandId || null,
       openingBalance: round2(toNumber(data.openingBalance)),
       notes: data.notes || null,
       sortOrder: (max._max.sortOrder || 0) + 1,
@@ -106,6 +108,7 @@ async function updateAccount(id, data) {
   if (!existing) throw ApiError.notFound('Account not found');
   const patch = {};
   ['name', 'type', 'notes'].forEach((k) => { if (data[k] !== undefined) patch[k] = data[k]; });
+  if (data.brandId !== undefined) patch.brandId = data.brandId || null;
   if (data.openingBalance !== undefined) patch.openingBalance = round2(toNumber(data.openingBalance));
   if (data.isActive !== undefined) patch.isActive = data.isActive;
   return { updated: await prisma.businessAccount.update({ where: { id }, data: patch }), previous: existing };

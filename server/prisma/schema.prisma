@@ -1271,6 +1271,7 @@ model BusinessAccount {
   id             String             @id @default(cuid())
   name           String
   type           FinanceAccountType @default(CASH)
+  brandId        String? // account is reserved for this brand's payments (null = any brand, e.g. Cash)
   currency       String             @default("TZS")
   openingBalance Decimal            @default(0) @db.Decimal(16, 2)
   isActive       Boolean            @default(true)

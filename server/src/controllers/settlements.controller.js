@@ -60,7 +60,7 @@ const paymentAccounts = asyncHandler(async (_req, res) => {
   const accounts = await prisma.businessAccount.findMany({
     where: { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    select: { id: true, name: true, type: true, notes: true, isDefault: true },
+    select: { id: true, name: true, type: true, notes: true, isDefault: true, brandId: true },
   });
   return ok(res, accounts);
 });

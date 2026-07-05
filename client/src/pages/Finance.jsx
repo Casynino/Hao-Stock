@@ -31,10 +31,17 @@ const invalidateFinance = (qc) => ['finance'].forEach((k) => qc.invalidateQuerie
 // ── Modals ───────────────────────────────────────────────────────────────────
 function AddAccountModal({ onClose }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({ name: '', type: 'BANK', openingBalance: '', notes: '' });
+  const { data: brands = [] } = useQuery({
+    queryKey: ['brands', 'all'],
+    queryFn: async () => unwrap(await api.get('/brands', { params: { limit: 50 } })).data,
+  });
+  const [form, setForm] = useState({ name: '', type: 'BANK', openingBalance: '', notes: '', brandId: '' });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const save = useMutation({
-    mutationFn: () => api.post('/finance/accounts', { name: form.name.trim(), type: form.type, openingBalance: Number(form.openingBalance) || 0, notes: form.notes.trim() || undefined }),
+    mutationFn: () => api.post('/finance/accounts', {
+      name: form.name.trim(), type: form.type, openingBalance: Number(form.openingBalance) || 0,
+      notes: form.notes.trim() || undefined, brandId: form.brandId || undefined,
+    }),
     onSuccess: () => { toast.success('Account created'); invalidateFinance(qc); onClose(); },
     onError: (e) => toast.error(apiError(e)),
   });
@@ -44,6 +51,12 @@ function AddAccountModal({ onClose }) {
       <div className="space-y-4">
         <Field label="Account name" required><Input value={form.name} onChange={set('name')} placeholder="e.g. Equity Bank" /></Field>
         <Field label="Type"><Select value={form.type} onChange={set('type')}><option value="CASH">Cash</option><option value="BANK">Bank</option><option value="MOBILE_MONEY">Mobile money</option><option value="OTHER">Other</option></Select></Field>
+        <Field label="Reserved for brand" hint="Reps only see this account when settling that brand's products">
+          <Select value={form.brandId} onChange={set('brandId')}>
+            <option value="">Any brand (general)</option>
+            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </Select>
+        </Field>
         <Field label="Opening balance (TZS)" hint="What's in this account right now"><Input type="number" min="0" value={form.openingBalance} onChange={set('openingBalance')} placeholder="0" /></Field>
         <Field label="Notes"><Textarea rows={2} value={form.notes} onChange={set('notes')} /></Field>
       </div>

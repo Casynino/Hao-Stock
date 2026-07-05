@@ -60,9 +60,16 @@ function periodRange(period) {
 
 async function accountBalances() {
   await ensureDefaults();
+  // Balances = opening + post-epoch movements. Pre-epoch ledger rows are audit
+  // history only; the accounts' openingBalance IS the truth at the epoch.
+  const epoch = await reports.financeEpoch();
   const [accounts, grouped] = await Promise.all([
     prisma.businessAccount.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] }),
-    prisma.financeTransaction.groupBy({ by: ['accountId', 'direction'], _sum: { amount: true } }),
+    prisma.financeTransaction.groupBy({
+      by: ['accountId', 'direction'],
+      where: epoch ? { occurredAt: { gte: epoch } } : {},
+      _sum: { amount: true },
+    }),
   ]);
   const inMap = new Map();
   const outMap = new Map();
@@ -124,6 +131,9 @@ async function backfillFromHistory() {
   await ensureDefaults();
   const acc = await defaultAccount();
   if (!acc) return { incomeCreated: 0, paymentsCreated: 0 };
+  // Only sales from the finance epoch onward create ledger money — pre-epoch
+  // activity is history, already represented by the accounts' opening balances.
+  const epoch = await reports.financeEpoch();
 
   // Money in: settlement-linked sales (settled boxes = cash received) and
   // direct warehouse CASH sales (no rep).
@@ -133,6 +143,7 @@ async function backfillFromHistory() {
         status: { not: 'CANCELLED' },
         type: 'CASH',
         OR: [{ settlementId: { not: null } }, { salesRepId: null }],
+        ...(epoch ? { soldAt: { gte: epoch } } : {}),
       },
       select: {
         id: true, saleNumber: true, total: true, soldAt: true, settlementId: true,
@@ -203,10 +214,10 @@ async function backfillFromHistory() {
     brandTagged++;
   }
 
-  // Money out: commission withdrawals already PAID.
+  // Money out: commission withdrawals PAID from the epoch onward.
   const [paidWithdrawals, existingWTxns] = await Promise.all([
     prisma.commissionWithdrawal.findMany({
-      where: { status: 'PAID' },
+      where: { status: 'PAID', ...(epoch ? { OR: [{ paidAt: { gte: epoch } }, { paidAt: null, decidedAt: { gte: epoch } }] } : {}) },
       include: { salesRep: { include: { user: { select: { name: true } } } } },
     }),
     prisma.financeTransaction.findMany({ where: { refType: 'CommissionWithdrawal' }, select: { refId: true } }),
@@ -399,6 +410,15 @@ function rangeFor(opts = {}) {
   return null;
 }
 
+// occurredAt filter for aggregates, clamped to the finance epoch: a null range
+// means "since the epoch" (or truly all time when no epoch is set).
+function epochWhere(range, epoch) {
+  const start = range && epoch ? (range.start > epoch ? range.start : epoch) : range ? range.start : epoch;
+  const end = range ? range.end : null;
+  if (!start && !end) return {};
+  return { occurredAt: { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) } };
+}
+
 async function flowBetween(start, end) {
   const where = {};
   if (start || end) where.occurredAt = { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) };
@@ -418,11 +438,17 @@ async function cashflow(opts = {}) {
   await ensureDefaults();
   await backfillFromHistory().catch(() => {});
   const range = rangeFor(opts);
+  const epoch = await reports.financeEpoch();
   const openAgg = await prisma.businessAccount.aggregate({ where: { isActive: true }, _sum: { openingBalance: true } });
   const baseOpening = round2(toNumber(openAgg._sum.openingBalance));
-  const before = range ? await flowBetween(null, new Date(range.start.getTime() - 1)) : { net: 0 };
-  const openingBalance = round2(baseOpening + before.net);
-  const inPeriod = await flowBetween(range ? range.start : null, range ? range.end : null);
+  // Opening = account openings (the truth at the epoch) + movements between the
+  // epoch and the window start. Pre-epoch ledger rows never count.
+  const before = range
+    ? await flowBetween(epoch || null, new Date(range.start.getTime() - 1))
+    : { net: 0 };
+  const openingBalance = round2(baseOpening + (range && (!epoch || range.start > epoch) ? before.net : 0));
+  const start = range && epoch ? (range.start > epoch ? range.start : epoch) : range ? range.start : epoch;
+  const inPeriod = await flowBetween(start || null, range ? range.end : null);
   return {
     period: opts.from || opts.to ? 'custom' : opts.period || 'all',
     range: range ? { start: range.start, end: range.end } : null,
@@ -439,9 +465,9 @@ async function cashflow(opts = {}) {
 async function report(opts = {}) {
   await ensureDefaults();
   const profOpts = opts.from || opts.to ? { from: opts.from, to: opts.to } : { period: opts.period || 'all' };
-  const [prof, cf] = await Promise.all([reports.profitOverview(profOpts), cashflow(opts)]);
+  const [prof, cf, epoch] = await Promise.all([reports.profitOverview(profOpts), cashflow(opts), reports.financeEpoch()]);
   const range = rangeFor(opts);
-  const base = range ? { occurredAt: { gte: range.start, lte: range.end } } : {};
+  const base = epochWhere(range, epoch);
   const sumOf = async (extra) =>
     round2(toNumber((await prisma.financeTransaction.aggregate({ where: { ...base, ...extra }, _sum: { amount: true } }))._sum.amount));
   const [expenses, supplierPayments, commissionPaid, otherIncome] = await Promise.all([
@@ -624,12 +650,13 @@ async function overview(period = 'month') {
   ]);
 
   const cashPosition = round2(accounts.reduce((s, a) => s + a.balance, 0));
+  const epoch = await reports.financeEpoch();
 
-  // Money in / out for each window.
+  // Money in / out for each window (from the epoch onward).
   const flow = {};
   for (const p of ['today', 'week', 'month', 'all']) {
-    const range = periodRange(p);
-    const base = range ? { occurredAt: { gte: range.start, lte: range.end } } : {};
+    const r = periodRange(p);
+    const base = epochWhere(r, epoch);
     const [inAgg, outAgg] = await Promise.all([
       prisma.financeTransaction.aggregate({ where: { ...base, direction: 'IN' }, _sum: { amount: true } }),
       prisma.financeTransaction.aggregate({ where: { ...base, direction: 'OUT' }, _sum: { amount: true } }),
@@ -641,7 +668,7 @@ async function overview(period = 'month') {
 
   // Expenses + breakdown for the selected period.
   const range = periodRange(period);
-  const expWhere = { direction: 'OUT', type: 'EXPENSE', ...(range ? { occurredAt: { gte: range.start, lte: range.end } } : {}) };
+  const expWhere = { direction: 'OUT', type: 'EXPENSE', ...epochWhere(range, epoch) };
   const [expAgg, byCat] = await Promise.all([
     prisma.financeTransaction.aggregate({ where: expWhere, _sum: { amount: true } }),
     prisma.financeTransaction.groupBy({ by: ['category'], where: expWhere, _sum: { amount: true }, _count: true }),
@@ -660,7 +687,7 @@ async function overview(period = 'month') {
     prisma.brand.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
     prisma.financeTransaction.groupBy({
       by: ['brandId', 'direction', 'type'],
-      where: range ? { occurredAt: { gte: range.start, lte: range.end } } : {},
+      where: epochWhere(range, epoch),
       _sum: { amount: true },
     }),
     prisma.product.findMany({ select: { id: true, brandId: true } }),

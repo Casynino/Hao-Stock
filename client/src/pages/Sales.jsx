@@ -158,22 +158,30 @@ function SaleDetail({ id, onClose }) {
             <div><span className="text-muted">Type</span><div className="font-medium">{data.type}</div></div>
             <div><span className="text-muted">Date</span><div className="font-medium">{formatDateTime(data.soldAt)}</div></div>
           </div>
+          {/* Per-item profit trace: sell/box vs cost/box (captured at sale time) */}
           <Table>
-            <THead><TR><TH>Item</TH><TH>Qty</TH><TH>Unit price</TH><TH>Total</TH></TR></THead>
+            <THead><TR><TH>Item</TH><TH>Qty</TH><TH>Sell / box</TH><TH>Cost / box</TH><TH>Profit / box</TH><TH>Line profit</TH></TR></THead>
             <TBody>
-              {data.items.map((it) => (
-                <TR key={it.id}>
-                  <TD>{it.product.name}</TD>
-                  <TD>{it.quantity} {it.packagingUnit.name}</TD>
-                  <TD>{formatCurrency(it.unitPrice)}/base</TD>
-                  <TD>{formatCurrency(it.lineTotal)}</TD>
-                </TR>
-              ))}
+              {data.items.map((it) => {
+                const lineProfit = it.lineTotal - it.unitCost * it.baseQuantity;
+                return (
+                  <TR key={it.id}>
+                    <TD className="font-medium text-foreground">{it.product.name}</TD>
+                    <TD>{it.quantity} {it.packagingUnit.name}</TD>
+                    <TD>{formatCurrency(it.unitPrice)}</TD>
+                    <TD className="text-muted">{formatCurrency(it.unitCost)}</TD>
+                    <TD>{formatCurrency(it.unitPrice - it.unitCost)}</TD>
+                    <TD className="font-semibold text-emerald-500">{formatCurrency(lineProfit)}</TD>
+                  </TR>
+                );
+              })}
             </TBody>
           </Table>
           <div className="rounded-lg bg-elevated p-3">
-            <div className="flex justify-between"><span className="text-muted">Total</span><span className="font-semibold">{formatCurrency(data.total)}</span></div>
-            <div className="flex justify-between"><span className="text-muted">Paid</span><span>{formatCurrency(data.amountPaid)}</span></div>
+            <div className="flex justify-between"><span className="text-muted">Revenue</span><span className="font-semibold">{formatCurrency(data.total)}</span></div>
+            <div className="flex justify-between"><span className="text-muted">Cost of goods</span><span className="text-muted">−{formatCurrency(data.costTotal)}</span></div>
+            <div className="flex justify-between border-t border-border pt-1"><span className="font-semibold text-foreground">Profit on this sale</span><span className="font-bold text-emerald-500">{formatCurrency(data.total - data.costTotal)}</span></div>
+            <div className="mt-1 flex justify-between"><span className="text-muted">Paid</span><span>{formatCurrency(data.amountPaid)}</span></div>
             <div className="flex justify-between"><span className="text-muted">Balance</span><span className={data.balanceDue > 0 ? 'text-rose-600' : ''}>{formatCurrency(data.balanceDue)}</span></div>
           </div>
           {data.creditSale && (
@@ -230,10 +238,11 @@ export default function Sales() {
         ) : (
           <>
             <Table>
-              <THead><TR><TH>Sale</TH><TH>Customer</TH><TH>Rep</TH><TH>Type</TH><TH>Total</TH><TH>Balance</TH><TH>Status</TH><TH>Date</TH><TH /></TR></THead>
+              <THead><TR><TH>Sale</TH><TH>Customer</TH><TH>Rep</TH><TH>Type</TH><TH>Total</TH><TH>Profit</TH><TH>Balance</TH><TH>Status</TH><TH>Date</TH><TH /></TR></THead>
               <TBody>
                 {data.data.map((s) => {
                   const meta = SALE_STATUS_META[s.status] || {};
+                  const profit = s.total - (s.costTotal || 0);
                   return (
                     <TR key={s.id}>
                       <TD className="font-medium text-foreground">{s.saleNumber}</TD>
@@ -241,6 +250,7 @@ export default function Sales() {
                       <TD>{s.salesRep?.user?.name || '—'}</TD>
                       <TD>{s.type}</TD>
                       <TD>{formatCurrency(s.total)}</TD>
+                      <TD className={s.status === 'CANCELLED' ? 'text-faint line-through' : 'font-semibold text-emerald-500'}>{formatCurrency(profit)}</TD>
                       <TD className={s.balanceDue > 0 ? 'text-rose-600' : 'text-faint'}>{formatCurrency(s.balanceDue)}</TD>
                       <TD><Badge className={meta.cls}>{meta.label}</Badge></TD>
                       <TD className="text-faint">{formatDate(s.soldAt)}</TD>

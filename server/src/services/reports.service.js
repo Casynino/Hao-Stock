@@ -304,8 +304,14 @@ async function profitReport(params = {}) {
 // before cost prices existed). Profit is only counted on actual sales (settled
 // boxes create CASH sales) — never on stock requests, transfers or warehouse
 // inventory. period: today | week | month | year | all.
-async function profitOverview(period = 'month') {
-  const range = period && period !== 'all' ? resolveRange({ period }) : null;
+// Accepts a period string ('today'|'week'|'month'|'year'|'all') or an options
+// object { period, from, to } for custom date ranges.
+async function profitOverview(opts = 'month') {
+  const o = typeof opts === 'string' ? { period: opts } : opts || {};
+  const range = o.from || o.to
+    ? resolveRange({ from: o.from, to: o.to })
+    : o.period && o.period !== 'all' ? resolveRange({ period: o.period }) : null;
+  const period = o.period || 'custom';
   const where = { sale: { is: { ...NON_CANCELLED } } };
   if (range) where.sale.is.soldAt = { gte: range.start, lte: range.end };
 

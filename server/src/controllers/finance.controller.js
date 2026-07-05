@@ -96,7 +96,32 @@ const deleteTransaction = asyncHandler(async (req, res) => {
   return ok(res, { deleted: true, id: req.params.id });
 });
 
+// Cash-flow statement for a period or custom { from, to } range.
+const cashflow = asyncHandler(async (req, res) =>
+  ok(res, await finance.cashflow({ period: req.query.period, from: req.query.from, to: req.query.to })));
+
+// Consolidated financial report (P&L + cash flow + payments + top sellers).
+const report = asyncHandler(async (req, res) =>
+  ok(res, await finance.report({ period: req.query.period, from: req.query.from, to: req.query.to })));
+
+// Suppliers with purchased / paid / outstanding (accounts payable view).
+const suppliers = asyncHandler(async (_req, res) => ok(res, await finance.supplierSummaries()));
+const supplierDetail = asyncHandler(async (req, res) => ok(res, await finance.supplierDetail(req.params.id)));
+
+// Pay a supplier against a purchase order from a business account.
+const paySupplier = asyncHandler(async (req, res) => {
+  const txn = await finance.paySupplier(req.body, req.user);
+  await audit.record(req, {
+    action: 'CREATE',
+    entityType: 'FinanceTransaction',
+    entityId: txn.id,
+    newValues: { kind: 'SUPPLIER_PAYMENT', amount: txn.amount, reference: txn.reference, accountId: txn.accountId },
+  });
+  return created(res, txn);
+});
+
 module.exports = {
   overview, sync, accounts, createAccount, updateAccount, categories, createCategory,
   transactions, recordExpense, recordIncome, updateTransaction, deleteTransaction,
+  cashflow, report, suppliers, supplierDetail, paySupplier,
 };

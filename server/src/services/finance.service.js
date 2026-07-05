@@ -16,7 +16,7 @@ const inventory = require('./inventory.service');
 const commission = require('./commission.service');
 const { nextDocNumber } = require('../utils/numbering');
 const { toNumber, round2 } = require('../utils/money');
-const { dayjs } = require('../utils/dates');
+const { dayjs, resolveRange } = require('../utils/dates');
 
 const DEFAULT_ACCOUNTS = [
   { name: 'Cash', type: 'CASH', isDefault: true, sortOrder: 0 },
@@ -342,6 +342,220 @@ async function createCategory(name) {
   return prisma.expenseCategory.upsert({ where: { name: n }, create: { name: n }, update: { isActive: true } });
 }
 
+// --- Cash flow ----------------------------------------------------------------
+
+// Resolve { period } or { from, to } into a date range (null = all time).
+function rangeFor(opts = {}) {
+  if (opts.from || opts.to) return resolveRange({ from: opts.from, to: opts.to });
+  if (opts.period && opts.period !== 'all') return resolveRange({ period: opts.period });
+  return null;
+}
+
+async function flowBetween(start, end) {
+  const where = {};
+  if (start || end) where.occurredAt = { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) };
+  const [i, o] = await Promise.all([
+    prisma.financeTransaction.aggregate({ where: { ...where, direction: 'IN' }, _sum: { amount: true } }),
+    prisma.financeTransaction.aggregate({ where: { ...where, direction: 'OUT' }, _sum: { amount: true } }),
+  ]);
+  const moneyIn = round2(toNumber(i._sum.amount));
+  const moneyOut = round2(toNumber(o._sum.amount));
+  return { moneyIn, moneyOut, net: round2(moneyIn - moneyOut) };
+}
+
+// Cash-flow statement for a window: opening balance (all money before the
+// window), money in/out, and the closing balance. All-time uses the accounts'
+// opening balances as the opening figure.
+async function cashflow(opts = {}) {
+  await ensureDefaults();
+  await backfillFromHistory().catch(() => {});
+  const range = rangeFor(opts);
+  const openAgg = await prisma.businessAccount.aggregate({ where: { isActive: true }, _sum: { openingBalance: true } });
+  const baseOpening = round2(toNumber(openAgg._sum.openingBalance));
+  const before = range ? await flowBetween(null, new Date(range.start.getTime() - 1)) : { net: 0 };
+  const openingBalance = round2(baseOpening + before.net);
+  const inPeriod = await flowBetween(range ? range.start : null, range ? range.end : null);
+  return {
+    period: opts.from || opts.to ? 'custom' : opts.period || 'all',
+    range: range ? { start: range.start, end: range.end } : null,
+    openingBalance,
+    ...inPeriod,
+    closingBalance: round2(openingBalance + inPeriod.net),
+  };
+}
+
+// --- Financial report ----------------------------------------------------------
+
+// One consolidated report for a period or custom date range: P&L, cash flow,
+// supplier/commission payments, stock-purchase spend, top products & brands.
+async function report(opts = {}) {
+  await ensureDefaults();
+  const profOpts = opts.from || opts.to ? { from: opts.from, to: opts.to } : { period: opts.period || 'all' };
+  const [prof, cf] = await Promise.all([reports.profitOverview(profOpts), cashflow(opts)]);
+  const range = rangeFor(opts);
+  const base = range ? { occurredAt: { gte: range.start, lte: range.end } } : {};
+  const sumOf = async (extra) =>
+    round2(toNumber((await prisma.financeTransaction.aggregate({ where: { ...base, ...extra }, _sum: { amount: true } }))._sum.amount));
+  const [expenses, supplierPayments, commissionPaid, otherIncome] = await Promise.all([
+    sumOf({ direction: 'OUT', type: 'EXPENSE' }),
+    sumOf({ direction: 'OUT', type: 'STOCK_PURCHASE' }),
+    sumOf({ direction: 'OUT', type: 'COMMISSION_PAYMENT' }),
+    sumOf({ direction: 'IN', type: 'INCOME' }),
+  ]);
+  return {
+    range: range ? { start: range.start, end: range.end } : null,
+    period: cf.period,
+    revenue: prof.totals.revenue,
+    cogs: prof.totals.cost,
+    grossProfit: prof.totals.profit,
+    margin: prof.totals.margin,
+    boxesSold: prof.totals.boxes,
+    expenses,
+    netProfit: round2(prof.totals.profit - expenses),
+    supplierPayments,
+    commissionPaid,
+    otherIncome,
+    cashFlow: {
+      openingBalance: cf.openingBalance,
+      moneyIn: cf.moneyIn,
+      moneyOut: cf.moneyOut,
+      net: cf.net,
+      closingBalance: cf.closingBalance,
+    },
+    topProducts: prof.byProduct.slice(0, 8),
+    topBrands: prof.byBrand,
+  };
+}
+
+// --- Suppliers (accounts payable) -----------------------------------------------
+
+// Every supplier with their financial picture: total purchased (non-cancelled
+// POs), total paid (ledger payments keyed to their POs), outstanding balance.
+async function supplierSummaries() {
+  await ensureDefaults();
+  const [suppliers, pos] = await Promise.all([
+    prisma.supplier.findMany({ orderBy: { name: 'asc' } }),
+    prisma.purchaseOrder.findMany({
+      where: { status: { not: 'CANCELLED' } },
+      select: { id: true, supplierId: true, totalCost: true, receivedAt: true, createdAt: true },
+    }),
+  ]);
+  const poIds = pos.map((p) => p.id);
+  const payRows = poIds.length
+    ? await prisma.financeTransaction.groupBy({
+        by: ['refId'],
+        where: { refType: 'PurchaseOrder', refId: { in: poIds }, direction: 'OUT' },
+        _sum: { amount: true },
+      })
+    : [];
+  const paidByPo = new Map(payRows.map((p) => [p.refId, toNumber(p._sum.amount)]));
+
+  const agg = new Map();
+  for (const p of pos) {
+    const cur = agg.get(p.supplierId) || { purchased: 0, paid: 0, poCount: 0, last: null };
+    cur.purchased += toNumber(p.totalCost);
+    cur.paid += paidByPo.get(p.id) || 0;
+    cur.poCount += 1;
+    const d = p.receivedAt || p.createdAt;
+    if (!cur.last || d > cur.last) cur.last = d;
+    agg.set(p.supplierId, cur);
+  }
+  return suppliers.map((s) => {
+    const f = agg.get(s.id) || { purchased: 0, paid: 0, poCount: 0, last: null };
+    return {
+      id: s.id, name: s.name, country: s.country, contactName: s.contactName,
+      phone: s.phone, email: s.email, isActive: s.isActive,
+      totalPurchased: round2(f.purchased),
+      totalPaid: round2(f.paid),
+      outstanding: round2(f.purchased - f.paid),
+      poCount: f.poCount,
+      lastActivity: f.last,
+    };
+  });
+}
+
+// One supplier's purchase history + payments, with per-PO paid/outstanding.
+async function supplierDetail(id) {
+  const s = await prisma.supplier.findUnique({ where: { id } });
+  if (!s) throw ApiError.notFound('Supplier not found');
+  const pos = await prisma.purchaseOrder.findMany({
+    where: { supplierId: id, status: { not: 'CANCELLED' } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, poNumber: true, status: true, totalCost: true, receivedAt: true, createdAt: true },
+  });
+  const poIds = pos.map((p) => p.id);
+  const txns = poIds.length
+    ? await prisma.financeTransaction.findMany({
+        where: { refType: 'PurchaseOrder', refId: { in: poIds }, direction: 'OUT' },
+        include: { account: { select: { name: true } } },
+        orderBy: { occurredAt: 'desc' },
+      })
+    : [];
+  const paidByPo = new Map();
+  txns.forEach((t) => paidByPo.set(t.refId, (paidByPo.get(t.refId) || 0) + toNumber(t.amount)));
+
+  const orders = pos.map((p) => {
+    const total = toNumber(p.totalCost);
+    const paid = round2(paidByPo.get(p.id) || 0);
+    return {
+      id: p.id, poNumber: p.poNumber, status: p.status,
+      totalCost: round2(total), paid, outstanding: round2(total - paid),
+      receivedAt: p.receivedAt, createdAt: p.createdAt,
+    };
+  });
+  const purchased = round2(orders.reduce((x, o) => x + o.totalCost, 0));
+  const paid = round2(orders.reduce((x, o) => x + o.paid, 0));
+  return {
+    supplier: s,
+    orders,
+    payments: txns.map((t) => ({
+      id: t.id, txnNumber: t.txnNumber, amount: toNumber(t.amount), account: t.account?.name,
+      reference: t.reference, occurredAt: t.occurredAt, notes: t.notes,
+    })),
+    totals: { purchased, paid, outstanding: round2(purchased - paid) },
+  };
+}
+
+// Pay a supplier against a purchase order: posts a STOCK_PURCHASE OUT
+// transaction from the chosen account (immediately reducing its balance) and
+// tracks against the PO so the supplier's outstanding falls. Over-payment is
+// blocked.
+async function paySupplier({ purchaseOrderId, accountId, amount, notes, occurredAt }, actor) {
+  const po = await prisma.purchaseOrder.findUnique({
+    where: { id: purchaseOrderId },
+    include: { supplier: { select: { name: true } } },
+  });
+  if (!po) throw ApiError.notFound('Purchase order not found');
+  if (po.status === 'CANCELLED') throw ApiError.badRequest('This purchase order is cancelled');
+  const paidAgg = await prisma.financeTransaction.aggregate({
+    where: { refType: 'PurchaseOrder', refId: po.id, direction: 'OUT' },
+    _sum: { amount: true },
+  });
+  const alreadyPaid = toNumber(paidAgg._sum.amount);
+  const remaining = round2(toNumber(po.totalCost) - alreadyPaid);
+  const amt = amount != null ? round2(toNumber(amount)) : remaining;
+  if (!(amt > 0)) throw ApiError.badRequest('Payment amount must be greater than zero');
+  if (amt > remaining + 0.001) {
+    throw ApiError.badRequest(`Only TZS ${remaining.toLocaleString()} is outstanding on ${po.poNumber}`);
+  }
+  return recordTransaction(
+    {
+      accountId,
+      direction: 'OUT',
+      type: 'STOCK_PURCHASE',
+      amount: amt,
+      category: 'Stock Purchase',
+      description: `Supplier payment — ${po.supplier?.name || 'supplier'} (${po.poNumber})`,
+      reference: po.poNumber,
+      refType: 'PurchaseOrder',
+      refId: po.id,
+      notes,
+      occurredAt,
+    },
+    actor,
+  );
+}
+
 // --- Finance dashboard -----------------------------------------------------
 
 async function overview(period = 'month') {
@@ -427,4 +641,9 @@ module.exports = {
   listCategories,
   createCategory,
   overview,
+  cashflow,
+  report,
+  supplierSummaries,
+  supplierDetail,
+  paySupplier,
 };

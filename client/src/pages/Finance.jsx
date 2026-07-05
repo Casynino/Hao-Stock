@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useProducts } from '@/lib/hooks';
+import ReportsPage from '@/pages/Reports';
 import { formatCurrency, formatNumber, formatDate, formatDateTime } from '@/lib/format';
 import { DonutChart, BarChartCard } from '@/components/charts';
 import {
@@ -879,92 +880,6 @@ function SuppliersTab({ accounts }) {
   );
 }
 
-// ── Reports tab ───────────────────────────────────────────────────────────────
-const REPORT_PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time']];
-
-function ReportsTab() {
-  const [period, setPeriod] = useState('month');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const custom = !!(from || to);
-  const params = custom ? { from: from || undefined, to: to || undefined } : { period };
-  const { data, isLoading } = useQuery({
-    queryKey: ['finance', 'report', custom ? { from, to } : period],
-    queryFn: async () => unwrap(await api.get('/finance/report', { params })).data,
-  });
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {REPORT_PERIODS.map(([k, label]) => (
-          <button key={k} onClick={() => { setPeriod(k); setFrom(''); setTo(''); }}
-            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${!custom && period === k ? 'bg-brand-500 text-slate-950' : 'border border-border text-muted hover:bg-elevated'}`}>{label}</button>
-        ))}
-        <span className="mx-1 text-xs text-faint">or custom:</span>
-        <Input type="date" className="w-auto" value={from} onChange={(e) => setFrom(e.target.value)} />
-        <span className="text-xs text-faint">to</span>
-        <Input type="date" className="w-auto" value={to} onChange={(e) => setTo(e.target.value)} />
-      </div>
-
-      {isLoading || !data ? <PageSpinner /> : (
-        <>
-          <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-            <StatCard label="Revenue" value={formatCurrency(data.revenue)} icon={TrendingUp} tone="emerald" hint={`${formatNumber(data.boxesSold)} boxes sold`} />
-            <StatCard label="Expenses" value={formatCurrency(data.expenses)} icon={Receipt} tone="rose" />
-            <StatCard label="Net profit" value={formatCurrency(data.netProfit)} icon={Wallet} tone={data.netProfit >= 0 ? 'brand' : 'rose'} hint={`gross ${formatCurrency(data.grossProfit)}`} />
-            <StatCard label="Net cash flow" value={formatCurrency(data.cashFlow.net)} icon={FileBarChart} tone={data.cashFlow.net >= 0 ? 'emerald' : 'rose'} hint={`closing ${formatCurrency(data.cashFlow.closingBalance)}`} />
-          </div>
-
-          <Card>
-            <CardHeader title="Money movements" subtitle="Payments in the selected period" />
-            <CardBody>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <Money label="Supplier payments" value={data.supplierPayments} tone="rose" />
-                <Money label="Commission paid" value={data.commissionPaid} tone="rose" />
-                <Money label="Other income" value={data.otherIncome} tone="emerald" />
-                <Money label="COGS" value={data.cogs} tone="slate" />
-              </div>
-            </CardBody>
-          </Card>
-
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <Card>
-              <CardHeader title="Top products" subtitle="By profit" />
-              <CardBody>
-                {!data.topProducts.length ? <EmptyState title="No sales in this period" icon={Package} /> : (
-                  <Table>
-                    <THead><TR><TH>Product</TH><TH>Boxes</TH><TH>Profit</TH></TR></THead>
-                    <TBody>
-                      {data.topProducts.map((p) => (
-                        <TR key={p.productId}><TD className="font-medium text-foreground">{p.name}</TD><TD>{formatNumber(p.boxes)}</TD><TD className="font-semibold text-emerald-500">{formatCurrency(p.profit)}</TD></TR>
-                      ))}
-                    </TBody>
-                  </Table>
-                )}
-              </CardBody>
-            </Card>
-            <Card>
-              <CardHeader title="Top brands" subtitle="Revenue · profit" />
-              <CardBody>
-                {!data.topBrands.length ? <EmptyState title="No sales in this period" icon={Package} /> : (
-                  <Table>
-                    <THead><TR><TH>Brand</TH><TH>Boxes</TH><TH>Revenue</TH><TH>Profit</TH><TH>Margin</TH></TR></THead>
-                    <TBody>
-                      {data.topBrands.map((b) => (
-                        <TR key={b.brandId}><TD className="font-medium text-foreground">{b.name}</TD><TD>{formatNumber(b.boxes)}</TD><TD>{formatCurrency(b.revenue)}</TD><TD className="font-semibold text-emerald-500">{formatCurrency(b.profit)}</TD><TD>{b.margin}%</TD></TR>
-                      ))}
-                    </TBody>
-                  </Table>
-                )}
-              </CardBody>
-            </Card>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 // ── Page shell ────────────────────────────────────────────────────────────────
 const TABS = [
   ['overview', 'Overview'], ['profit', 'Profit'], ['cashflow', 'Cash Flow'],
@@ -1004,7 +919,7 @@ export default function Finance() {
       {tab === 'accounts' && <Accounts onQuick={setMoney} />}
       {tab === 'expenses' && <Ledger expensesOnly />}
       {tab === 'ledger' && <Ledger />}
-      {tab === 'reports' && <ReportsTab />}
+      {tab === 'reports' && <ReportsPage embedded />}
 
       {money && <MoneyModal mode={money} accounts={accounts} categories={categories} onClose={() => setMoney(null)} />}
     </div>

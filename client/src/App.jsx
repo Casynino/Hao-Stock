@@ -18,7 +18,6 @@ import Returns from '@/pages/Returns';
 import SalesReps from '@/pages/SalesReps';
 import SalesRepProfile from '@/pages/SalesRepProfile';
 import Reorder from '@/pages/Reorder';
-import Reports from '@/pages/Reports';
 import Finance from '@/pages/Finance';
 import AuditLogs from '@/pages/AuditLogs';
 import Users from '@/pages/Users';
@@ -74,7 +73,8 @@ export default function App() {
         <Route path="/reps" element={<ProtectedRoute roles={W}><SalesReps /></ProtectedRoute>} />
         <Route path="/reps/:id" element={<ProtectedRoute roles={W}><SalesRepProfile /></ProtectedRoute>} />
         <Route path="/reorder" element={<ProtectedRoute roles={W}><Reorder /></ProtectedRoute>} />
-        <Route path="/reports" element={<ProtectedRoute roles={W}><Reports /></ProtectedRoute>} />
+        {/* Reports now lives inside Finance */}
+        <Route path="/reports" element={<Navigate to="/finance?tab=reports" replace />} />
         {/* Profit & Margins now lives inside Finance */}
         <Route path="/profit" element={<Navigate to="/finance?tab=profit" replace />} />
         <Route path="/finance" element={<ProtectedRoute roles={W}><Finance /></ProtectedRoute>} />

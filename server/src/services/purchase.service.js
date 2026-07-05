@@ -133,7 +133,11 @@ async function updatePurchaseOrder(id, payload) {
 // Receive a PO into the warehouse: allocate shipping/clearing/other across
 // lines (by goods value) to get a landed unit cost, post PURCHASE_RECEIPT
 // ledger entries, and update each product's cost to the latest landed cost.
-async function receivePurchaseOrder(id, actor, { actualArrival } = {}) {
+// `stockAlreadyCounted` receives the PO as documentation of stock that is
+// ALREADY in the system (e.g. attributing existing inventory to its supplier):
+// the purchase + supplier debt are recorded, but no stock moves and the
+// product cost basis is left untouched.
+async function receivePurchaseOrder(id, actor, { actualArrival, stockAlreadyCounted } = {}) {
   return prisma.$transaction(async (tx) => {
     const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
     if (!po) throw ApiError.notFound('Purchase order not found');
@@ -159,23 +163,27 @@ async function receivePurchaseOrder(id, actor, { actualArrival } = {}) {
       const allocated = extraCost * share;
       const landedUnitCost = round2(toNumber(it.unitCost) + (it.baseQuantity > 0 ? allocated / it.baseQuantity : 0));
 
-      await inventory.increaseStock(tx, {
-        productId: it.productId,
-        packagingUnitId: it.packagingUnitId,
-        quantity: it.quantity,
-        baseQuantity: it.baseQuantity,
-        type: 'PURCHASE_RECEIPT',
-        location: { type: inventory.LOCATION.WAREHOUSE, warehouseId },
-        unitCost: landedUnitCost,
-        referenceType: 'PURCHASE',
-        referenceId: po.id,
-        userId: actor ? actor.id : null,
-        notes: `Received PO ${po.poNumber}`,
-      });
+      if (!stockAlreadyCounted) {
+        await inventory.increaseStock(tx, {
+          productId: it.productId,
+          packagingUnitId: it.packagingUnitId,
+          quantity: it.quantity,
+          baseQuantity: it.baseQuantity,
+          type: 'PURCHASE_RECEIPT',
+          location: { type: inventory.LOCATION.WAREHOUSE, warehouseId },
+          unitCost: landedUnitCost,
+          referenceType: 'PURCHASE',
+          referenceId: po.id,
+          userId: actor ? actor.id : null,
+          notes: `Received PO ${po.poNumber}`,
+        });
+      }
 
       await tx.purchaseOrderItem.update({ where: { id: it.id }, data: { landedUnitCost } });
-      // Latest landed cost becomes the product's current cost basis.
-      await tx.product.update({ where: { id: it.productId }, data: { purchasePrice: landedUnitCost } });
+      if (!stockAlreadyCounted) {
+        // Latest landed cost becomes the product's current cost basis.
+        await tx.product.update({ where: { id: it.productId }, data: { purchasePrice: landedUnitCost } });
+      }
     }
 
     return tx.purchaseOrder.update({

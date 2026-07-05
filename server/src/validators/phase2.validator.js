@@ -57,7 +57,7 @@ const poUpdate = {
     otherCost: money.optional(),
   }),
 };
-const poReceive = { body: z.object({ actualArrival: dateStr }) };
+const poReceive = { body: z.object({ actualArrival: dateStr, stockAlreadyCounted: z.boolean().optional() }) };
 const poQuery = {
   query: z.object({
     ...paginationFields,

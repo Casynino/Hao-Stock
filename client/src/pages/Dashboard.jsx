@@ -42,7 +42,7 @@ function AttentionTile({ label, value, sub, icon: Icon, active, tone = 'rose', o
     >
       <Icon className="h-5 w-5 shrink-0" />
       <div className="min-w-0 flex-1">
-        <div className={clsx('text-lg font-black leading-none tabular-nums', active ? '' : 'text-white/20')}>{value}</div>
+        <div className={clsx('break-words text-lg font-black leading-tight tabular-nums', active ? '' : 'text-white/20')}>{value}</div>
         <div className="mt-0.5 truncate text-[11px] uppercase tracking-wide text-faint">{label}</div>
         {sub && <div className="truncate text-[11px] text-faint">{sub}</div>}
       </div>
@@ -53,9 +53,9 @@ function AttentionTile({ label, value, sub, icon: Icon, active, tone = 'rose', o
 
 function Mini({ label, value, sub }) {
   return (
-    <div className="rounded-xl bg-black/20 p-3">
+    <div className="min-w-0 rounded-xl bg-black/20 p-3">
       <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
-      <div className="mt-0.5 text-base font-bold tabular-nums text-foreground">{value}</div>
+      <div className="mt-0.5 break-words text-sm font-bold leading-snug tabular-nums text-foreground lg:text-base">{value}</div>
       {sub && <div className="text-[11px] text-faint">{sub}</div>}
     </div>
   );
@@ -185,7 +185,7 @@ export default function Dashboard() {
                     <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${t.badge}`}>{b.name}</span>
                     <span className="ml-auto text-[11px] text-faint">this month</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
                     <Mini label="Revenue" value={formatCurrency(b.revenueMonth)} sub={`${formatNumber(b.boxesSoldMonth)} boxes sold`} />
                     <Mini label="Gross profit" value={formatCurrency(b.grossProfitMonth)} sub={`${b.marginMonth}% margin`} />
                     <Mini label="Inventory value" value={formatCurrency(b.inventoryValue)} />
@@ -234,7 +234,7 @@ export default function Dashboard() {
       {/* ── Inventory overview ── */}
       <div className="mt-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Inventory overview</h2>
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
           <StatCard label="Inventory value" value={formatCurrency(inventory.costValue)} icon={Boxes} tone="brand" hint={`selling ${formatCurrency(inventory.sellingValue)}`} onClick={() => navigate('/inventory')} />
           <StatCard label="Total boxes" value={formatNumber(inventory.units)} icon={Boxes} tone="slate" />
           <StatCard label="In warehouse" value={formatNumber(inventory.warehouseBoxes)} icon={Warehouse} tone="emerald" onClick={() => navigate('/inventory')} />

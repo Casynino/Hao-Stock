@@ -31,10 +31,27 @@ async function setSetting(key, value, group = 'whatsapp') {
   });
 }
 
+// The week this report covers: on Mondays (cron day) that's the COMPLETED
+// Mon–Sun week that just ended; any other day (manual/test sends) it's the
+// current ISO week to date.
+function reportWeek() {
+  const now = dayjs();
+  const start = now.isoWeekday() === 1 ? now.startOf('isoWeek').subtract(7, 'day') : now.startOf('isoWeek');
+  const end = now.isoWeekday() === 1 ? now.startOf('isoWeek').subtract(1, 'day') : now;
+  return { start, end };
+}
+
 // Build the WhatsApp-formatted weekly report text from real business data.
 async function buildWeeklyReportText() {
-  const [fin, suppliers, low, pending] = await Promise.all([
-    finance.overview('week'),
+  const { start, end } = reportWeek();
+  const from = start.format('YYYY-MM-DD');
+  const to = end.format('YYYY-MM-DD');
+
+  const inventory = require('./inventory.service');
+  const [rep, accounts, val, suppliers, low, pending] = await Promise.all([
+    finance.report({ from, to }),
+    finance.accountBalances(),
+    inventory.valuation(prisma),
     finance.supplierSummaries(),
     reorder.lowStock(),
     prisma.$transaction([
@@ -45,37 +62,36 @@ async function buildWeeklyReportText() {
     ]),
   ]);
 
-  const weekStart = dayjs().startOf('week').format('D MMM');
-  const weekEnd = dayjs().format('D MMM YYYY');
   const supplierDue = suppliers.reduce((s, x) => s + x.outstanding, 0);
-  const flow = fin.flow.week || { moneyIn: 0, moneyOut: 0, net: 0 };
+  const cashPosition = accounts.reduce((s, a) => s + a.balance, 0);
 
   const lines = [
     '📊 *The Lab — Weekly Report*',
-    `_${weekStart} – ${weekEnd}_`,
+    `_${start.format('D MMM')} – ${end.format('D MMM YYYY')}_`,
     '',
     '💰 *Where the money is*',
-    ...fin.accounts.map((a) => `${a.name}: ${fmt(a.balance)}`),
-    `*Total: ${fmt(fin.cashPosition)}*`,
+    ...accounts.map((a) => `${a.name}: ${fmt(a.balance)}`),
+    `*Total: ${fmt(cashPosition)}*`,
     '',
     '📈 *This week*',
-    `Revenue: ${fmt(fin.revenue)}`,
-    `Gross profit: ${fmt(fin.grossProfit)}`,
-    `Expenses: ${fmt(fin.expenses)}`,
-    `*Net profit: ${fmt(fin.netProfit)}*`,
-    `Cash flow: in ${fmt(flow.moneyIn)} / out ${fmt(flow.moneyOut)}`,
+    `Revenue: ${fmt(rep.revenue)}`,
+    `Gross profit: ${fmt(rep.grossProfit)}`,
+    `Expenses: ${fmt(rep.expenses)}`,
+    `*Net profit: ${fmt(rep.netProfit)}*`,
+    `Cash flow: in ${fmt(rep.cashFlow.moneyIn)} / out ${fmt(rep.cashFlow.moneyOut)}`,
+    `Boxes sold: ${rep.boxesSold}`,
   ];
 
-  if ((fin.brandFinance || []).length > 0) {
+  if ((rep.topBrands || []).length > 0) {
     lines.push('', '🏷️ *By brand (week)*');
-    for (const b of fin.brandFinance) {
-      lines.push(`${b.name}: ${fmt(b.revenue)} rev · ${fmt(b.netProfit)} profit · ${b.boxesSold} boxes`);
+    for (const b of rep.topBrands) {
+      lines.push(`${b.name}: ${fmt(b.revenue)} rev · ${fmt(b.profit)} profit · ${b.boxes} boxes`);
     }
   }
 
   lines.push('', '📦 *Inventory*',
-    `Value: ${fmt(fin.inventoryValue.cost)} (${fin.inventoryValue.units} boxes)`,
-    `Potential profit in stock: ${fmt(fin.inventoryValue.potential)}`);
+    `Value: ${fmt(val.totals.totalValue)} (${val.totals.totalBaseUnits} boxes)`,
+    `Potential profit in stock: ${fmt(val.totals.retailValue - val.totals.totalValue)}`);
 
   const attention = [];
   if (pending[0]) attention.push(`${pending[0]} stock request(s) waiting`);
@@ -108,8 +124,8 @@ async function sendWhatsApp(text) {
 // Compose + send the weekly report. Guarded so a retried cron never sends the
 // same week's report twice.
 async function sendWeeklyReport({ force = false } = {}) {
-  const now = dayjs();
-  const weekKey = `${now.isoWeekYear()}-W${String(now.isoWeek()).padStart(2, '0')}`; // e.g. 2026-W28
+  const { start } = reportWeek();
+  const weekKey = `${start.isoWeekYear()}-W${String(start.isoWeek()).padStart(2, '0')}`; // week the report covers
   const lastKey = await getSetting('whatsapp.lastWeeklySent');
   if (!force && lastKey === weekKey) {
     return { sent: false, reason: `Already sent for ${weekKey}` };

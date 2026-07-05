@@ -304,13 +304,33 @@ async function profitReport(params = {}) {
 // before cost prices existed). Profit is only counted on actual sales (settled
 // boxes create CASH sales) — never on stock requests, transfers or warehouse
 // inventory. period: today | week | month | year | all.
+// --- Finance epoch -----------------------------------------------------------
+// The Finance go-live moment (setting `finance.epochAt`). Revenue, profit and
+// money-flow figures count ONLY from this instant — everything before it is
+// kept in the database for audit but excluded from financial aggregates.
+// Null (unset) = no cutoff. Cached briefly to avoid a query per request.
+let _epochCache = { at: 0, value: undefined };
+async function financeEpoch() {
+  if (Date.now() - _epochCache.at < 60_000 && _epochCache.value !== undefined) return _epochCache.value;
+  const row = await prisma.setting.findUnique({ where: { key: 'finance.epochAt' } }).catch(() => null);
+  const value = row?.value ? new Date(row.value) : null;
+  _epochCache = { at: Date.now(), value };
+  return value;
+}
+
 // Accepts a period string ('today'|'week'|'month'|'year'|'all') or an options
-// object { period, from, to } for custom date ranges.
+// object { period, from, to } for custom date ranges. All ranges are clamped
+// to the finance epoch — pre-epoch sales never count toward profit figures.
 async function profitOverview(opts = 'month') {
   const o = typeof opts === 'string' ? { period: opts } : opts || {};
-  const range = o.from || o.to
+  let range = o.from || o.to
     ? resolveRange({ from: o.from, to: o.to })
     : o.period && o.period !== 'all' ? resolveRange({ period: o.period }) : null;
+  const epoch = await financeEpoch();
+  if (epoch) {
+    if (!range) range = { start: epoch, end: new Date() };
+    else if (range.start < epoch) range = { ...range, start: epoch };
+  }
   const period = o.period || 'custom';
   const where = { sale: { is: { ...NON_CANCELLED } } };
   if (range) where.sale.is.soldAt = { gte: range.start, lte: range.end };
@@ -447,6 +467,7 @@ module.exports = {
   salesRepPerformance,
   profitReport,
   profitOverview,
+  financeEpoch,
   inventoryMovementReport,
   debtReport,
   inventoryValuationReport,

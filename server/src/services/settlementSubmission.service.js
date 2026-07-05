@@ -97,9 +97,8 @@ async function submit(settlementId, payload, actor) {
     entityType: 'Settlement',
     entityId: settlementId,
   }).catch(() => {});
-  require('./whatsappNotify.service')
-    .settlementSubmitted({ sub: result.sub, settlement: result.settlement, product: result.product, repName })
-    .catch(() => {});
+  const wa = require('./whatsappNotify.service');
+  wa.background(wa.settlementSubmitted({ sub: result.sub, settlement: result.settlement, product: result.product, repName }));
 
   return result.sub;
 }
@@ -153,7 +152,8 @@ async function approve(submissionId, actor) {
   }).catch(() => {});
   // Commission just accrued — tell the rep (and the owner) if the balance
   // now clears the withdrawal threshold.
-  require('./whatsappNotify.service').commissionReadyCheck(sub.salesRepId).catch(() => {});
+  const wa = require('./whatsappNotify.service');
+  wa.background(wa.commissionReadyCheck(sub.salesRepId));
 
   return out.dec;
 }

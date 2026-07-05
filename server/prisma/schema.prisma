@@ -895,6 +895,30 @@ model Setting {
   @@map("settings")
 }
 
+// Outbound WhatsApp notifications (owner's phone via CallMeBot). Doubles as
+// the delivery log, the dedupe guard (dedupeKey unique) and the retry queue
+// (PENDING rows are re-attempted by cron + polling piggybacks).
+model WhatsAppNotification {
+  id        String  @id @default(cuid())
+  type      String // STOCK_REQUEST | SETTLEMENT_SUBMITTED | RETURN_SUBMITTED | ...
+  priority  String  @default("INFO") // INFO | ACTION | WARNING | CRITICAL
+  refType   String?
+  refId     String?
+  dedupeKey String? @unique
+  text      String
+
+  status    String    @default("PENDING") // PENDING | SENT | FAILED
+  attempts  Int       @default(0)
+  lastError String?
+  sentAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("whatsapp_notifications")
+}
+
 // ===========================================================================
 // PHASE 2 — imports, stock requests, settlements, commissions, online orders
 // ===========================================================================

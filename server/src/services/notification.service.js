@@ -154,6 +154,9 @@ async function checkProductLowStock(productId) {
     });
     if (!product || product.minStockLevel <= 0) return;
 
+    // Mirror the alert to the owner's WhatsApp (dedupes per product per day).
+    require('./whatsappNotify.service').stockAlertForProduct(productId).catch(() => {});
+
     const agg = await prisma.warehouseStock.aggregate({
       where: { productId },
       _sum: { baseQuantity: true },

@@ -1,0 +1,464 @@
+'use strict';
+
+// ===========================================================================
+// REAL-TIME WHATSAPP NOTIFICATIONS — The Lab's live business feed
+//
+// Every important business event queues a professional, sectioned WhatsApp
+// message to the owner's phone (CallMeBot). The whatsapp_notifications table
+// is the single source of truth for delivery: it deduplicates (dedupeKey),
+// logs every send with its status, and acts as the retry queue — PENDING
+// rows are re-attempted from the daily crons and from admin-polling
+// piggybacks, so a failed delivery heals itself.
+//
+// Formatting rules are deliberately conservative (no divider runs, no
+// https:// links): CallMeBot fronts its API with a scoring firewall that
+// silently 403s messages that look bot-spammy. See weeklyReport.service.
+//
+// Admin controls (Settings → group "whatsapp"):
+//   whatsapp.phone / whatsapp.apikey        — CallMeBot credentials
+//   whatsapp.notify.<TYPE> = '0'|'1'        — per-type toggle (default on)
+//   whatsapp.quietFrom / whatsapp.quietTo   — quiet hours (EAT, 0-23);
+//                                             CRITICAL messages bypass them
+// ===========================================================================
+
+const prisma = require('../config/prisma');
+const { dayjs } = require('../utils/dates');
+const { toNumber, round2 } = require('../utils/money');
+
+const MAX_ATTEMPTS = 5;
+const fmt = (n) => `TSh ${Math.round(Number(n) || 0).toLocaleString('en-US')}`;
+
+// Notification catalogue: label + default priority, used by the Settings UI.
+const TYPES = {
+  STOCK_REQUEST: { label: 'Stock request submitted', priority: 'ACTION' },
+  SETTLEMENT_SUBMITTED: { label: 'Settlement submitted', priority: 'ACTION' },
+  RETURN_SUBMITTED: { label: 'Return request submitted', priority: 'ACTION' },
+  COMMISSION_READY: { label: 'Rep commission ready for withdrawal', priority: 'INFO' },
+  LOW_STOCK: { label: 'Low stock alert', priority: 'WARNING' },
+  OUT_OF_STOCK: { label: 'Out of stock alert', priority: 'CRITICAL' },
+  DAILY_SUMMARY: { label: 'Daily business summary (evening)', priority: 'INFO' },
+  WEEKLY_REPORT: { label: 'Weekly business report (Monday)', priority: 'INFO' },
+  TEST: { label: 'Test message', priority: 'INFO' },
+};
+
+const PRIORITY_ICON = { INFO: '🟢', ACTION: '🟡', WARNING: '🟠', CRITICAL: '🔴' };
+
+// ── Settings helpers ─────────────────────────────────────────────────────────
+async function getSetting(key) {
+  const row = await prisma.setting.findUnique({ where: { key } }).catch(() => null);
+  return row?.value ?? null;
+}
+
+async function getConfig() {
+  const [phone, apikey] = await Promise.all([getSetting('whatsapp.phone'), getSetting('whatsapp.apikey')]);
+  return { phone, apikey, configured: Boolean(phone && apikey) };
+}
+
+async function isEnabled(type) {
+  const v = await getSetting(`whatsapp.notify.${type}`);
+  return v !== '0'; // default on
+}
+
+// East Africa Time (UTC+3, no DST) — the business's clock.
+const nowEAT = () => dayjs().utc().add(3, 'hour');
+const fmtWhen = (d) => (d ? dayjs(d) : dayjs()).utc().add(3, 'hour').format('D MMM YYYY, HH:mm') + ' EAT';
+const dateEAT = () => nowEAT().format('YYYY-MM-DD');
+
+async function inQuietHours() {
+  const [fromRaw, toRaw] = await Promise.all([getSetting('whatsapp.quietFrom'), getSetting('whatsapp.quietTo')]);
+  const from = parseInt(fromRaw, 10);
+  const to = parseInt(toRaw, 10);
+  if (Number.isNaN(from) || Number.isNaN(to) || from === to) return false;
+  const h = nowEAT().hour();
+  return from < to ? h >= from && h < to : h >= from || h < to;
+}
+
+// ── Message composer (the notification standard) ─────────────────────────────
+// Title → date/time → person → reference → details → status → action.
+function compose({ priority = 'INFO', title, ref, when, who, lines = [], status, action }) {
+  const out = [
+    `${PRIORITY_ICON[priority] || PRIORITY_ICON.INFO} *${title}*${ref ? ` — ${ref}` : ''}`,
+    `_${fmtWhen(when)}_`,
+  ];
+  if (who) out.push('', `*By:* ${who}`);
+  if (lines.length) out.push('', ...lines);
+  if (status || action) out.push('');
+  if (status) out.push(`*Status:* ${status}`);
+  if (action) out.push(`*Action:* ${action}`);
+  return out.join('\n');
+}
+
+// ── Delivery ─────────────────────────────────────────────────────────────────
+async function sendRaw(text) {
+  const { phone, apikey, configured } = await getConfig();
+  if (!configured) return { sent: false, reason: 'WhatsApp not configured' };
+  const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&apikey=${encodeURIComponent(apikey)}&text=${encodeURIComponent(text)}`;
+  // Browser UA on purpose — CallMeBot's firewall 403s bot user agents.
+  const res = await fetch(url, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' } });
+  const body = await res.text().catch(() => '');
+  const sent = res.ok && /message queued|sent|will be delivered/i.test(body);
+  return { sent, status: res.status, provider: body.slice(0, 160) };
+}
+
+async function deliver(row) {
+  const result = await sendRaw(row.text).catch((e) => ({ sent: false, provider: e.message }));
+  const attempts = row.attempts + 1;
+  const status = result.sent ? 'SENT' : attempts >= MAX_ATTEMPTS ? 'FAILED' : 'PENDING';
+  const updated = await prisma.whatsAppNotification.update({
+    where: { id: row.id },
+    data: {
+      status,
+      attempts,
+      sentAt: result.sent ? new Date() : null,
+      lastError: result.sent ? null : String(result.reason || result.provider || 'send failed').slice(0, 300),
+    },
+  });
+  return { queued: true, sent: result.sent, status: updated.status, attempts, id: row.id };
+}
+
+// Queue a notification: log it (dedupe on dedupeKey) and try to send now.
+// Quiet hours hold non-critical messages as PENDING; flush() sends them later.
+async function queue(type, { priority, dedupeKey = null, refType = null, refId = null, text }) {
+  if (!(await isEnabled(type))) return { queued: false, reason: 'disabled' };
+  const { configured } = await getConfig();
+  if (!configured) return { queued: false, reason: 'not-configured' };
+
+  const prio = priority || TYPES[type]?.priority || 'INFO';
+  let row;
+  try {
+    row = await prisma.whatsAppNotification.create({
+      data: { type, priority: prio, dedupeKey, refType, refId, text },
+    });
+  } catch (e) {
+    if (e.code === 'P2002') return { queued: false, reason: 'duplicate' };
+    throw e;
+  }
+  if (prio !== 'CRITICAL' && (await inQuietHours())) {
+    return { queued: true, sent: false, status: 'PENDING', reason: 'quiet-hours', id: row.id };
+  }
+  return deliver(row);
+}
+
+// Re-attempt undelivered rows. Called from crons and (throttled) from admin
+// polling. Sends at most two per run with a gap — CallMeBot rate-limits bursts.
+let lastFlushAt = 0;
+async function flush({ throttleMs = 60000 } = {}) {
+  const now = Date.now();
+  if (now - lastFlushAt < throttleMs) return { retried: 0, throttled: true };
+  lastFlushAt = now;
+
+  const quiet = await inQuietHours();
+  const rows = await prisma.whatsAppNotification.findMany({
+    where: {
+      status: 'PENDING',
+      attempts: { lt: MAX_ATTEMPTS },
+      createdAt: { gt: new Date(now - 48 * 3600 * 1000) },
+      ...(quiet ? { priority: 'CRITICAL' } : {}),
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 2,
+  });
+  let sent = 0;
+  for (const row of rows) {
+    const r = await deliver(row);
+    if (r.sent) sent += 1;
+    if (rows.length > 1) await new Promise((res) => setTimeout(res, 8000));
+  }
+  return { retried: rows.length, sent };
+}
+
+// ── Event notifications ──────────────────────────────────────────────────────
+
+// 1. Stock request submitted (rep asks for stock). `req` is the created
+// request including items+product and salesRep.user.
+async function stockRequestSubmitted(req) {
+  const repName = req.salesRep?.user?.name || 'A rep';
+  const boxes = (req.items || []).reduce((s, i) => s + (i.quantityRequested || 0), 0);
+  const itemLines = (req.items || []).map((i) => `${i.product?.name}: ${i.quantityRequested} ${i.packagingUnit?.name || 'box'}(s)`);
+  const text = compose({
+    priority: 'ACTION',
+    title: 'STOCK REQUEST',
+    ref: req.requestNumber,
+    who: `${repName} (${req.salesRep?.code || 'rep'})`,
+    lines: [...itemLines, `*Total:* ${boxes} box(es) worth ${fmt(req.totalValue)}`],
+    status: 'Pending approval',
+    action: 'Approve or reject in The Lab',
+  });
+  return queue('STOCK_REQUEST', { dedupeKey: `stockreq:${req.id}`, refType: 'StockRequest', refId: req.id, text });
+}
+
+// 4. Settlement submitted (rep reports boxes sold + money paid in).
+async function settlementSubmitted({ sub, settlement, product, repName }) {
+  const commission = require('./commission.service');
+  let perBox = 0;
+  try { perBox = toNumber((await commission.getRule()).perBox); } catch { /* rule optional */ }
+  const text = compose({
+    priority: 'ACTION',
+    title: 'SETTLEMENT SUBMITTED',
+    ref: sub.submissionNumber,
+    who: repName,
+    lines: [
+      `*Order:* ${settlement.settlementNumber}`,
+      `*Product:* ${product.name}`,
+      `*Boxes sold:* ${sub.boxes}`,
+      `*Payment:* ${fmt(sub.amount)} via ${sub.method || 'Cash'}`,
+      perBox > 0 ? `*Commission if approved:* ${fmt(round2(sub.boxes * perBox))}` : null,
+    ].filter(Boolean),
+    status: 'Pending approval — no business impact yet',
+    action: 'Verify the money arrived, then approve',
+  });
+  return queue('SETTLEMENT_SUBMITTED', { dedupeKey: `stlsub:${sub.id}`, refType: 'SettlementSubmission', refId: sub.id, text });
+}
+
+// 6. Return request submitted.
+async function returnSubmitted(ret) {
+  const repName = ret.salesRep?.user?.name || 'Warehouse';
+  const boxes = (ret.items || []).reduce((s, i) => s + (i.quantity || 0), 0);
+  const itemLines = (ret.items || []).map((i) => `${i.product?.name}: ${i.quantity} box(es)`);
+  let orderNumber = null;
+  if (ret.settlementId) {
+    const s = await prisma.settlement.findUnique({ where: { id: ret.settlementId }, select: { settlementNumber: true } }).catch(() => null);
+    orderNumber = s?.settlementNumber || null;
+  }
+  const text = compose({
+    priority: 'ACTION',
+    title: 'RETURN REQUEST',
+    ref: ret.returnNumber,
+    who: repName,
+    lines: [
+      orderNumber ? `*Order:* ${orderNumber}` : null,
+      ...itemLines,
+      `*Total returned:* ${boxes} box(es)`,
+      ret.reason ? `*Reason:* ${ret.reason}` : null,
+    ].filter(Boolean),
+    status: 'Pending inspection',
+    action: 'Inspect the goods, then approve or reject',
+  });
+  return queue('RETURN_SUBMITTED', { dedupeKey: `return:${ret.id}`, refType: 'Return', refId: ret.id, text });
+}
+
+// 8. Commission ready — a rep's available balance reached the withdrawal
+// threshold. WhatsApp goes to the owner (CallMeBot only reaches the owner's
+// phone); the rep gets an in-app notification. Once per rep per day.
+async function commissionReadyCheck(salesRepId) {
+  const commission = require('./commission.service');
+  const notification = require('./notification.service');
+  const c = await commission.computeForRep(salesRepId);
+  const threshold = toNumber(c.rule?.amountPerThreshold) || 0;
+  if (threshold <= 0 || c.available < threshold) return { queued: false, reason: 'below-threshold' };
+
+  const rep = await prisma.salesRepresentative.findUnique({
+    where: { id: salesRepId },
+    include: { user: { select: { id: true, name: true } } },
+  });
+  if (!rep) return { queued: false, reason: 'rep-not-found' };
+
+  notification.createIfAbsent({
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: 'Commission ready for withdrawal',
+    message: `Your available commission is ${fmt(c.available)} — above the ${fmt(threshold)} minimum. You can request a withdrawal.`,
+    entityType: 'Commission',
+    entityId: `commready-${salesRepId}`,
+    userId: rep.user?.id || null,
+  }).catch(() => {});
+
+  const text = compose({
+    priority: 'INFO',
+    title: 'COMMISSION READY',
+    who: `${rep.user?.name || rep.code} (${rep.code})`,
+    lines: [
+      `*Available commission:* ${fmt(c.available)}`,
+      `*Earned to date:* ${fmt(c.earned)}`,
+      c.penalties > 0 ? `*Penalties applied:* ${fmt(c.penalties)}` : null,
+      `*Withdrawal minimum:* ${fmt(threshold)}`,
+    ].filter(Boolean),
+    status: 'Eligible for withdrawal',
+  });
+  return queue('COMMISSION_READY', {
+    dedupeKey: `commready:${salesRepId}:${dateEAT()}`,
+    refType: 'SalesRepresentative',
+    refId: salesRepId,
+    text,
+  });
+}
+
+// 10 & 11. Low stock / out of stock for one product. Once per product per day.
+async function stockAlertForProduct(productId) {
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    select: { id: true, name: true, minStockLevel: true, brand: { select: { name: true } } },
+  });
+  if (!product || product.minStockLevel <= 0) return { queued: false, reason: 'no-min-level' };
+
+  const agg = await prisma.warehouseStock.aggregate({ where: { productId }, _sum: { baseQuantity: true } });
+  const onHand = agg._sum.baseQuantity || 0;
+  if (onHand > product.minStockLevel) return { queued: false, reason: 'in-stock' };
+
+  const recommended = Math.max(product.minStockLevel * 2 - onHand, product.minStockLevel);
+  if (onHand <= 0) {
+    const lastSale = await prisma.saleItem.findFirst({
+      where: { productId, sale: { status: { not: 'CANCELLED' } } },
+      orderBy: { sale: { soldAt: 'desc' } },
+      select: { sale: { select: { soldAt: true } } },
+    }).catch(() => null);
+    const text = compose({
+      priority: 'CRITICAL',
+      title: 'OUT OF STOCK',
+      lines: [
+        `*Product:* ${product.name}`,
+        `*Brand:* ${product.brand?.name || '-'}`,
+        `*Warehouse stock:* 0 boxes`,
+        lastSale?.sale?.soldAt ? `*Last sale:* ${fmtWhen(lastSale.sale.soldAt)}` : null,
+        `*Suggested purchase:* ${recommended} box(es)`,
+      ].filter(Boolean),
+      status: 'Sales of this product are blocked',
+      action: 'Restock immediately',
+    });
+    return queue('OUT_OF_STOCK', { dedupeKey: `outofstock:${productId}:${dateEAT()}`, refType: 'Product', refId: productId, text });
+  }
+
+  const text = compose({
+    priority: 'WARNING',
+    title: 'LOW STOCK',
+    lines: [
+      `*Product:* ${product.name}`,
+      `*Remaining:* ${onHand} box(es)`,
+      `*Reorder level:* ${product.minStockLevel}`,
+      `*Suggested purchase:* ${recommended} box(es)`,
+    ],
+    status: onHand <= product.minStockLevel / 2 ? 'High priority' : 'Medium priority',
+    action: 'Plan a restock',
+  });
+  return queue('LOW_STOCK', { dedupeKey: `lowstock:${productId}:${dateEAT()}`, refType: 'Product', refId: productId, text });
+}
+
+// Cron sweep: catch anything the movement hooks missed.
+async function scanStockAlerts() {
+  const reorder = require('./reorder.service');
+  const low = await reorder.lowStock();
+  let queued = 0;
+  for (const p of low) {
+    const r = await stockAlertForProduct(p.id).catch(() => ({ queued: false }));
+    if (r.queued) queued += 1;
+  }
+  return { candidates: low.length, queued };
+}
+
+// 15. Daily business summary — the evening pulse.
+async function dailySummary({ force = false } = {}) {
+  const finance = require('./finance.service');
+  const reorder = require('./reorder.service');
+
+  const dayStart = dayjs().startOf('day').toDate();
+  const [rep, accounts, low, counts, topRepRows] = await Promise.all([
+    finance.report({ period: 'today' }),
+    finance.accountBalances(),
+    reorder.lowStock(),
+    prisma.$transaction([
+      prisma.stockRequest.count({ where: { status: 'PENDING' } }),
+      prisma.settlementSubmission.count({ where: { status: 'PENDING' } }),
+      prisma.return.count({ where: { status: 'PENDING' } }),
+      prisma.settlementSubmission.count({ where: { status: 'APPROVED', decidedAt: { gte: dayStart } } }),
+      prisma.return.count({ where: { createdAt: { gte: dayStart } } }),
+    ]),
+    prisma.sale.groupBy({
+      by: ['salesRepId'],
+      where: { soldAt: { gte: dayStart }, status: { not: 'CANCELLED' }, salesRepId: { not: null } },
+      _sum: { total: true },
+      orderBy: { _sum: { total: 'desc' } },
+      take: 1,
+    }).catch(() => []),
+  ]);
+
+  let topRepLine = null;
+  if (topRepRows.length) {
+    const r = await prisma.salesRepresentative.findUnique({
+      where: { id: topRepRows[0].salesRepId },
+      include: { user: { select: { name: true } } },
+    }).catch(() => null);
+    if (r) topRepLine = `Top rep: ${r.user?.name || r.code} (${fmt(topRepRows[0]._sum.total)})`;
+  }
+  const best = (rep.topProducts || [])[0];
+  const cashPosition = accounts.reduce((s, a) => s + a.balance, 0);
+  const pendingTotal = counts[0] + counts[1] + counts[2];
+
+  const lines = [
+    '🟢 *THE LAB — DAILY SUMMARY*',
+    `_${nowEAT().format('dddd, D MMM YYYY')}_`,
+    '',
+    '💰 *TODAY*',
+    `Sales: ${fmt(rep.revenue)} (${rep.boxesSold} boxes)`,
+    `Gross profit: ${fmt(rep.grossProfit)}`,
+    `Expenses: ${fmt(rep.expenses)}`,
+    `*Net profit: ${fmt(rep.netProfit)}*`,
+    '',
+    '🏦 *CASH POSITION*',
+    ...accounts.map((a) => `${a.name}: ${fmt(a.balance)}`),
+    `*Total funds: ${fmt(cashPosition)}*`,
+    '',
+    '📋 *ACTIVITY*',
+    `Settlements approved: ${counts[3]}`,
+    `Returns submitted: ${counts[4]}`,
+    `Pending approvals: ${pendingTotal} (${counts[0]} requests / ${counts[1]} settlements / ${counts[2]} returns)`,
+  ];
+  if (best || topRepLine) {
+    lines.push('', '🏆 *BEST TODAY*');
+    if (best) lines.push(`Product: ${best.name} (${fmt(best.revenue)})`);
+    if (topRepLine) lines.push(topRepLine);
+  }
+  lines.push('', low.length ? `⚠️ ${low.length} product(s) low on stock` : '✅ Stock levels healthy');
+
+  return queue('DAILY_SUMMARY', {
+    dedupeKey: force ? `daily:${dateEAT()}:${Date.now()}` : `daily:${dateEAT()}`,
+    text: lines.join('\n'),
+  });
+}
+
+// Fallback for the evening summary: piggybacks on admin polling in case the
+// daily cron slot isn't available on the hosting plan. The dedupeKey makes
+// this idempotent with the cron.
+let lastCatchupAt = 0;
+async function dailySummaryCatchup() {
+  if (nowEAT().hour() < 20) return { queued: false, reason: 'too-early' };
+  const now = Date.now();
+  if (now - lastCatchupAt < 10 * 60 * 1000) return { queued: false, reason: 'throttled' };
+  lastCatchupAt = now;
+  return dailySummary();
+}
+
+// ── Admin endpoints ──────────────────────────────────────────────────────────
+async function history(limit = 30) {
+  return prisma.whatsAppNotification.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(Number(limit) || 30, 100),
+  });
+}
+
+async function test() {
+  const text = compose({
+    priority: 'INFO',
+    title: 'TEST NOTIFICATION',
+    lines: ['WhatsApp notifications are working.', 'This is how live business alerts will look.'],
+    status: 'Delivered',
+  });
+  return queue('TEST', { text });
+}
+
+module.exports = {
+  TYPES,
+  compose,
+  sendRaw,
+  queue,
+  flush,
+  stockRequestSubmitted,
+  settlementSubmitted,
+  returnSubmitted,
+  commissionReadyCheck,
+  stockAlertForProduct,
+  scanStockAlerts,
+  dailySummary,
+  dailySummaryCatchup,
+  history,
+  test,
+};

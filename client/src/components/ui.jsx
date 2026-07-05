@@ -234,7 +234,7 @@ export function StatCard({ label, value, icon: Icon, hint, tone = 'brand', onCli
           </span>
         )}
       </div>
-      <div className="relative mt-3 break-words text-xl font-bold tracking-tight text-foreground sm:text-2xl">{value}</div>
+      <div className="relative mt-3 min-w-0 break-words text-lg font-bold leading-snug tracking-tight text-foreground sm:text-xl xl:text-2xl">{value}</div>
       {hint && <div className="relative mt-1 text-xs text-faint">{hint}</div>}
     </motion.div>
   );

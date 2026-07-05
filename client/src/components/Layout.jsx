@@ -202,7 +202,7 @@ export default function Layout() {
   return (
     <div className="flex min-h-screen bg-elevated">
       {/* Sidebar (desktop) */}
-      <aside className="hidden w-60 flex-col border-r border-border bg-[#0c0c0e] md:flex xl:w-64">
+      <aside className="hidden w-60 flex-col border-r border-border bg-[#0c0c0e] md:sticky md:top-0 md:flex md:h-screen xl:w-64">
         <Brand />
         <NavItems items={items} counts={pendingActions} />
         <div className="border-t border-white/5 p-3 text-[11px] text-faint"><span className="font-semibold uppercase tracking-wider">The Lab</span> · Developed by Nino</div>

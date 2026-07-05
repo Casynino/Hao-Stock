@@ -10,7 +10,7 @@ import {
   Ship, Globe, ClipboardList, Timer, Coins, NotebookPen, Activity, Flag, TrendingUp, Receipt, Wallet,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { NAV, ROLE_LABELS, ROLES } from '@/lib/constants';
+import { NAV, NAV_GROUPS, ROLE_LABELS, ROLES } from '@/lib/constants';
 import { initials, fromNow } from '@/lib/format';
 import api, { unwrap, apiError } from '@/lib/api';
 import { Modal, Button, Field, Input } from '@/components/ui';
@@ -32,13 +32,7 @@ function CountPill({ count }) {
 }
 
 function NavItems({ items, counts = {}, onNavigate }) {
-  const location = useLocation();
-  const primary = items.filter((i) => i.group !== 'advanced');
-  const advanced = items.filter((i) => i.group === 'advanced');
-  const onAdvanced = advanced.some((i) => location.pathname === i.to);
-  const [showMore, setShowMore] = useState(onAdvanced);
   const countFor = (item) => (item.badge ? counts[item.badge] || 0 : 0);
-  const advancedCount = advanced.reduce((s, i) => s + countFor(i), 0);
 
   const renderLink = (item) => {
     const Icon = ICONS[item.icon] || Package;
@@ -63,24 +57,20 @@ function NavItems({ items, counts = {}, onNavigate }) {
     );
   };
 
+  // Sections in daily-workflow order; a header only shows when the role can
+  // see something inside it.
   return (
     <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-      {primary.map(renderLink)}
-      {advanced.length > 0 && (
-        <div className="pt-2">
-          <button
-            onClick={() => setShowMore((v) => !v)}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted transition hover:bg-white/5 hover:text-foreground"
-          >
-            <span>More tools</span>
-            <span className="flex items-center gap-2">
-              {!showMore && <CountPill count={advancedCount} />}
-              <ChevronDown className={`h-4 w-4 transition-transform ${showMore ? 'rotate-180' : ''}`} />
-            </span>
-          </button>
-          {showMore && <div className="mt-1 space-y-1">{advanced.map(renderLink)}</div>}
-        </div>
-      )}
+      {NAV_GROUPS.map(([key, label], gi) => {
+        const groupItems = items.filter((i) => i.group === key);
+        if (groupItems.length === 0) return null;
+        return (
+          <div key={key} className={gi > 0 ? 'pt-3' : ''}>
+            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">{label}</div>
+            <div className="space-y-1">{groupItems.map(renderLink)}</div>
+          </div>
+        );
+      })}
     </nav>
   );
 }

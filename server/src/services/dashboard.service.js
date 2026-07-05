@@ -15,8 +15,17 @@ async function periodSales(period) {
   return { revenue: r.totals.revenue, profit: r.totals.grossProfit, orders: r.totals.orders };
 }
 
-async function paymentsCollected(period) {
+// Money windows on the dashboard start at the finance epoch — pre-go-live
+// activity stays in the database but never counts as money.
+async function epochRange(period) {
   const range = resolveRange({ period });
+  const epoch = await reports.financeEpoch();
+  if (epoch && range.start < epoch) return { ...range, start: epoch };
+  return range;
+}
+
+async function paymentsCollected(period) {
+  const range = await epochRange(period);
   const [credits, cash] = await Promise.all([
     prisma.creditPayment.aggregate({
       where: { paidAt: { gte: range.start, lte: range.end } },
@@ -183,8 +192,8 @@ async function overview() {
 // Per-brand split (OHIS vs CIVILLY): stock on hand + this month's/today's sales.
 // Everything is grouped by the product's brand, so no brand is ever mixed.
 async function brandBreakdown() {
-  const month = resolveRange({ period: 'month' });
-  const today = resolveRange({ period: 'today' });
+  const month = await epochRange('month');
+  const today = await epochRange('today');
   const [brands, products, val, monthItems, todayItems] = await Promise.all([
     prisma.brand.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
     prisma.product.findMany({ select: { id: true, brandId: true, purchasePrice: true } }),

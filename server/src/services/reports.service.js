@@ -33,7 +33,7 @@ function pickGranularity(range, requested) {
 // Time-bucketed sales with revenue, cost and profit. Powers daily/weekly/
 // monthly/annual reports depending on the period + granularity supplied.
 async function salesReport(params = {}) {
-  const range = resolveRange(params);
+  const range = await clampToEpoch(resolveRange(params));
   const granularity = pickGranularity(range, params.groupBy);
 
   const where = { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } };
@@ -94,7 +94,7 @@ async function salesReport(params = {}) {
 // Per-product units sold, revenue and profit. Returns both top sellers and the
 // slowest movers (active products ranked by units sold ascending).
 async function productPerformance(params = {}) {
-  const range = resolveRange(params);
+  const range = await clampToEpoch(resolveRange(params));
   const limit = params.limit || 10;
 
   const items = await prisma.saleItem.findMany({
@@ -166,7 +166,7 @@ async function productPerformance(params = {}) {
 }
 
 async function regionalPerformance(params = {}) {
-  const range = resolveRange(params);
+  const range = await clampToEpoch(resolveRange(params));
   // Bucket revenue by the rep's CURRENT region (live join), not a region copied
   // onto the sale when it happened — so editing a rep's region immediately
   // re-buckets all their sales. Sales with no rep (admin direct) → "Unspecified".
@@ -211,7 +211,7 @@ async function regionalPerformance(params = {}) {
 }
 
 async function salesRepPerformance(params = {}) {
-  const range = resolveRange(params);
+  const range = await clampToEpoch(resolveRange(params));
 
   const [grouped, reps, debtBySalesRep] = await Promise.all([
     prisma.sale.groupBy({
@@ -261,7 +261,7 @@ async function salesRepPerformance(params = {}) {
 // Gross & net profit. Net subtracts the cost value of shrinkage/damage in the
 // window (the only "loss" the system tracks today).
 async function profitReport(params = {}) {
-  const range = resolveRange(params);
+  const range = await clampToEpoch(resolveRange(params));
 
   const [salesAgg, lossRows] = await Promise.all([
     prisma.sale.aggregate({
@@ -316,6 +316,14 @@ async function financeEpoch() {
   const value = row?.value ? new Date(row.value) : null;
   _epochCache = { at: Date.now(), value };
   return value;
+}
+
+// Clamp a report range to the finance epoch so every revenue/profit figure
+// counts only real post-go-live activity. Stock/debt reports are not clamped.
+async function clampToEpoch(range) {
+  const epoch = await financeEpoch();
+  if (!epoch || !range) return range;
+  return range.start < epoch ? { ...range, start: epoch } : range;
 }
 
 // Accepts a period string ('today'|'week'|'month'|'year'|'all') or an options

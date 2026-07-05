@@ -29,6 +29,7 @@ router.use('/dashboard', require('./dashboard.routes'));
 router.use('/settings', require('./settings.routes'));
 router.use('/finance', require('./finance.routes'));
 router.use('/cron', require('./cron.routes'));
+router.use('/public', require('./public.routes')); // signature-guarded links (no login)
 
 // Phase 2: imports, requests, settlements, commissions, etc.
 router.use('/suppliers', require('./suppliers.routes'));

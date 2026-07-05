@@ -46,4 +46,17 @@ router.get(
   }),
 );
 
+// Delivery diagnostics: relays ?text= to CallMeBot from this server's network
+// (provider blocks vary by source IP, so local tests don't prove prod works).
+// Can only message the owner phone configured in Settings.
+router.get(
+  '/wa-test',
+  guard,
+  asyncHandler(async (req, res) => {
+    const weekly = require('../services/weeklyReport.service');
+    const result = await weekly.sendWhatsApp(String(req.query.text || 'The Lab delivery test'));
+    return res.json({ success: true, data: result });
+  }),
+);
+
 module.exports = router;

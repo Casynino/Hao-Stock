@@ -20,8 +20,8 @@ const STAFF = ['ADMIN', 'WAREHOUSE_STAFF'];
 export const NAV_GROUPS = [
   ['overview', 'Business Overview'],
   ['operations', 'Operations'],
-  ['inventory', 'Inventory'],
   ['reports', 'Reports & Analytics'],
+  ['people', 'People'],
   ['tools', 'Tools'],
   ['admin', 'Administration'],
 ];
@@ -29,29 +29,30 @@ export const NAV_GROUPS = [
 export const NAV = [
   // ── Business Overview ──
   { to: '/', label: 'Dashboard', icon: 'LayoutDashboard', roles: ALL, group: 'overview' },
-  { to: '/finance', label: 'Finance', icon: 'Wallet', roles: STAFF, group: 'overview' },
   { to: '/sales', label: 'Sales', icon: 'ShoppingCart', roles: STAFF, group: 'overview' },
   { to: '/settlements', label: 'Settlements', icon: 'Timer', roles: ALL, group: 'overview', badge: 'settlements' },
+  { to: '/stock-requests', label: 'Stock Requests', icon: 'ClipboardList', roles: ALL, group: 'overview', badge: 'stockRequests' },
 
   // ── Operations ──
-  { to: '/stock-requests', label: 'Stock Requests', icon: 'ClipboardList', roles: ALL, group: 'operations', badge: 'stockRequests' },
-  { to: '/returns', label: 'Stock Returns', icon: 'Undo2', roles: ALL, group: 'operations', badge: 'returns' },
-  { to: '/reps', label: 'Sales Reps', icon: 'UserCog', roles: STAFF, group: 'operations' },
-  { to: '/customers', label: 'Customers', icon: 'Users', roles: STAFF, group: 'operations' },
-  { to: '/commissions', label: 'Commissions', icon: 'Coins', roles: ALL, group: 'operations' },
-
-  // ── Inventory ──
-  { to: '/inventory', label: 'Inventory', icon: 'Boxes', roles: STAFF, group: 'inventory' },
-  { to: '/products', label: 'Products', icon: 'Package', roles: STAFF, group: 'inventory' },
-  { to: '/purchases', label: 'Purchases & Imports', icon: 'Ship', roles: STAFF, group: 'inventory' },
-  { to: '/transfers', label: 'Stock Transfers', icon: 'Truck', roles: STAFF, group: 'inventory' },
-  { to: '/reorder', label: 'Reorder', icon: 'Repeat', roles: STAFF, group: 'inventory' },
+  { to: '/inventory', label: 'Inventory', icon: 'Boxes', roles: STAFF, group: 'operations', sub: 'Stock Management' },
+  { to: '/products', label: 'Products', icon: 'Package', roles: STAFF, group: 'operations', sub: 'Stock Management' },
+  { to: '/reorder', label: 'Reorder', icon: 'Repeat', roles: STAFF, group: 'operations', sub: 'Stock Management' },
+  { to: '/purchases', label: 'Purchases & Imports', icon: 'Ship', roles: STAFF, group: 'operations' },
+  { to: '/transfers', label: 'Stock Transfers', icon: 'Truck', roles: STAFF, group: 'operations' },
+  { to: '/returns', label: 'Returns', icon: 'Undo2', roles: ALL, group: 'operations', badge: 'returns' },
 
   // ── Reports & Analytics ──
-  { to: '/reports', label: 'Reports', icon: 'BarChart3', roles: STAFF, group: 'reports' },
+  { to: '/finance', label: 'Finance', icon: 'Wallet', roles: STAFF, group: 'reports' },
   { to: '/daily-reports', label: 'Daily Reports', icon: 'NotebookPen', roles: ALL, group: 'reports' },
-  { to: '/activity', label: 'Activity Feed', icon: 'Activity', roles: STAFF, group: 'reports' },
+  { to: '/finance?tab=profit', label: 'Profit Analysis', icon: 'TrendingUp', roles: STAFF, group: 'reports' },
+  { to: '/reports', label: 'Reports', icon: 'BarChart3', roles: STAFF, group: 'reports' },
+  { to: '/activity', label: 'Activity', icon: 'Activity', roles: STAFF, group: 'reports' },
   { to: '/audit', label: 'Audit Log', icon: 'ScrollText', roles: ['ADMIN'], group: 'reports' },
+
+  // ── People ──
+  { to: '/reps', label: 'Sales Reps', icon: 'UserCog', roles: STAFF, group: 'people' },
+  { to: '/customers', label: 'Customers', icon: 'Users', roles: STAFF, group: 'people' },
+  { to: '/commissions', label: 'Commissions', icon: 'Coins', roles: ALL, group: 'people' },
 
   // ── Tools ──
   { to: '/invoice-generator', label: 'Generate Invoice', icon: 'Receipt', roles: ALL, group: 'tools' },

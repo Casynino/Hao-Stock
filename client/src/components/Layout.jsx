@@ -32,23 +32,35 @@ function CountPill({ count }) {
 }
 
 function NavItems({ items, counts = {}, onNavigate }) {
+  const location = useLocation();
   const countFor = (item) => (item.badge ? counts[item.badge] || 0 : 0);
 
-  const renderLink = (item) => {
+  // Query-aware active state: "Profit Analysis" (/finance?tab=profit) and
+  // "Finance" (/finance) must never highlight together.
+  const isItemActive = (item) => {
+    const { pathname, search } = location;
+    if (item.to.includes('?')) {
+      const [path, query] = item.to.split('?');
+      return pathname === path && search.includes(query);
+    }
+    if (item.to === '/') return pathname === '/';
+    if (item.to === '/finance') return pathname === '/finance' && !search.includes('tab=profit');
+    return pathname === item.to || pathname.startsWith(`${item.to}/`);
+  };
+
+  const renderLink = (item, indent = false) => {
     const Icon = ICONS[item.icon] || Package;
+    const active = isItemActive(item);
     return (
       <NavLink
         key={item.to}
         to={item.to}
-        end={item.to === '/'}
         onClick={onNavigate}
-        className={({ isActive }) =>
-          `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all ${
-            isActive
-              ? 'bg-brand-600 text-slate-950 shadow-[0_4px_16px_-4px_rgba(190,242,100,0.45)]'
-              : 'text-muted hover:bg-white/5 hover:text-white'
-          }`
-        }
+        className={`flex items-center gap-3 rounded-xl py-2 pr-3 text-sm font-medium transition-all ${indent ? 'pl-6' : 'pl-3'} ${
+          active
+            ? 'bg-brand-600 text-slate-950 shadow-[0_4px_16px_-4px_rgba(190,242,100,0.45)]'
+            : 'text-muted hover:bg-white/5 hover:text-white'
+        }`}
       >
         <Icon className="h-5 w-5 flex-shrink-0" />
         <span className="flex-1 truncate">{item.label}</span>
@@ -58,16 +70,30 @@ function NavItems({ items, counts = {}, onNavigate }) {
   };
 
   // Sections in daily-workflow order; a header only shows when the role can
-  // see something inside it.
+  // see something inside it. Items sharing a `sub` label render as an indented
+  // cluster (e.g. Operations → Stock Management).
   return (
     <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
       {NAV_GROUPS.map(([key, label], gi) => {
         const groupItems = items.filter((i) => i.group === key);
         if (groupItems.length === 0) return null;
+        const rows = [];
+        let lastSub = null;
+        for (const item of groupItems) {
+          if (item.sub && item.sub !== lastSub) {
+            rows.push(
+              <div key={`sub-${item.sub}`} className="px-3 pb-0.5 pt-1 text-[10px] font-medium uppercase tracking-wider text-faint/80">
+                {item.sub}
+              </div>,
+            );
+          }
+          lastSub = item.sub || null;
+          rows.push(renderLink(item, !!item.sub));
+        }
         return (
           <div key={key} className={gi > 0 ? 'pt-3' : ''}>
             <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">{label}</div>
-            <div className="space-y-1">{groupItems.map(renderLink)}</div>
+            <div className="space-y-1">{rows}</div>
           </div>
         );
       })}

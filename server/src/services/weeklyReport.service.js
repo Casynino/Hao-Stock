@@ -157,51 +157,50 @@ async function buildWeeklyData(weekKey) {
 }
 
 // ── WhatsApp message: the quick, sectioned business health check ─────────────
-// Formatting is deliberately conservative: CallMeBot sits behind a scoring
-// firewall that 403s messages accumulating too many "suspicious" tokens.
-// Divider runs (━━━ / ---) and an https:// link were enough to tip it, so
-// sections separate with blank lines and the PDF link is scheme-less
-// (WhatsApp still makes bare domains tappable).
+// Two hard delivery constraints shape this format:
+// 1. CallMeBot's firewall 403s "spammy" tokens — no divider runs, and the PDF
+//    link is scheme-less (WhatsApp still makes bare domains tappable).
+// 2. CallMeBot TRUNCATES messages at roughly 700–750 characters. The PDF link
+//    therefore sits right under the header (a cut tail can never remove it)
+//    and the body is kept compact — the PDF carries the full detail.
 function buildWhatsAppText(d) {
+  const top = (d.topProducts || [])[0];
+  const alertLine = d.attention.length
+    ? `⚠️ ${d.attention.length} alert(s) — details in the PDF`
+    : '✅ Nothing needs attention';
   const lines = [
     '📊 *THE LAB — WEEKLY REPORT*',
     `_${d.period.label}_`,
+    '📄 *Full statement (PDF):*',
+    pdfLink(d.period.weekKey).replace(/^https:\/\//, ''),
     '',
     '💰 *FINANCE*',
     `Revenue: ${fmt(d.finance.revenue)}`,
     `Gross profit: ${fmt(d.finance.grossProfit)}`,
     `Expenses: ${fmt(d.finance.expenses)}`,
     `*Net profit: ${fmt(d.finance.netProfit)}*`,
-    `Cash flow: in ${fmt(d.finance.moneyIn)} / out ${fmt(d.finance.moneyOut)}`,
     '',
     '🏦 *ACCOUNTS*',
     ...d.accounts.map((a) => `${a.name}: ${fmt(a.balance)}`),
-    `*Total funds: ${fmt(d.cashPosition)}*`,
+    `*Total: ${fmt(d.cashPosition)}*`,
     '',
-    '🏷️ *PERFORMANCE*',
+    '🏷️ *BRANDS*',
     ...(d.brands.length
-      ? d.brands.map((b) => `${b.name}: ${fmt(b.revenue)} rev / ${fmt(b.profit)} profit / ${b.boxes} boxes`)
+      ? d.brands.map((b) => `${b.name}: ${fmt(b.revenue)} / ${b.boxes} bx / ${fmt(b.profit)} profit`)
       : ['No sales this week']),
-    `Boxes sold: ${d.finance.boxesSold}`,
-    ...((d.topProducts || []).length || d.topRep
+    ...(top || d.topRep
       ? [
           '',
-          '🏆 *HIGHLIGHTS*',
-          ...(d.topProducts || []).map((p, i) => `${i + 1}. ${p.name}: ${fmt(p.revenue)}`),
-          ...(d.topRep ? [`Top rep: ${d.topRep.name} (${fmt(d.topRep.revenue)})`] : []),
+          '🏆 *TOP*',
+          ...(top ? [`${top.name}: ${fmt(top.revenue)}`] : []),
+          ...(d.topRep ? [`Rep: ${d.topRep.name} (${fmt(d.topRep.revenue)})`] : []),
         ]
       : []),
     '',
     '📦 *STOCK*',
-    `Value: ${fmt(d.stock.costValue)} (${d.stock.units} boxes)`,
-    `The Lab: ${d.stock.warehouseBoxes} / With reps: ${d.stock.repBoxes}`,
-    `Potential profit in stock: ${fmt(d.stock.potential)}`,
+    `${fmt(d.stock.costValue)} / ${d.stock.units} boxes (Lab ${d.stock.warehouseBoxes}, reps ${d.stock.repBoxes})`,
     '',
-    d.attention.length ? '⚠️ *ALERTS*' : '✅ *ALL CLEAR*',
-    ...d.attention.map((a) => `• ${a}`),
-    '',
-    '📄 *Full statement (PDF):*',
-    pdfLink(d.period.weekKey).replace(/^https:\/\//, ''),
+    alertLine,
   ];
   return lines.join('\n');
 }

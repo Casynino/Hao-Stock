@@ -172,7 +172,10 @@ function buildWhatsAppText(d) {
     '📊 *THE LAB — WEEKLY REPORT*',
     `_${d.period.label}_`,
     '📄 *Full statement (PDF):*',
-    pdfLink(d.period.weekKey).replace(/^https:\/\//, ''),
+    // Full https:// URL on purpose: WhatsApp only makes complete URLs tappable
+    // (bare domains render as plain text on iOS). The provider firewall accepts
+    // https links in this message profile — verified live.
+    pdfLink(d.period.weekKey),
     '',
     '💰 *FINANCE*',
     `Revenue: ${fmt(d.finance.revenue)}`,

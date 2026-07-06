@@ -9,7 +9,12 @@ dayjs.extend(isoWeek);
 
 // Resolve a named period ("today" | "week" | "month" | "year") or an explicit
 // from/to pair into a concrete [start, end) range for ledger/sales queries.
-function resolveRange({ period, from, to } = {}) {
+function resolveRange({ period, from, to, start, end } = {}) {
+  // Exact datetime window (Date objects / ISO datetimes) — used for
+  // timezone-correct report ranges; from/to would clamp to UTC day bounds.
+  if (start && end) {
+    return { start: new Date(start), end: new Date(end), label: 'custom' };
+  }
   if (from || to) {
     const start = from ? dayjs(from).startOf('day') : dayjs().subtract(30, 'day').startOf('day');
     const end = to ? dayjs(to).endOf('day') : dayjs().endOf('day');
@@ -39,4 +44,19 @@ function daysOverdue(dueDate, reference = new Date()) {
   return d > 0 ? d : 0;
 }
 
-module.exports = { dayjs, resolveRange, daysBetween, daysOverdue };
+// ── Tanzania time (Africa/Dar_es_Salaam = UTC+3, no DST) ─────────────────────
+// All scheduled reports are anchored to the business's clock, not the server's.
+const EAT_OFFSET_H = 3;
+const eatNow = () => dayjs().utc().add(EAT_OFFSET_H, 'hour');
+// Convert an EAT-clock dayjs back to the real UTC instant it represents.
+const eatToUtc = (d) => d.subtract(EAT_OFFSET_H, 'hour');
+
+// Exact UTC datetime window for an EAT-local day / isoWeek / month containing
+// `anchor` (an EAT-clock dayjs). Returns { start, end, label } with Dates.
+function eatRange(unit, anchor = eatNow()) {
+  const s = anchor.startOf(unit === 'week' ? 'isoWeek' : unit);
+  const e = anchor.endOf(unit === 'week' ? 'isoWeek' : unit);
+  return { start: eatToUtc(s).toDate(), end: eatToUtc(e).toDate(), eatStart: s, eatEnd: e };
+}
+
+module.exports = { dayjs, resolveRange, daysBetween, daysOverdue, eatNow, eatToUtc, eatRange, EAT_OFFSET_H };

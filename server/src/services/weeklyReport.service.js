@@ -83,22 +83,59 @@ async function buildWeeklyData(weekKey) {
   const supplierDue = suppliers.reduce((s, x) => s + x.outstanding, 0);
   const outOfStock = val.items.filter((i) => i.totalBase <= 0).length;
 
-  // Top sales rep for the period (by approved sales value).
-  let topRep = null;
-  const topRepRows = await prisma.sale.groupBy({
-    by: ['salesRepId'],
-    where: { soldAt: { gte: start.startOf('day').toDate(), lte: end.endOf('day').toDate() }, status: { not: 'CANCELLED' }, salesRepId: { not: null } },
-    _sum: { total: true },
-    orderBy: { _sum: { total: 'desc' } },
-    take: 1,
-  }).catch(() => []);
-  if (topRepRows.length) {
-    const r = await prisma.salesRepresentative.findUnique({
-      where: { id: topRepRows[0].salesRepId },
-      include: { user: { select: { name: true } } },
-    }).catch(() => null);
-    if (r) topRep = { name: r.user?.name || r.code, revenue: Number(topRepRows[0]._sum.total) || 0 };
+  const rangeStart = start.startOf('day').toDate();
+  const rangeEnd = end.endOf('day').toDate();
+
+  // Sales rep performance for the period (revenue + boxes per rep).
+  const [repItems, repsAll, movementRows, paidAgg, commissionAll] = await Promise.all([
+    prisma.saleItem.findMany({
+      where: { sale: { is: { soldAt: { gte: rangeStart, lte: rangeEnd }, status: { not: 'CANCELLED' }, salesRepId: { not: null } } } },
+      select: { baseQuantity: true, lineTotal: true, sale: { select: { salesRepId: true } } },
+    }).catch(() => []),
+    prisma.salesRepresentative.findMany({ include: { user: { select: { name: true } } } }).catch(() => []),
+    prisma.inventoryTransaction.groupBy({
+      by: ['type'],
+      where: { occurredAt: { gte: rangeStart, lte: rangeEnd } },
+      _sum: { baseQuantity: true },
+    }).catch(() => []),
+    prisma.commissionWithdrawal.aggregate({
+      where: { status: { in: ['APPROVED', 'PAID'] }, decidedAt: { gte: rangeStart, lte: rangeEnd } },
+      _sum: { amount: true },
+    }).catch(() => ({ _sum: { amount: 0 } })),
+    require('./commission.service').summaryAllReps().catch(() => ({ items: [] })),
+  ]);
+
+  const repName = new Map(repsAll.map((r) => [r.id, r.user?.name || r.code]));
+  const perRep = new Map();
+  for (const it of repItems) {
+    const id = it.sale.salesRepId;
+    const row = perRep.get(id) || { name: repName.get(id) || 'Rep', revenue: 0, boxes: 0 };
+    row.revenue += Number(it.lineTotal) || 0;
+    row.boxes += it.baseQuantity || 0;
+    perRep.set(id, row);
   }
+  const repPerformance = [...perRep.values()].sort((a, b) => b.revenue - a.revenue);
+  const topRep = repPerformance[0] || null;
+
+  // Whole-business inventory movement from the ledger (transfers cancel out).
+  const mv = new Map(movementRows.map((m) => [m.type, m._sum.baseQuantity || 0]));
+  const movement = {
+    purchasedBoxes: mv.get('PURCHASE_RECEIPT') || 0,
+    soldBoxes: -((mv.get('CASH_SALE') || 0) + (mv.get('CREDIT_SALE') || 0)),
+    returnedBoxes: mv.get('CUSTOMER_RETURN') || 0,
+    adjustedBoxes: (mv.get('ADJUSTMENT') || 0) + (mv.get('CORRECTION') || 0) + (mv.get('STOCK_COUNT') || 0) + (mv.get('DAMAGE') || 0),
+  };
+
+  // Commission: earned this period (boxes settled × rate), paid this period,
+  // and what is payable right now across all reps.
+  let perBox = 0;
+  try { perBox = Number((await require('./commission.service').getRule()).perBox) || 0; } catch { /* no rule */ }
+  const boxesThisPeriod = repPerformance.reduce((s, r) => s + r.boxes, 0);
+  const commission = {
+    earned: Math.round(boxesThisPeriod * perBox * 100) / 100,
+    paid: Number(paidAgg._sum.amount) || 0,
+    outstanding: (commissionAll.items || []).reduce((s, r) => s + Math.max(0, Number(r.available) || 0), 0),
+  };
 
   const attention = [];
   if (pending[0]) attention.push(`${pending[0]} stock request(s) waiting for approval`);
@@ -132,8 +169,12 @@ async function buildWeeklyData(weekKey) {
     brands: (prof.byBrand || []).map((b) => ({
       name: b.name, revenue: b.revenue, cost: b.cost, profit: b.profit, margin: b.margin, boxes: b.boxes,
     })),
-    topProducts: (rep.topProducts || []).slice(0, 3).map((p) => ({ name: p.name, revenue: p.revenue })),
+    topProducts: (rep.topProducts || []).slice(0, 5).map((p) => ({ name: p.name, revenue: p.revenue, boxes: p.boxes })),
     topRep,
+    repPerformance,
+    commission,
+    movement,
+    pending: { requests: pending[0], settlements: pending[1], returns: pending[2] },
     stock: {
       costValue: val.totals.totalValue,
       retailValue: val.totals.retailValue,
@@ -163,7 +204,10 @@ async function buildWeeklyData(weekKey) {
 // 2. CallMeBot TRUNCATES messages at roughly 700–750 characters. The PDF link
 //    therefore sits right under the header (a cut tail can never remove it)
 //    and the body is kept compact — the PDF carries the full detail.
-function buildWhatsAppText(d) {
+// Executive summary first (understand the business in seconds), then the PDF
+// link, then a compact detail block. `link` is the archived report's signed
+// URL; kept as a full https:// URL so WhatsApp renders it tappable.
+function buildWhatsAppText(d, link) {
   const top = (d.topProducts || [])[0];
   const alertLine = d.attention.length
     ? `⚠️ ${d.attention.length} alert(s) — details in the PDF`
@@ -171,38 +215,20 @@ function buildWhatsAppText(d) {
   const lines = [
     '📊 *THE LAB — WEEKLY REPORT*',
     `_${d.period.label}_`,
+    '',
+    `💰 Revenue: ${fmt(d.finance.revenue)}`,
+    `*Net profit: ${fmt(d.finance.netProfit)}* (expenses ${fmt(d.finance.expenses)})`,
+    `🏦 Cash: *${fmt(d.cashPosition)}*`,
+    ...(top ? [`🏆 ${top.name}: ${fmt(top.revenue)}`] : []),
+    ...(d.topRep ? [`⭐ Top rep: ${d.topRep.name} (${fmt(d.topRep.revenue)})`] : []),
+    '',
     '📄 *Full statement (PDF):*',
-    // Full https:// URL on purpose: WhatsApp only makes complete URLs tappable
-    // (bare domains render as plain text on iOS). The provider firewall accepts
-    // https links in this message profile — verified live.
-    pdfLink(d.period.weekKey),
+    link || pdfLink(d.period.weekKey),
     '',
-    '💰 *FINANCE*',
-    `Revenue: ${fmt(d.finance.revenue)}`,
-    `Gross profit: ${fmt(d.finance.grossProfit)}`,
-    `Expenses: ${fmt(d.finance.expenses)}`,
-    `*Net profit: ${fmt(d.finance.netProfit)}*`,
-    '',
-    '🏦 *ACCOUNTS*',
-    ...d.accounts.map((a) => `${a.name}: ${fmt(a.balance)}`),
-    `*Total: ${fmt(d.cashPosition)}*`,
-    '',
-    '🏷️ *BRANDS*',
     ...(d.brands.length
-      ? d.brands.map((b) => `${b.name}: ${fmt(b.revenue)} / ${b.boxes} bx / ${fmt(b.profit)} profit`)
-      : ['No sales this week']),
-    ...(top || d.topRep
-      ? [
-          '',
-          '🏆 *TOP*',
-          ...(top ? [`${top.name}: ${fmt(top.revenue)}`] : []),
-          ...(d.topRep ? [`Rep: ${d.topRep.name} (${fmt(d.topRep.revenue)})`] : []),
-        ]
+      ? [`🏷️ ${d.brands.map((b) => `${b.name} ${fmt(b.revenue)}`).join(' / ')}`]
       : []),
-    '',
-    '📦 *STOCK*',
-    `${fmt(d.stock.costValue)} / ${d.stock.units} boxes (Lab ${d.stock.warehouseBoxes}, reps ${d.stock.repBoxes})`,
-    '',
+    `📦 Stock: ${fmt(d.stock.costValue)} (${d.stock.units} boxes)`,
     alertLine,
   ];
   return lines.join('\n');
@@ -213,11 +239,15 @@ function buildWhatsAppText(d) {
 // re-export keeps older callers working.
 const sendWhatsApp = (text) => require('./whatsappNotify.service').sendRaw(text);
 
-// Compose + queue through the notification log (dedupe per reported week, so a
-// retried cron never double-sends; failed sends are retried by flush()).
-// `force` bypasses the dedupe for tests.
+// Generate the PDF, archive it permanently, then send the WhatsApp summary
+// with the archived report's signed link. Deduped per reported week (a retried
+// cron never double-sends); failed sends are retried by flush(). `force`
+// bypasses the dedupe for tests (and refreshes the archived PDF).
 async function sendWeeklyReport({ force = false } = {}) {
   const wa = require('./whatsappNotify.service');
+  const archive = require('./reportArchive.service');
+  const { weeklyStatementPdf } = require('./weeklyPdf.service');
+
   const data = await buildWeeklyData();
   const weekKey = data.period.weekKey;
   // Legacy dedupe guard (pre-dated the notification log) — still honored so
@@ -225,18 +255,33 @@ async function sendWeeklyReport({ force = false } = {}) {
   if (!force && (await getSetting('whatsapp.lastWeeklySent')) === weekKey) {
     return { sent: false, reason: `Already sent for ${weekKey}`, weekKey };
   }
-  const text = buildWhatsAppText(data);
+
+  // Archive first — the message links to the stored PDF, so the report the
+  // owner opens is exactly the one that was generated, forever.
+  const pdf = await weeklyStatementPdf(data);
+  const saved = await archive.save({
+    type: 'WEEKLY',
+    periodKey: weekKey,
+    label: data.period.label,
+    from: data.period.start.toDate(),
+    to: data.period.end.toDate(),
+    pdf,
+    meta: { revenue: data.finance.revenue, netProfit: data.finance.netProfit, boxes: data.finance.boxesSold },
+  });
+  const link = archive.publicLink(saved.id);
+
+  const text = buildWhatsAppText(data, link);
   const result = await wa.queue('WEEKLY_REPORT', {
     dedupeKey: force ? `weekly:${weekKey}:${Date.now()}` : `weekly:${weekKey}`,
-    refType: 'WeeklyReport',
-    refId: weekKey,
+    refType: 'ReportArchive',
+    refId: saved.id,
     text,
   });
   if (result.reason === 'duplicate') return { sent: false, reason: `Already sent for ${weekKey}`, weekKey };
   // Only the scheduled send marks the week as done — a forced test send must
   // never make Monday's real report skip itself as a "duplicate".
   if (result.sent && !force) await setSetting('whatsapp.lastWeeklySent', weekKey);
-  return { ...result, weekKey, pdf: pdfLink(weekKey), chars: text.length };
+  return { ...result, weekKey, pdf: link, archiveId: saved.id, chars: text.length };
 }
 
 module.exports = { buildWeeklyData, buildWhatsAppText, sendWhatsApp, sendWeeklyReport, signWeek, pdfLink };

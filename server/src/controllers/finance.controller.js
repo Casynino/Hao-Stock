@@ -160,8 +160,29 @@ const paySupplierBalance = asyncHandler(async (req, res) => {
   return created(res, txn);
 });
 
+// ── Reports Archive (generated weekly/monthly PDFs) ──────────────────────────
+const reportArchive = asyncHandler(async (req, res) => {
+  const archiveSvc = require('../services/reportArchive.service');
+  const rows = await archiveSvc.list({
+    type: req.query.type || undefined,
+    year: req.query.year || undefined,
+    search: req.query.search || undefined,
+    limit: req.query.limit,
+  });
+  return ok(res, rows);
+});
+
+const reportArchivePdf = asyncHandler(async (req, res) => {
+  const archiveSvc = require('../services/reportArchive.service');
+  const row = await archiveSvc.getPdf(req.params.id);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="TheLab-${row.type.toLowerCase()}-${row.periodKey}.pdf"`);
+  return res.send(Buffer.from(row.pdf));
+});
+
 module.exports = {
   overview, sync, accounts, createAccount, updateAccount, categories, createCategory,
   transactions, recordExpense, recordIncome, recordAdjustment, updateTransaction, deleteTransaction,
   cashflow, report, suppliers, supplierDetail, paySupplier, paySupplierBalance,
+  reportArchive, reportArchivePdf,
 };

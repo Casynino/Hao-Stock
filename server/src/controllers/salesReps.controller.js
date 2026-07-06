@@ -10,8 +10,8 @@ const stockCount = require('../services/stockCount.service');
 const commission = require('../services/commission.service');
 const settlement = require('../services/settlement.service');
 const { toNumber, round2 } = require('../utils/money');
-const { pad } = require('../utils/numbering');
 const audit = require('../services/audit.service');
+const { nextRepCode } = require('../utils/numbering');
 
 async function repStockList(salesRepId) {
   const balances = (await inventory.repBalances(prisma, salesRepId)).filter((b) => b.baseQuantity !== 0);
@@ -270,8 +270,7 @@ const create = asyncHandler(async (req, res) => {
 
   let code = req.body.code;
   if (!code) {
-    const count = await prisma.salesRepresentative.count();
-    code = `REP-${pad(count + 1, 3)}`;
+    code = await nextRepCode(prisma);
   }
 
   const rep = await prisma.salesRepresentative.create({

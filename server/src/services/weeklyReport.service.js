@@ -243,7 +243,7 @@ const sendWhatsApp = (text) => require('./whatsappNotify.service').sendRaw(text)
 // with the archived report's signed link. Deduped per reported week (a retried
 // cron never double-sends); failed sends are retried by flush(). `force`
 // bypasses the dedupe for tests (and refreshes the archived PDF).
-async function sendWeeklyReport({ force = false } = {}) {
+async function sendWeeklyReport({ force = false, silent = false } = {}) {
   const wa = require('./whatsappNotify.service');
   const archive = require('./reportArchive.service');
   const { weeklyStatementPdf } = require('./weeklyPdf.service');
@@ -269,6 +269,7 @@ async function sendWeeklyReport({ force = false } = {}) {
     meta: { revenue: data.finance.revenue, netProfit: data.finance.netProfit, boxes: data.finance.boxesSold },
   });
   const link = archive.publicLink(saved.id);
+  if (silent) return { sent: false, reason: 'silent-regeneration', weekKey, pdf: link, archiveId: saved.id };
 
   const text = buildWhatsAppText(data, link);
   const result = await wa.queue('WEEKLY_REPORT', {

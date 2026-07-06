@@ -209,8 +209,9 @@ function buildWhatsAppText(d, link) {
   return lines.join('\n');
 }
 
-// Generate → archive → send. Deduped per month; `force` bypasses for tests.
-async function sendMonthlyReport({ force = false, monthKey } = {}) {
+// Generate → archive → send. Deduped per month; `force` bypasses for tests;
+// `silent` regenerates/repairs the archived PDF without sending WhatsApp.
+async function sendMonthlyReport({ force = false, silent = false, monthKey } = {}) {
   const wa = require('./whatsappNotify.service');
   const archive = require('./reportArchive.service');
   const { monthlyStatementPdf } = require('./monthlyPdf.service');
@@ -229,6 +230,7 @@ async function sendMonthlyReport({ force = false, monthKey } = {}) {
     meta: { revenue: data.finance.revenue, netProfit: data.finance.netProfit, boxes: data.finance.boxesSold },
   });
   const link = archive.publicLink(saved.id);
+  if (silent) return { sent: false, reason: 'silent-regeneration', monthKey: key, pdf: link, archiveId: saved.id };
 
   const text = buildWhatsAppText(data, link);
   const result = await wa.queue('MONTHLY_REPORT', {

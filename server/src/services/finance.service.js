@@ -480,7 +480,9 @@ async function cashflow(opts = {}) {
 // supplier/commission payments, stock-purchase spend, top products & brands.
 async function report(opts = {}) {
   await ensureDefaults();
-  const profOpts = opts.from || opts.to ? { from: opts.from, to: opts.to } : { period: opts.period || 'all' };
+  const profOpts = opts.start && opts.end
+    ? { start: opts.start, end: opts.end }
+    : opts.from || opts.to ? { from: opts.from, to: opts.to } : { period: opts.period || 'all' };
   const [prof, cf, epoch] = await Promise.all([reports.profitOverview(profOpts), cashflow(opts), reports.financeEpoch()]);
   const range = rangeFor(opts);
   const base = epochWhere(range, epoch);

@@ -46,6 +46,7 @@ function monthlyStatementPdf(d) {
   s.sectionTitle('Inventory Summary');
   s.kvRows([
     ['Opening stock', `${d.inventory.openingBoxes} box(es)`],
+    ['Stock added (openings / manual stock-in)', `+ ${d.inventory.stockInBoxes || 0} box(es)`],
     ['Stock purchased (received)', `+ ${d.inventory.purchasedBoxes} box(es)`],
     ['Stock sold', `- ${d.inventory.soldBoxes} box(es)`],
     ['Customer returns', `+ ${d.inventory.returnedBoxes} box(es)`],

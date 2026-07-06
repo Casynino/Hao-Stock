@@ -111,6 +111,7 @@ async function buildMonthlyData(monthKey) {
   const inventory = {
     openingBoxes: closingBoxes - netMove,
     closingBoxes,
+    stockInBoxes: mv.get('STOCK_IN') || 0,
     purchasedBoxes: mv.get('PURCHASE_RECEIPT') || 0,
     soldBoxes: -((mv.get('CASH_SALE') || 0) + (mv.get('CREDIT_SALE') || 0)),
     returnedBoxes: mv.get('CUSTOMER_RETURN') || 0,

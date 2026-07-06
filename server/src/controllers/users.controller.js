@@ -7,8 +7,8 @@ const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { ok, created, paginated } = require('../utils/response');
 const { parsePagination } = require('../utils/pagination');
-const { pad } = require('../utils/numbering');
 const audit = require('../services/audit.service');
+const { nextRepCode } = require('../utils/numbering');
 
 const PUBLIC_SELECT = {
   id: true,
@@ -68,10 +68,9 @@ const create = asyncHandler(async (req, res) => {
 
   // Auto-provision a sales-rep profile when creating a SALES_REP user.
   if (role.name === 'SALES_REP') {
-    const count = await prisma.salesRepresentative.count();
     data.salesRep = {
       create: {
-        code: salesRep?.code || `REP-${pad(count + 1, 3)}`,
+        code: salesRep?.code || (await nextRepCode(prisma)),
         region: salesRep?.region || null,
         phone: salesRep?.phone || phone || null,
         monthlyTarget: salesRep?.monthlyTarget ?? null,

@@ -24,6 +24,19 @@ async function nextDocNumber(delegate, field, prefix) {
   return `${like}${pad(count + 1)}`;
 }
 
+// Next sequential sales-rep code (REP-006). Derived from the HIGHEST existing
+// code, not the row count — reps can be hard-deleted, so a count would reuse a
+// number that is still taken (e.g. 4 reps left but REP-005 exists).
+async function nextRepCode(client) {
+  const rows = await client.salesRepresentative.findMany({ select: { code: true } });
+  let max = 0;
+  for (const r of rows) {
+    const m = /^REP-(\d+)$/i.exec(r.code || '');
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `REP-${pad(max + 1, 3)}`;
+}
+
 // Short uppercase alphanumeric code, e.g. for SKUs or rep codes.
 function randomCode(length = 6) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -34,4 +47,4 @@ function randomCode(length = 6) {
   return out;
 }
 
-module.exports = { nextDocNumber, randomCode, compactDate, pad };
+module.exports = { nextDocNumber, nextRepCode, randomCode, compactDate, pad };

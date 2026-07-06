@@ -120,6 +120,7 @@ async function buildWeeklyData(weekKey) {
   // Whole-business inventory movement from the ledger (transfers cancel out).
   const mv = new Map(movementRows.map((m) => [m.type, m._sum.baseQuantity || 0]));
   const movement = {
+    stockInBoxes: mv.get('STOCK_IN') || 0,
     purchasedBoxes: mv.get('PURCHASE_RECEIPT') || 0,
     soldBoxes: -((mv.get('CASH_SALE') || 0) + (mv.get('CREDIT_SALE') || 0)),
     returnedBoxes: mv.get('CUSTOMER_RETURN') || 0,

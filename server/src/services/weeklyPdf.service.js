@@ -81,6 +81,7 @@ function weeklyStatementPdf(data) {
   if (data.movement) {
     s.sectionTitle('Inventory Movement');
     s.kvRows([
+      ['Stock added (openings / manual stock-in)', `${data.movement.stockInBoxes || 0} box(es)`],
       ['Stock purchased (received)', `${data.movement.purchasedBoxes} box(es)`],
       ['Stock sold', `${data.movement.soldBoxes} box(es)`],
       ['Customer returns', `${data.movement.returnedBoxes} box(es)`],

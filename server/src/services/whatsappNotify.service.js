@@ -26,6 +26,10 @@ const { dayjs } = require('../utils/dates');
 const { toNumber, round2 } = require('../utils/money');
 
 const MAX_ATTEMPTS = 5;
+// CallMeBot silently truncates free-tier messages at roughly 700-750 chars
+// (observed: a 990-char report was cut mid-word around 716). Trim ourselves so
+// the cut is never mid-sentence and important lines are ordered first.
+const MAX_TEXT = 700;
 const fmt = (n) => `TSh ${Math.round(Number(n) || 0).toLocaleString('en-US')}`;
 
 // Notification catalogue: label + default priority, used by the Settings UI.
@@ -169,10 +173,21 @@ async function queue(type, { priority, dedupeKey = null, refType = null, refId =
   if (!configured) return { queued: false, reason: 'not-configured' };
 
   const prio = priority || TYPES[type]?.priority || 'INFO';
+  // Trim on whole lines so a provider-side cut can't leave half a sentence.
+  let body = text;
+  if (body.length > MAX_TEXT) {
+    const lines = body.split('\n');
+    body = '';
+    for (const line of lines) {
+      if (body.length + line.length + 2 > MAX_TEXT) break;
+      body += (body ? '\n' : '') + line;
+    }
+    body += '\n…';
+  }
   let row;
   try {
     row = await prisma.whatsAppNotification.create({
-      data: { type, priority: prio, dedupeKey, refType, refId, text },
+      data: { type, priority: prio, dedupeKey, refType, refId, text: body },
     });
   } catch (e) {
     if (e.code === 'P2002') return { queued: false, reason: 'duplicate' };

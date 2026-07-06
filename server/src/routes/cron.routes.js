@@ -79,7 +79,11 @@ router.get(
   guard,
   asyncHandler(async (req, res) => {
     const weekly = require('../services/weeklyReport.service');
-    return reportGuard('Weekly report', () => weekly.sendWeeklyReport({ force: req.query.force === '1' }), res);
+    return reportGuard(
+      'Weekly report',
+      () => weekly.sendWeeklyReport({ force: req.query.force === '1', silent: req.query.silent === '1' }),
+      res,
+    );
   }),
 );
 
@@ -93,7 +97,7 @@ router.get(
     const monthly = require('../services/monthlyReport.service');
     return reportGuard(
       'Monthly report',
-      () => monthly.sendMonthlyReport({ force: req.query.force === '1', monthKey: req.query.month || undefined }),
+      () => monthly.sendMonthlyReport({ force: req.query.force === '1', silent: req.query.silent === '1', monthKey: req.query.month || undefined }),
       res,
     );
   }),

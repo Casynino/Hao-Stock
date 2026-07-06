@@ -231,7 +231,9 @@ async function sendWeeklyReport({ force = false } = {}) {
     text,
   });
   if (result.reason === 'duplicate') return { sent: false, reason: `Already sent for ${weekKey}`, weekKey };
-  if (result.sent) await setSetting('whatsapp.lastWeeklySent', weekKey);
+  // Only the scheduled send marks the week as done — a forced test send must
+  // never make Monday's real report skip itself as a "duplicate".
+  if (result.sent && !force) await setSetting('whatsapp.lastWeeklySent', weekKey);
   return { ...result, weekKey, pdf: pdfLink(weekKey), chars: text.length };
 }
 

@@ -38,28 +38,64 @@ router.get(
   }),
 );
 
-// Evening WhatsApp pulse: today's sales, profit, cash position, activity and
-// alerts. Deduped per day; ?force=1 resends (for testing).
+// Evening WhatsApp pulse (21:00 EAT): today's sales, profit, cash position,
+// activity and alerts. Deduped per day; ?force=1 resends (for testing).
 router.get(
   '/daily-summary',
   guard,
   asyncHandler(async (req, res) => {
     const wa = require('../services/whatsappNotify.service');
-    const result = await wa.dailySummary({ force: req.query.force === '1' });
-    await wa.flush({ throttleMs: 0 }).catch(() => null);
-    return res.json({ success: true, data: result });
+    return reportGuard('Daily report', async () => {
+      const result = await wa.dailySummary({ force: req.query.force === '1' });
+      await wa.flush({ throttleMs: 0 }).catch(() => null);
+      return result;
+    }, res);
   }),
 );
 
-// Weekly WhatsApp business report (Vercel cron, Mondays). ?force=1 resends
-// even if this week's report already went out (for testing).
+// A failed scheduled report must not die silently: log it and raise a
+// CRITICAL in-app notification for the admin.
+async function reportGuard(name, fn, res) {
+  try {
+    const result = await fn();
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    require('../services/notification.service').notifyAdmins({
+      type: 'GENERAL',
+      severity: 'CRITICAL',
+      title: `${name} failed to generate`,
+      message: `${name} could not be generated/sent: ${String(err.message).slice(0, 200)}. It will retry on the next run.`,
+      entityType: 'Report',
+      entityId: name,
+    }).catch(() => {});
+    return res.status(500).json({ success: false, error: { message: err.message } });
+  }
+}
+
+// Weekly WhatsApp business report + archived PDF (Mondays 08:00 EAT).
+// ?force=1 resends even if this week's report already went out (testing).
 router.get(
   '/weekly-report',
   guard,
   asyncHandler(async (req, res) => {
     const weekly = require('../services/weeklyReport.service');
-    const result = await weekly.sendWeeklyReport({ force: req.query.force === '1' });
-    return res.json({ success: true, data: result });
+    return reportGuard('Weekly report', () => weekly.sendWeeklyReport({ force: req.query.force === '1' }), res);
+  }),
+);
+
+// Monthly WhatsApp business report + archived PDF (1st of month 08:00 EAT).
+// Always covers the previous complete month. ?force=1 for testing;
+// ?month=YYYY-MM pins an exact month.
+router.get(
+  '/monthly-report',
+  guard,
+  asyncHandler(async (req, res) => {
+    const monthly = require('../services/monthlyReport.service');
+    return reportGuard(
+      'Monthly report',
+      () => monthly.sendMonthlyReport({ force: req.query.force === '1', monthKey: req.query.month || undefined }),
+      res,
+    );
   }),
 );
 

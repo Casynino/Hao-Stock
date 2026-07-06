@@ -40,8 +40,9 @@ const TYPES = {
   COMMISSION_READY: { label: 'Rep commission ready for withdrawal', priority: 'INFO' },
   LOW_STOCK: { label: 'Low stock alert', priority: 'WARNING' },
   OUT_OF_STOCK: { label: 'Out of stock alert', priority: 'CRITICAL' },
-  DAILY_SUMMARY: { label: 'Daily business summary (evening)', priority: 'INFO' },
-  WEEKLY_REPORT: { label: 'Weekly business report (Monday)', priority: 'INFO' },
+  DAILY_SUMMARY: { label: 'Daily business report (21:00)', priority: 'INFO' },
+  WEEKLY_REPORT: { label: 'Weekly business report (Monday 08:00, with PDF)', priority: 'INFO' },
+  MONTHLY_REPORT: { label: 'Monthly business report (1st of month 08:00, with PDF)', priority: 'INFO' },
   TEST: { label: 'Test message', priority: 'INFO' },
 };
 
@@ -162,6 +163,18 @@ async function deliver(row) {
       lastError: result.sent ? null : String(result.reason || result.provider || 'send failed').slice(0, 300),
     },
   });
+  // Out of retries — surface it inside The Lab so the owner knows a WhatsApp
+  // message was lost (reliability rule: log, retry, then notify the admin).
+  if (status === 'FAILED') {
+    require('./notification.service').notifyAdmins({
+      type: 'GENERAL',
+      severity: 'CRITICAL',
+      title: 'WhatsApp notification failed',
+      message: `A ${row.type.replaceAll('_', ' ').toLowerCase()} message could not be delivered after ${attempts} attempts. Check Settings → WhatsApp notifications.`,
+      entityType: 'WhatsAppNotification',
+      entityId: row.id,
+    }).catch(() => {});
+  }
   return { queued: true, sent: result.sent, status: updated.status, attempts, id: row.id };
 }
 
@@ -405,69 +418,78 @@ async function scanStockAlerts() {
   return { candidates: low.length, queued };
 }
 
-// 15. Daily business summary — the evening pulse.
+// 15. Daily business report — the 21:00 (Tanzania time) evening pulse.
+// Message-only by design; the day is anchored to the EAT calendar day.
 async function dailySummary({ force = false } = {}) {
   const finance = require('./finance.service');
   const reorder = require('./reorder.service');
+  const settlementSvc = require('./settlement.service');
+  const { eatRange } = require('../utils/dates');
 
-  const dayStart = dayjs().startOf('day').toDate();
-  const [rep, accounts, low, counts, topRepRows] = await Promise.all([
-    finance.report({ period: 'today' }),
+  const day = eatRange('day');
+  const [rep, accounts, val, low, stl, counts, repRows] = await Promise.all([
+    finance.report({ start: day.start, end: day.end }),
     finance.accountBalances(),
+    require('./inventory.service').valuation(prisma),
     reorder.lowStock(),
+    settlementSvc.summary(),
     prisma.$transaction([
       prisma.stockRequest.count({ where: { status: 'PENDING' } }),
       prisma.settlementSubmission.count({ where: { status: 'PENDING' } }),
       prisma.return.count({ where: { status: 'PENDING' } }),
-      prisma.settlementSubmission.count({ where: { status: 'APPROVED', decidedAt: { gte: dayStart } } }),
-      prisma.return.count({ where: { createdAt: { gte: dayStart } } }),
+      prisma.settlementSubmission.count({ where: { status: 'APPROVED', decidedAt: { gte: day.start, lte: day.end } } }),
+      prisma.return.count({ where: { createdAt: { gte: day.start, lte: day.end } } }),
+      prisma.stockRequest.count({ where: { createdAt: { gte: day.start, lte: day.end } } }),
     ]),
     prisma.sale.groupBy({
       by: ['salesRepId'],
-      where: { soldAt: { gte: dayStart }, status: { not: 'CANCELLED' }, salesRepId: { not: null } },
+      where: { soldAt: { gte: day.start, lte: day.end }, status: { not: 'CANCELLED' }, salesRepId: { not: null } },
       _sum: { total: true },
       orderBy: { _sum: { total: 'desc' } },
-      take: 1,
+      take: 3,
     }).catch(() => []),
   ]);
 
-  let topRepLine = null;
-  if (topRepRows.length) {
-    const r = await prisma.salesRepresentative.findUnique({
-      where: { id: topRepRows[0].salesRepId },
-      include: { user: { select: { name: true } } },
-    }).catch(() => null);
-    if (r) topRepLine = `Top rep: ${r.user?.name || r.code} (${fmt(topRepRows[0]._sum.total)})`;
-  }
-  const best = (rep.topProducts || [])[0];
+  // Names for the day's selling reps.
+  const repIds = repRows.map((r) => r.salesRepId);
+  const reps = repIds.length
+    ? await prisma.salesRepresentative.findMany({ where: { id: { in: repIds } }, include: { user: { select: { name: true } } } }).catch(() => [])
+    : [];
+  const nameOf = new Map(reps.map((r) => [r.id, r.user?.name || r.code]));
+  const repLines = repRows.map((r) => `${nameOf.get(r.salesRepId) || 'Rep'}: ${fmt(r._sum.total)}`);
+
   const cashPosition = accounts.reduce((s, a) => s + a.balance, 0);
+  const outOfStock = val.items.filter((i) => i.totalBase <= 0).length;
+  const negAccounts = accounts.filter((a) => a.balance < 0);
   const pendingTotal = counts[0] + counts[1] + counts[2];
 
+  const alerts = [];
+  alerts.push(`Approvals waiting: ${pendingTotal} (${counts[0]} req / ${counts[1]} stl / ${counts[2]} ret)`);
+  if (stl.overdueCount) alerts.push(`Overdue orders: ${stl.overdueCount} (${fmt(stl.overdueValue)})`);
+  if (negAccounts.length) alerts.push(`Account below zero: ${negAccounts.map((a) => a.name).join(', ')}`);
+
   const lines = [
-    '🟢 *THE LAB — DAILY SUMMARY*',
+    '🟢 *THE LAB — DAILY REPORT*',
     `_${nowEAT().format('dddd, D MMM YYYY')}_`,
     '',
     '💰 *TODAY*',
     `Sales: ${fmt(rep.revenue)} (${rep.boxesSold} boxes)`,
-    `Gross profit: ${fmt(rep.grossProfit)}`,
-    `Expenses: ${fmt(rep.expenses)}`,
+    `Gross: ${fmt(rep.grossProfit)} / Expenses: ${fmt(rep.expenses)}`,
     `*Net profit: ${fmt(rep.netProfit)}*`,
-    '',
-    '🏦 *CASH POSITION*',
-    ...accounts.map((a) => `${a.name}: ${fmt(a.balance)}`),
-    `*Total funds: ${fmt(cashPosition)}*`,
+    `🏦 Cash: *${fmt(cashPosition)}* (${accounts.map((a) => `${a.name} ${fmt(a.balance)}`).join(' / ')})`,
     '',
     '📋 *ACTIVITY*',
-    `Settlements approved: ${counts[3]}`,
-    `Returns submitted: ${counts[4]}`,
-    `Pending approvals: ${pendingTotal} (${counts[0]} requests / ${counts[1]} settlements / ${counts[2]} returns)`,
+    `New orders: ${counts[5]} / Settlements: ${counts[3]} / Returns: ${counts[4]}`,
+    ...(repLines.length ? ['⭐ ' + repLines.join(' · ')] : []),
+    '',
+    '📦 *INVENTORY*',
+    `Value: ${fmt(val.totals.totalValue)} (${val.totals.totalBaseUnits} boxes)`,
+    `Low stock: ${low.length} / Out of stock: ${outOfStock}`,
+    `Active orders with reps: ${stl.outstandingCount} (${fmt(stl.outstandingValue)})`,
+    '',
+    alerts.length > 1 || stl.overdueCount || negAccounts.length ? '⚠️ *NEEDS ATTENTION*' : '✅ *ALL CLEAR*',
+    ...alerts,
   ];
-  if (best || topRepLine) {
-    lines.push('', '🏆 *BEST TODAY*');
-    if (best) lines.push(`Product: ${best.name} (${fmt(best.revenue)})`);
-    if (topRepLine) lines.push(topRepLine);
-  }
-  lines.push('', low.length ? `⚠️ ${low.length} product(s) low on stock` : '✅ Stock levels healthy');
 
   return queue('DAILY_SUMMARY', {
     dedupeKey: force ? `daily:${dateEAT()}:${Date.now()}` : `daily:${dateEAT()}`,
@@ -480,7 +502,7 @@ async function dailySummary({ force = false } = {}) {
 // this idempotent with the cron.
 let lastCatchupAt = 0;
 async function dailySummaryCatchup() {
-  if (nowEAT().hour() < 20) return { queued: false, reason: 'too-early' };
+  if (nowEAT().hour() < 21) return { queued: false, reason: 'too-early' };
   const now = Date.now();
   if (now - lastCatchupAt < 10 * 60 * 1000) return { queued: false, reason: 'throttled' };
   lastCatchupAt = now;

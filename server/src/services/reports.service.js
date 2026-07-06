@@ -331,9 +331,11 @@ async function clampToEpoch(range) {
 // to the finance epoch — pre-epoch sales never count toward profit figures.
 async function profitOverview(opts = 'month') {
   const o = typeof opts === 'string' ? { period: opts } : opts || {};
-  let range = o.from || o.to
-    ? resolveRange({ from: o.from, to: o.to })
-    : o.period && o.period !== 'all' ? resolveRange({ period: o.period }) : null;
+  let range = o.start && o.end
+    ? resolveRange({ start: o.start, end: o.end })
+    : o.from || o.to
+      ? resolveRange({ from: o.from, to: o.to })
+      : o.period && o.period !== 'all' ? resolveRange({ period: o.period }) : null;
   const epoch = await financeEpoch();
   if (epoch) {
     if (!range) range = { start: epoch, end: new Date() };

@@ -420,6 +420,7 @@ async function createCategory(name) {
 
 // Resolve { period } or { from, to } into a date range (null = all time).
 function rangeFor(opts = {}) {
+  if (opts.start && opts.end) return resolveRange({ start: opts.start, end: opts.end });
   if (opts.from || opts.to) return resolveRange({ from: opts.from, to: opts.to });
   if (opts.period && opts.period !== 'all') return resolveRange({ period: opts.period });
   return null;

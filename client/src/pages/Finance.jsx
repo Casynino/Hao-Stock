@@ -880,11 +880,101 @@ function SuppliersTab({ accounts }) {
   );
 }
 
+// ── Reports Archive (generated weekly/monthly statement PDFs) ─────────────────
+function ArchiveTab() {
+  const [type, setType] = useState('');
+  const [year, setYear] = useState('');
+  const [search, setSearch] = useState('');
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['finance', 'report-archive', type, year, search],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (type) params.set('type', type);
+      if (year) params.set('year', year);
+      if (search) params.set('search', search);
+      return unwrap(await api.get(`/finance/report-archive?${params}`)).data;
+    },
+  });
+
+  const years = [];
+  for (let y = new Date().getFullYear(); y >= 2026; y -= 1) years.push(String(y));
+
+  const download = async (row) => {
+    try {
+      const res = await api.get(`/finance/report-archive/${row.id}/pdf`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `TheLab-${row.type.toLowerCase()}-${row.periodKey}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(apiError(e));
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="Reports archive"
+        subtitle="Every weekly and monthly statement PDF, exactly as it was generated and sent — nothing is lost."
+      />
+      <CardBody>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <Select value={type} onChange={(e) => setType(e.target.value)} className="w-36">
+            <option value="">All types</option>
+            <option value="WEEKLY">Weekly</option>
+            <option value="MONTHLY">Monthly</option>
+          </Select>
+          <Select value={year} onChange={(e) => setYear(e.target.value)} className="w-28">
+            <option value="">All years</option>
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </Select>
+          <Input placeholder="Search period… (e.g. W27, 2026-06)" value={search} onChange={(e) => setSearch(e.target.value)} className="w-56" />
+        </div>
+        {isLoading ? (
+          <PageSpinner label="Loading archive…" />
+        ) : rows.length === 0 ? (
+          <EmptyState icon={FileBarChart} title="No reports yet" message="Weekly and monthly PDFs are archived here automatically when they are sent." />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <THead>
+                <TR><TH>Period</TH><TH>Type</TH><TH>Key</TH><TH>Generated</TH><TH className="text-right">Actions</TH></TR>
+              </THead>
+              <TBody>
+                {rows.map((r) => (
+                  <TR key={r.id}>
+                    <TD className="font-medium">{r.label}</TD>
+                    <TD>
+                      <Badge className={r.type === 'MONTHLY' ? 'bg-violet-500/15 text-violet-500' : 'bg-lime-500/15 text-lime-600'}>
+                        {r.type === 'MONTHLY' ? 'Monthly' : 'Weekly'}
+                      </Badge>
+                    </TD>
+                    <TD className="text-xs text-muted">{r.periodKey}</TD>
+                    <TD className="text-xs">{formatDateTime(r.updatedAt || r.createdAt)}</TD>
+                    <TD className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="secondary" onClick={() => window.open(r.link, '_blank')}>Open</Button>
+                        <Button variant="secondary" onClick={() => download(r)}>Download</Button>
+                      </div>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
 // ── Page shell ────────────────────────────────────────────────────────────────
 const TABS = [
   ['overview', 'Overview'], ['profit', 'Profit'], ['cashflow', 'Cash Flow'],
   ['suppliers', 'Suppliers'], ['expenses', 'Expenses'], ['accounts', 'Accounts'],
-  ['ledger', 'Transactions'], ['reports', 'Reports'],
+  ['ledger', 'Transactions'], ['reports', 'Reports'], ['archive', 'Statements'],
 ];
 
 export default function Finance() {
@@ -920,6 +1010,7 @@ export default function Finance() {
       {tab === 'expenses' && <Ledger expensesOnly />}
       {tab === 'ledger' && <Ledger />}
       {tab === 'reports' && <ReportsPage embedded />}
+      {tab === 'archive' && <ArchiveTab />}
 
       {money && <MoneyModal mode={money} accounts={accounts} categories={categories} onClose={() => setMoney(null)} />}
     </div>

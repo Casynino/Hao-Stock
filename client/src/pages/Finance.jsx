@@ -10,6 +10,7 @@ import {
 import api, { unwrap, apiError } from '@/lib/api';
 import { useProducts } from '@/lib/hooks';
 import ReportsPage from '@/pages/Reports';
+import CommissionsPage from '@/pages/Commissions';
 import { formatCurrency, formatNumber, formatDate, formatDateTime } from '@/lib/format';
 import { DonutChart, BarChartCard } from '@/components/charts';
 import {
@@ -974,7 +975,7 @@ function ArchiveTab() {
 const TABS = [
   ['overview', 'Overview'], ['profit', 'Profit'], ['cashflow', 'Cash Flow'],
   ['suppliers', 'Suppliers'], ['expenses', 'Expenses'], ['accounts', 'Accounts'],
-  ['ledger', 'Transactions'], ['reports', 'Reports'], ['archive', 'Statements'],
+  ['ledger', 'Transactions'], ['commissions', 'Commissions'], ['reports', 'Reports'], ['archive', 'Statements'],
 ];
 
 export default function Finance() {
@@ -1009,6 +1010,7 @@ export default function Finance() {
       {tab === 'accounts' && <Accounts onQuick={setMoney} />}
       {tab === 'expenses' && <Ledger expensesOnly />}
       {tab === 'ledger' && <Ledger />}
+      {tab === 'commissions' && <CommissionsPage embedded />}
       {tab === 'reports' && <ReportsPage embedded />}
       {tab === 'archive' && <ArchiveTab />}
 

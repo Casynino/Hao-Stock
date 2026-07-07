@@ -42,6 +42,12 @@ function DashboardRouter() {
   return role === ROLES.SALES_REP ? <RepDashboard /> : <Dashboard />;
 }
 
+// Reps keep their own commissions page; staff manage commissions inside Finance.
+function CommissionsRouter() {
+  const { role } = useAuth();
+  return role === ROLES.SALES_REP ? <Commissions /> : <Navigate to="/finance?tab=commissions" replace />;
+}
+
 const W = [ROLES.WAREHOUSE_STAFF]; // ADMIN always allowed by hasRole
 
 export default function App() {
@@ -63,7 +69,7 @@ export default function App() {
         <Route path="/transfers" element={<ProtectedRoute roles={W}><Transfers /></ProtectedRoute>} />
         <Route path="/stock-requests" element={<StockRequests />} />
         <Route path="/settlements" element={<Settlements />} />
-        <Route path="/commissions" element={<Commissions />} />
+        <Route path="/commissions" element={<CommissionsRouter />} />
         <Route path="/daily-reports" element={<DailyReports />} />
         <Route path="/invoice-generator" element={<Suspense fallback={<PageSpinner />}><InvoiceGenerator /></Suspense>} />
         <Route path="/activity" element={<ProtectedRoute roles={W}><Activity /></ProtectedRoute>} />

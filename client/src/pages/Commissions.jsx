@@ -295,12 +295,15 @@ function AdminView() {
   );
 }
 
-export default function Commissions() {
+// Renders standalone (reps' own page) or embedded inside Finance (staff).
+export default function Commissions({ embedded = false }) {
   const { user } = useAuth();
   const isRep = user?.role === ROLES.SALES_REP;
   return (
     <div>
-      <PageHeader title="Commissions" subtitle={isRep ? 'Your commission earnings and withdrawals.' : 'Commission performance and withdrawal approvals.'} />
+      {!embedded && (
+        <PageHeader title="Commissions" subtitle={isRep ? 'Your commission earnings and withdrawals.' : 'Commission performance and withdrawal approvals.'} />
+      )}
       {isRep ? <RepView /> : <AdminView />}
     </div>
   );

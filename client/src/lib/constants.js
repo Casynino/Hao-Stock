@@ -50,7 +50,8 @@ export const NAV = [
   // ── People ──
   { to: '/reps', label: 'Sales Reps', icon: 'UserCog', roles: STAFF, group: 'people' },
   { to: '/customers', label: 'Customers', icon: 'Users', roles: STAFF, group: 'people' },
-  { to: '/commissions', label: 'Commissions', icon: 'Coins', roles: ALL, group: 'people' },
+  // Staff/admin manage commissions inside Finance; reps keep their own page.
+  { to: '/commissions', label: 'Commissions', icon: 'Coins', roles: ['SALES_REP'], group: 'people' },
 
   // ── Tools ──
   { to: '/invoice-generator', label: 'Generate Invoice', icon: 'Receipt', roles: ALL, group: 'tools' },

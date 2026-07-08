@@ -93,8 +93,8 @@ export default function SalesReps() {
                     <div className="text-sm font-bold text-emerald-600">{formatCurrency(r.totalSales)}</div>
                   </div>
                   <div className="rounded-xl bg-elevated p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-faint">Owed to rep</div>
-                    <div className="text-sm font-bold text-rose-600">{formatCurrency(r.outstandingDebt)}</div>
+                    <div className="text-[11px] uppercase tracking-wide text-faint">Commission owed</div>
+                    <div className={`text-sm font-bold ${r.commissionOwed > 0 ? 'text-amber-500' : r.commissionOwed < 0 ? 'text-rose-600' : 'text-foreground'}`}>{formatCurrency(r.commissionOwed)}</div>
                   </div>
                   <div className="rounded-xl bg-elevated p-3">
                     <div className="text-[11px] uppercase tracking-wide text-faint">Customers</div>

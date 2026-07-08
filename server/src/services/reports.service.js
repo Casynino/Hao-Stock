@@ -213,7 +213,7 @@ async function regionalPerformance(params = {}) {
 async function salesRepPerformance(params = {}) {
   const range = await clampToEpoch(resolveRange(params));
 
-  const [grouped, reps, debtBySalesRep] = await Promise.all([
+  const [grouped, reps, commissionSummary] = await Promise.all([
     prisma.sale.groupBy({
       by: ['salesRepId'],
       where: { ...NON_CANCELLED, soldAt: { gte: range.start, lte: range.end } },
@@ -224,15 +224,11 @@ async function salesRepPerformance(params = {}) {
       where: { isActive: true },
       include: { user: { select: { name: true } } },
     }),
-    prisma.creditSale.groupBy({
-      by: ['salesRepId'],
-      where: { balance: { gt: 0 } },
-      _sum: { balance: true },
-    }),
+    require('./commission.service').summaryAllReps().catch(() => ({ items: [] })),
   ]);
 
   const salesMap = new Map(grouped.map((g) => [g.salesRepId, g]));
-  const debtMap = new Map(debtBySalesRep.map((d) => [d.salesRepId, toNumber(d._sum.balance)]));
+  const commMap = new Map((commissionSummary.items || []).map((c) => [c.salesRepId, toNumber(c.available)]));
 
   const items = reps.map((rep) => {
     const s = salesMap.get(rep.id);
@@ -248,7 +244,7 @@ async function salesRepPerformance(params = {}) {
       cost,
       profit: round2(revenue - cost),
       orders: s ? s._count : 0,
-      outstandingDebt: round2(debtMap.get(rep.id) || 0),
+      commissionOwed: round2(commMap.get(rep.id) || 0),
       monthlyTarget: target,
       attainment: target > 0 ? round2((revenue / target) * 100) : null,
     };

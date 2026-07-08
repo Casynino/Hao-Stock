@@ -146,9 +146,9 @@ export default function Reports({ embedded = false }) {
             <Card>
               <CardHeader title="Sales rep performance" />
               <Table>
-                <THead><TR><TH>Rep</TH><TH>Region</TH><TH>Orders</TH><TH>Revenue</TH><TH>Profit</TH><TH>Owed</TH><TH>Target</TH></TR></THead>
+                <THead><TR><TH>Rep</TH><TH>Region</TH><TH>Orders</TH><TH>Revenue</TH><TH>Profit</TH><TH>Commission owed</TH><TH>Target</TH></TR></THead>
                 <TBody>{(data.items || []).map((r) => (
-                  <TR key={r.salesRepId}><TD className="font-medium">{r.name}</TD><TD>{r.region || '—'}</TD><TD>{r.orders}</TD><TD>{formatCurrency(r.revenue)}</TD><TD>{formatCurrency(r.profit)}</TD><TD className="text-rose-600">{formatCurrency(r.outstandingDebt)}</TD><TD>{r.attainment != null ? formatPercent(r.attainment) : '—'}</TD></TR>
+                  <TR key={r.salesRepId}><TD className="font-medium">{r.name}</TD><TD>{r.region || '—'}</TD><TD>{r.orders}</TD><TD>{formatCurrency(r.revenue)}</TD><TD>{formatCurrency(r.profit)}</TD><TD className="text-amber-500">{formatCurrency(r.commissionOwed)}</TD><TD>{r.attainment != null ? formatPercent(r.attainment) : '—'}</TD></TR>
                 ))}</TBody>
               </Table>
             </Card>

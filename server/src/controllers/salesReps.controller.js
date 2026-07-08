@@ -68,9 +68,11 @@ const list = asyncHandler(async (req, res) => {
   // Enrich each card with held-stock value, total sales and outstanding debt
   // using a few grouped aggregates (not one query per rep).
   const ids = items.map((r) => r.id);
-  const [heldRows, debtRows, salesRows] = await Promise.all([
+  // "Owed to rep" = available commission (earned - penalties - paid). The old
+  // credit-sale debt figure is dead weight in a cash-only business.
+  const [heldRows, commissionSummary, salesRows] = await Promise.all([
     inventory.repBalances(prisma).then((rows) => rows.filter((r) => ids.includes(r.salesRepId) && r.baseQuantity > 0)),
-    prisma.creditSale.groupBy({ by: ['salesRepId'], where: { salesRepId: { in: ids }, balance: { gt: 0 } }, _sum: { balance: true } }),
+    require('../services/commission.service').summaryAllReps().catch(() => ({ items: [] })),
     prisma.sale.groupBy({ by: ['salesRepId'], where: { salesRepId: { in: ids }, status: { not: 'CANCELLED' } }, _sum: { total: true } }),
   ]);
   const prodIds = [...new Set(heldRows.map((r) => r.productId))];
@@ -82,14 +84,14 @@ const list = asyncHandler(async (req, res) => {
     heldValue.set(r.salesRepId, (heldValue.get(r.salesRepId) || 0) + r.baseQuantity * (costMap.get(r.productId) || 0));
     heldUnits.set(r.salesRepId, (heldUnits.get(r.salesRepId) || 0) + r.baseQuantity);
   });
-  const debtMap = new Map(debtRows.map((d) => [d.salesRepId, toNumber(d._sum.balance)]));
+  const commMap = new Map((commissionSummary.items || []).map((c) => [c.salesRepId, toNumber(c.available)]));
   const salesMap = new Map(salesRows.map((s) => [s.salesRepId, toNumber(s._sum.total)]));
 
   const enriched = items.map((r) => ({
     ...r,
     heldStockValue: round2(heldValue.get(r.id) || 0),
     heldUnits: heldUnits.get(r.id) || 0,
-    outstandingDebt: round2(debtMap.get(r.id) || 0),
+    commissionOwed: round2(commMap.get(r.id) || 0),
     totalSales: round2(salesMap.get(r.id) || 0),
   }));
 
@@ -106,9 +108,9 @@ const get = asyncHandler(async (req, res) => {
   });
   if (!rep) throw ApiError.notFound('Sales representative not found');
 
-  const [{ stock, value }, debtAgg, salesAgg] = await Promise.all([
+  const [{ stock, value }, commissionData, salesAgg] = await Promise.all([
     repStockList(rep.id),
-    prisma.creditSale.aggregate({ where: { salesRepId: rep.id, balance: { gt: 0 } }, _sum: { balance: true } }),
+    require('../services/commission.service').computeForRep(rep.id).catch(() => null),
     prisma.sale.aggregate({ where: { salesRepId: rep.id, status: { not: 'CANCELLED' } }, _sum: { total: true }, _count: true }),
   ]);
 
@@ -116,7 +118,7 @@ const get = asyncHandler(async (req, res) => {
     ...rep,
     heldStockValue: value,
     heldStock: stock,
-    outstandingDebt: round2(toNumber(debtAgg._sum.balance)),
+    commissionOwed: round2(toNumber(commissionData?.available)),
     totalSales: round2(toNumber(salesAgg._sum.total)),
     orderCount: salesAgg._count,
   });

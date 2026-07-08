@@ -165,7 +165,9 @@ export default function Layout() {
   const [bellOpen, setBellOpen] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
-  const items = NAV.filter((n) => hasRole(...n.roles));
+  // `exact: true` items show ONLY to the listed roles (hasRole always
+  // admits admins, which is wrong for rep-only pages like Commissions).
+  const items = NAV.filter((n) => (n.exact ? n.roles.includes(user?.role) : hasRole(...n.roles)));
 
   const { data: unread = 0 } = useQuery({
     queryKey: ['notifications', 'unread'],

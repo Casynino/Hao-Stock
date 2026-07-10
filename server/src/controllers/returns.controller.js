@@ -64,4 +64,11 @@ const reject = asyncHandler(async (req, res) => {
   return ok(res, ret);
 });
 
-module.exports = { create, list, get, approve, reject };
+// Stat-card counts; reps get their own numbers.
+const summary = asyncHandler(async (req, res) => {
+  const filters = {};
+  if (req.user.role === ROLES.SALES_REP) filters.salesRepId = req.user.salesRepId;
+  return ok(res, await returnsService.returnsSummary(filters));
+});
+
+module.exports = { create, list, get, approve, reject, summary };

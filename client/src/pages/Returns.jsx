@@ -1,14 +1,14 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Plus, Undo2, Search, X, CheckCircle, XCircle, Eye } from 'lucide-react';
+import { Plus, Undo2, Search, X, CheckCircle, XCircle, Eye, Clock, CheckCircle2, PackageOpen } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useProducts, useCustomers, useSalesReps, useWarehouses } from '@/lib/hooks';
 import { ROLES, RETURN_STATUS_META } from '@/lib/constants';
 import { formatDate, formatDateTime, formatNumber, formatCurrency } from '@/lib/format';
 import {
-  PageHeader, Card, PageSpinner, EmptyState, Badge, Button, Modal, Field, Select, Textarea,
+  PageHeader, Card, StatCard, PageSpinner, EmptyState, Badge, Button, Modal, Field, Select, Textarea,
   Pagination, Table, THead, TBody, TR, TH, TD,
 } from '@/components/ui';
 
@@ -304,6 +304,89 @@ function ReturnModal({ onClose }) {
   );
 }
 
+// ── Return card: everything visible without opening anything ─────────────────
+function ReturnCard({ r, canDecide, onView, onReject, approve }) {
+  const totalBoxes = r.items.reduce((a, i) => a + i.quantity, 0);
+  const totalValue = r.items.reduce((a, i) => a + i.quantity * Number(i.unitPrice || 0), 0);
+  const busy = approve && approve.isPending && approve.variables === r.id;
+  return (
+    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-bold text-foreground">{r.returnNumber}</span>
+        <Badge className={r.type === 'CUSTOMER_RETURN' ? 'bg-teal-500/15 text-teal-500' : 'bg-cyan-500/15 text-cyan-500'}>
+          {r.type === 'CUSTOMER_RETURN' ? 'Customer return' : 'Rep → The Lab'}
+        </Badge>
+        <Badge className="bg-amber-500/15 text-amber-500">Waiting approval</Badge>
+        <span className="ml-auto text-xs text-faint">{formatDateTime(r.processedAt)}</span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">Sales rep / customer</div>
+          <div className="font-semibold text-foreground">
+            {r.salesRep ? `${r.salesRep.user?.name} (${r.salesRep.code})` : r.customer?.name || '—'}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">Related order</div>
+          <div className="font-semibold text-foreground">{r.settlementNumber || '—'}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">Reason</div>
+          <div className="truncate font-medium text-muted" title={r.reason || ''}>{r.reason || '—'}</div>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-xl bg-surface/60 p-3">
+        <div className="mb-1 text-[11px] uppercase tracking-wide text-faint">Products returned</div>
+        <div className="space-y-1">
+          {r.items.map((i, n) => (
+            <div key={i.id} className="flex items-center gap-2 text-sm">
+              <span className="text-faint">{n + 1}.</span>
+              <span className="min-w-0 flex-1 truncate font-medium text-foreground">{i.product?.name}</span>
+              {i.product?.brand?.name && <Badge className="bg-brand-500/15 text-brand-400">{i.product.brand.name}</Badge>}
+              <span className="shrink-0 font-semibold tabular-nums text-foreground">{formatNumber(i.quantity)} box{i.quantity !== 1 ? 'es' : ''}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
+          <span>Total returned</span>
+          <span>{formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {formatCurrency(totalValue)}</span>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <Button variant="secondary" onClick={() => onView(r.id)}><Eye className="h-4 w-4" /> View</Button>
+        {canDecide && (
+          <>
+            <Button variant="ghost" className="text-rose-500" onClick={() => onReject(r.id)}><XCircle className="h-4 w-4" /> Reject</Button>
+            <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle className="h-4 w-4" /> Approve</Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Compact row for decided returns — products still visible, no digging.
+function HistoryRow({ r, onView }) {
+  const meta = RETURN_STATUS_META[r.status] || RETURN_STATUS_META.PENDING;
+  const totalBoxes = r.items.reduce((a, i) => a + i.quantity, 0);
+  const itemsLabel = r.items.map((i) => `${i.product?.name} × ${i.quantity}`).join(', ');
+  return (
+    <button onClick={() => onView(r.id)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left transition hover:bg-elevated">
+      <span className="text-sm font-semibold text-foreground">{r.returnNumber}</span>
+      <Badge className={meta.cls}>{meta.label}</Badge>
+      <span className="text-sm text-muted">{r.salesRep ? `${r.salesRep.user?.name} (${r.salesRep.code})` : r.customer?.name || '—'}</span>
+      {r.settlementNumber && <span className="text-xs text-faint">on {r.settlementNumber}</span>}
+      <span className="min-w-0 flex-1 truncate text-xs text-faint" title={itemsLabel}>{itemsLabel}</span>
+      <span className="shrink-0 text-sm font-semibold tabular-nums">{formatNumber(totalBoxes)} bx</span>
+      <span className="shrink-0 text-xs text-faint">{formatDate(r.processedAt)}</span>
+      <Eye className="h-3.5 w-3.5 shrink-0 text-faint" />
+    </button>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function Returns() {
   const { user } = useAuth();
@@ -311,111 +394,111 @@ export default function Returns() {
   const canDecide = user?.role === ROLES.ADMIN || user?.role === ROLES.WAREHOUSE_STAFF;
 
   const qc = useQueryClient();
-  const [page, setPage] = useState(1);
   const [typeFilter, setTypeFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
   const [open, setOpen] = useState(false);
   const [rejectingId, setRejectingId] = useState(null);
   const [viewingId, setViewingId] = useState(null);
 
+  const { data: summary } = useQuery({
+    queryKey: ['returns', 'summary'],
+    queryFn: async () => unwrap(await api.get('/returns/summary')).data,
+    refetchInterval: 30_000,
+  });
   const { data, isLoading } = useQuery({
-    queryKey: ['returns', { page, type: typeFilter, status: statusFilter }],
-    queryFn: async () => unwrap(await api.get('/returns', { params: { page, limit: 15, type: typeFilter || undefined, status: statusFilter || undefined } })),
+    queryKey: ['returns', { type: typeFilter }],
+    queryFn: async () => unwrap(await api.get('/returns', { params: { limit: 100, type: typeFilter || undefined } })),
+    refetchInterval: 30_000,
   });
 
   const approve = useMutation({
     mutationFn: (id) => api.post(`/returns/${id}/approve`),
     onSuccess: () => {
       toast.success('Return approved — inventory updated');
-      qc.invalidateQueries({ queryKey: ['returns'] });
+      ['returns', 'settlements', 'inventory', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },
     onError: (e) => toast.error(apiError(e)),
   });
 
+  const all = data?.data || [];
+  const pending = all.filter((r) => r.status === 'PENDING');
+  const approved = all.filter((r) => r.status === 'APPROVED' || r.status === 'COMPLETED');
+  const rejected = all.filter((r) => r.status === 'REJECTED');
+
   return (
     <div>
-      <PageHeader title="Returns" subtitle="Customer returns and rep stock returned to The Lab.">
+      <PageHeader
+        title="Returns"
+        subtitle={isRep ? 'Your returns — what you sent back, and whether The Lab accepted it.' : 'Who returned stock, what, how many boxes — and what needs your action.'}
+      >
         <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New return</Button>
       </PageHeader>
 
-      <Card>
-        <div className="flex flex-wrap gap-3 border-b border-border p-4">
-          <Select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }} className="sm:w-44">
-            <option value="">All types</option>
-            <option value="CUSTOMER_RETURN">Customer</option>
-            <option value="SALES_RETURN">Sales</option>
-          </Select>
-          <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="sm:w-48">
-            <option value="">All statuses</option>
-            <option value="PENDING">Pending approval</option>
-            <option value="APPROVED">Approved</option>
-            <option value="REJECTED">Rejected</option>
-          </Select>
+      {summary && (
+        <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
+          <StatCard label="Waiting approval" value={summary.pending} icon={Clock} tone="amber" hint={`${summary.pendingBoxes} box(es)`} />
+          <StatCard label="Returned today" value={summary.todayCount} icon={PackageOpen} tone="brand" hint={`${summary.todayBoxes} box(es)`} />
+          <StatCard label="Approved" value={summary.approved} icon={CheckCircle2} tone="emerald" />
+          <StatCard label="Rejected" value={summary.rejected} icon={XCircle} tone="rose" />
         </div>
+      )}
 
-        {isLoading ? <PageSpinner /> : !data?.data?.length ? (
-          <EmptyState title="No returns yet" icon={Undo2} action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New return</Button>} />
-        ) : (
-          <>
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Return</TH>
-                  <TH>Type</TH>
-                  <TH>Status</TH>
-                  <TH>Rep / Customer</TH>
-                  <TH>Items</TH>
-                  <TH>Date</TH>
-                  <TH />
-                </TR>
-              </THead>
-              <TBody>
-                {data.data.map((r) => {
-                  const meta = RETURN_STATUS_META[r.status] || RETURN_STATUS_META.PENDING;
-                  return (
-                    <TR key={r.id} className="cursor-pointer" onClick={() => setViewingId(r.id)}>
-                      <TD className="font-medium">{r.returnNumber}</TD>
-                      <TD>
-                        <Badge className={r.type === 'CUSTOMER_RETURN' ? 'bg-teal-100 text-teal-700' : 'bg-cyan-100 text-cyan-700'}>
-                          {r.type === 'CUSTOMER_RETURN' ? 'Customer' : 'Sales'}
-                        </Badge>
-                      </TD>
-                      <TD><Badge className={meta.cls}>{meta.label}</Badge></TD>
-                      <TD>{r.salesRep?.user?.name || r.customer?.name || '—'}</TD>
-                      <TD>{r.items.length}</TD>
-                      <TD className="text-faint">{formatDate(r.processedAt)}</TD>
-                      <TD onClick={(e) => e.stopPropagation()}>
-                        {canDecide && r.status === 'PENDING' ? (
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => approve.mutate(r.id)}
-                              disabled={approve.isPending}
-                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-50"
-                            >
-                              <CheckCircle className="h-3.5 w-3.5" /> Approve
-                            </button>
-                            <button
-                              onClick={() => setRejectingId(r.id)}
-                              className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-500/20"
-                            >
-                              <XCircle className="h-3.5 w-3.5" /> Reject
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="inline-flex items-center justify-end gap-1 text-xs font-medium text-brand-600">
-                            View <Eye className="h-3.5 w-3.5" />
-                          </span>
-                        )}
-                      </TD>
-                    </TR>
-                  );
-                })}
-              </TBody>
-            </Table>
-            <Pagination page={page} totalPages={data.meta?.totalPages} total={data.meta?.total} onChange={setPage} />
-          </>
-        )}
-      </Card>
+      <div className="mb-4">
+        <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="sm:w-48">
+          <option value="">All types</option>
+          <option value="CUSTOMER_RETURN">Customer returns</option>
+          <option value="SALES_RETURN">Rep → The Lab</option>
+        </Select>
+      </div>
+
+      {isLoading ? (
+        <Card><PageSpinner /></Card>
+      ) : (
+        <div className="space-y-8">
+          {/* ── Pending — the action zone ── */}
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <Clock className="h-4 w-4 text-amber-500" />
+              <h2 className="text-base font-bold text-foreground">
+                Pending returns
+                {pending.length > 0 && <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-black text-slate-950">{pending.length}</span>}
+              </h2>
+            </div>
+            {pending.length === 0 ? (
+              <div className="rounded-2xl border border-border bg-surface">
+                <EmptyState title="Nothing waiting" message="New return requests appear here the moment a rep submits them." icon={Undo2} />
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pending.map((r) => (
+                  <ReturnCard key={r.id} r={r} canDecide={canDecide} onView={setViewingId} onReject={setRejectingId} approve={approve} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Approved ── */}
+          {approved.length > 0 && (
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <h2 className="text-sm font-semibold text-muted">Approved returns ({approved.length})</h2>
+              </div>
+              <Card><div className="divide-y divide-border">{approved.map((r) => <HistoryRow key={r.id} r={r} onView={setViewingId} />)}</div></Card>
+            </div>
+          )}
+
+          {/* ── Rejected ── */}
+          {rejected.length > 0 && (
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <XCircle className="h-4 w-4 text-rose-500" />
+                <h2 className="text-sm font-semibold text-muted">Rejected returns ({rejected.length})</h2>
+              </div>
+              <Card><div className="divide-y divide-border">{rejected.map((r) => <HistoryRow key={r.id} r={r} onView={setViewingId} />)}</div></Card>
+            </div>
+          )}
+        </div>
+      )}
 
       {open && <ReturnModal onClose={() => setOpen(false)} />}
       {rejectingId && <RejectModal returnId={rejectingId} onClose={() => setRejectingId(null)} />}

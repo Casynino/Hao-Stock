@@ -9,7 +9,7 @@ const { nextDocNumber } = require('../utils/numbering');
 const { toNumber } = require('../utils/money');
 
 const RETURN_INCLUDE = {
-  items: { include: { product: true, packagingUnit: true } },
+  items: { include: { product: { include: { brand: { select: { name: true } } } }, packagingUnit: true } },
   customer: true,
   salesRep: { include: { user: { select: { id: true, name: true } } } },
   warehouse: true,
@@ -335,6 +335,15 @@ async function listReturns(filters, pagination) {
     prisma.return.findMany({ where, include: RETURN_INCLUDE, skip: pagination.skip, take: pagination.take, orderBy: pagination.orderBy }),
     prisma.return.count({ where }),
   ]);
+
+  // Attach the related order number (settlementId is a plain reference), so
+  // the list shows "Return on STL-..." without opening the order.
+  const stlIds = [...new Set(items.map((r) => r.settlementId).filter(Boolean))];
+  if (stlIds.length) {
+    const stls = await prisma.settlement.findMany({ where: { id: { in: stlIds } }, select: { id: true, settlementNumber: true } });
+    const numOf = new Map(stls.map((x) => [x.id, x.settlementNumber]));
+    for (const r of items) r.settlementNumber = r.settlementId ? numOf.get(r.settlementId) || null : null;
+  }
   return { items, total };
 }
 
@@ -344,4 +353,29 @@ async function getReturn(id) {
   return ret;
 }
 
-module.exports = { createReturn, approveReturn, rejectReturn, listReturns, getReturn, RETURN_INCLUDE };
+// Counts for the Returns stat cards and the dashboard tile. "Today" follows
+// the Tanzania business day.
+async function returnsSummary(filters = {}) {
+  const { eatRange } = require('../utils/dates');
+  const day = eatRange('day');
+  const repWhere = filters.salesRepId ? { salesRepId: filters.salesRepId } : {};
+  const [pending, pendingBoxes, todayCount, todayBoxes, approved, rejected] = await Promise.all([
+    prisma.return.count({ where: { ...repWhere, status: 'PENDING' } }),
+    prisma.returnItem.aggregate({ where: { return: { is: { ...repWhere, status: 'PENDING' } } }, _sum: { quantity: true } }),
+    prisma.return.count({ where: { ...repWhere, createdAt: { gte: day.start, lte: day.end } } }),
+    prisma.returnItem.aggregate({ where: { return: { is: { ...repWhere, createdAt: { gte: day.start, lte: day.end } } } }, _sum: { quantity: true } }),
+    prisma.return.count({ where: { ...repWhere, status: { in: ['APPROVED', 'COMPLETED'] } } }),
+    prisma.return.count({ where: { ...repWhere, status: 'REJECTED' } }),
+  ]);
+  return {
+    pending,
+    pendingBoxes: pendingBoxes._sum.quantity || 0,
+    todayCount,
+    todayBoxes: todayBoxes._sum.quantity || 0,
+    approved,
+    rejected,
+  };
+}
+
+module.exports = {
+  returnsSummary, createReturn, approveReturn, rejectReturn, listReturns, getReturn, RETURN_INCLUDE };

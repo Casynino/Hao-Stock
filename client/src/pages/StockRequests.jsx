@@ -556,68 +556,41 @@ function PendingRequestApprovals({ onReview }) {
   if (!pending.length) return null;
 
   return (
-    <div className="mb-6">
-      <div className="mb-3 flex items-center gap-2">
+    <Card className="mb-6 border-sky-500/30">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
         <ClipboardList className="h-4 w-4 text-sky-400" />
-        <h2 className="text-base font-bold text-foreground">Pending stock requests</h2>
-        <span className="rounded-full bg-sky-500 px-2 py-0.5 text-[11px] font-black text-slate-950">{pending.length}</span>
+        <h2 className="text-sm font-bold text-foreground">Pending stock requests</h2>
+        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-bold text-sky-400">{pending.length}</span>
         <span className="ml-auto hidden text-xs text-faint sm:block">Approve issues the stock and opens the 72h order</span>
       </div>
-      <div className="space-y-4">
+      <div className="divide-y divide-border">
         {pending.map((r) => {
           const busy = (approve.isPending && approve.variables === r.id) || (reject.isPending && reject.variables === r.id);
           const boxes = boxCount(r);
           return (
-            <div key={r.id} className="rounded-2xl border border-sky-500/40 bg-sky-500/5 p-4 sm:p-5">
-              {/* Header */}
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge className="bg-sky-500/15 text-sky-400">Waiting approval</Badge>
-                <span className="ml-auto text-xs text-faint">{r.requestNumber} · {formatDateTime(r.requestedAt)}</span>
-              </div>
-
-              {/* Hero: who + value */}
-              <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <div className="text-[11px] uppercase tracking-widest text-faint">Requested by</div>
-                  <div className="text-lg font-bold text-foreground">
-                    {r.salesRep?.user?.name}
-                    <span className="ml-1.5 text-sm font-medium text-faint">({r.salesRep?.code})</span>
-                  </div>
+            <div key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <button onClick={() => onReview(r)} className="min-w-0 flex-1 text-left" title="Open to review or adjust quantities">
+                <div className="text-sm font-semibold text-foreground">
+                  {r.salesRep?.user?.name} ({r.salesRep?.code}) · {formatNumber(boxes)} box{boxes !== 1 ? 'es' : ''} · {formatCurrency(orderDisplayValue(r))}
                 </div>
-                <div className="text-right">
-                  <div className="text-[11px] uppercase tracking-widest text-faint">Order value</div>
-                  <div className="text-2xl font-black tabular-nums text-sky-400">{formatCurrency(orderDisplayValue(r))}</div>
-                  <div className="text-xs text-faint">{formatNumber(boxes)} box{boxes !== 1 ? 'es' : ''}</div>
-                </div>
-              </div>
-
-              {/* Requested lines — quantity first */}
-              <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface/70">
                 {r.items.map((i) => (
-                  <div key={i.id} className="flex items-center gap-3 px-3 py-2.5">
-                    <span className="w-14 shrink-0 text-base font-black tabular-nums text-foreground">
-                      {formatNumber(i.quantityRequested)} <span className="text-[10px] font-bold text-faint">BX</span>
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{i.product?.name}</span>
-                    <span className="shrink-0 text-xs tabular-nums text-faint">{formatCurrency(i.unitPrice)} each</span>
+                  <div key={i.id} className="mt-0.5 text-xs text-faint">
+                    <span className="font-semibold text-muted">{i.quantityRequested}×</span> {i.product?.name}
                   </div>
                 ))}
-              </div>
-
-              {/* Notes + actions */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                {r.notes && <span className="min-w-0 flex-1 truncate text-xs italic text-muted" title={r.notes}>“{r.notes}”</span>}
-                <div className="ml-auto flex shrink-0 gap-2">
-                  <Button variant="secondary" onClick={() => onReview(r)}><Eye className="h-4 w-4" /> Review / adjust</Button>
-                  <Button variant="ghost" className="text-rose-500" disabled={busy} onClick={() => reject.mutate(r.id)}><XCircle className="h-4 w-4" /> Reject</Button>
-                  <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle2 className="h-4 w-4" /> Approve &amp; issue</Button>
+                <div className="mt-0.5 text-xs text-faint">
+                  {r.requestNumber} · {formatDateTime(r.requestedAt)}{r.notes ? ` · ${r.notes}` : ''}
                 </div>
+              </button>
+              <div className="flex shrink-0 gap-2">
+                <Button variant="ghost" className="text-rose-500" disabled={busy} onClick={() => reject.mutate(r.id)}>Reject</Button>
+                <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle2 className="h-4 w-4" /> Approve</Button>
               </div>
             </div>
           );
         })}
       </div>
-    </div>
+    </Card>
   );
 }
 

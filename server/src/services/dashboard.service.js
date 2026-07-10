@@ -260,7 +260,7 @@ async function command() {
   const todayR = await epochRange('today');
   const monthR = await epochRange('month');
 
-  const [fin, profMonth, bd, stl, low, val, repsRows, repBal, commAll, supplierRows, products, pendCounts, salesTodayRows, salesMonthRows, activeStl, retTodayAgg] = await Promise.all([
+  const [fin, profMonth, bd, stl, low, val, repsRows, repBal, commAll, supplierRows, products, pendCounts, salesTodayRows, salesMonthRows, activeStl, retTodayAgg, retSubmittedToday, retSubmittedTodayBoxes] = await Promise.all([
     finance.overview('today'),
     reports.profitOverview('month'),
     brandBreakdown(),
@@ -283,6 +283,11 @@ async function command() {
     prisma.returnItem.aggregate({
       where: { return: { is: { status: { in: ['APPROVED', 'COMPLETED'] }, decidedAt: { gte: todayR.start, lte: todayR.end } } } },
       _sum: { baseQuantity: true },
+    }),
+    prisma.return.count({ where: { createdAt: { gte: todayR.start, lte: todayR.end } } }),
+    prisma.returnItem.aggregate({
+      where: { return: { is: { createdAt: { gte: todayR.start, lte: todayR.end } } } },
+      _sum: { quantity: true },
     }),
   ]);
 
@@ -373,6 +378,8 @@ async function command() {
       stockRequests: pendCounts[0],
       settlements: pendCounts[1],
       returns: pendCounts[2],
+      returnsToday: retSubmittedToday,
+      returnsTodayBoxes: retSubmittedTodayBoxes._sum.quantity || 0,
       overdueSettlements: stl.overdueCount,
       overdueValue: stl.overdueValue,
       lowStock: { count: low.length, items: low.slice(0, 5).map((l) => ({ name: l.name, onHand: l.onHand })) },

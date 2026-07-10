@@ -141,7 +141,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
           <AttentionTile label="Stock requests" value={attention.stockRequests} icon={ClipboardList} tone="sky" active={attention.stockRequests > 0} onClick={() => navigate('/stock-requests')} />
           <AttentionTile label="Settlements" value={attention.settlements} icon={Timer} tone="sky" active={attention.settlements > 0} onClick={() => navigate('/settlements')} />
-          <AttentionTile label="Returns" value={attention.returns} icon={Undo2} tone="sky" active={attention.returns > 0} onClick={() => navigate('/returns')} />
+          <AttentionTile label="Returns" value={attention.returns} sub={attention.returnsToday > 0 ? `${attention.returnsToday} today · ${attention.returnsTodayBoxes} boxes` : undefined} icon={Undo2} tone="sky" active={attention.returns > 0} onClick={() => navigate('/returns')} />
           <AttentionTile label="Overdue orders" value={attention.overdueSettlements} sub={attention.overdueSettlements > 0 ? formatCurrency(attention.overdueValue) : undefined} icon={AlertTriangle} tone="rose" active={attention.overdueSettlements > 0} onClick={() => navigate('/settlements')} />
           <AttentionTile label="Low stock" value={attention.lowStock.count} sub={attention.lowStock.items[0]?.name} icon={TrendingDown} tone="amber" active={attention.lowStock.count > 0} onClick={() => navigate('/reorder')} />
           <AttentionTile label="Out of stock" value={attention.outOfStock} icon={PackageX} tone="amber" active={attention.outOfStock > 0} onClick={() => navigate('/reorder')} />

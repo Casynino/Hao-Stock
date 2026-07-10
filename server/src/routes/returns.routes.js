@@ -17,6 +17,7 @@ const canDecide = requireRoles(ROLES.WAREHOUSE_STAFF);
 
 router.use(authenticate);
 router.get('/', validate(returnQuery), ctrl.list);
+router.get('/summary', ctrl.summary); // must precede /:id
 router.get('/:id', validate(idParam), ctrl.get);
 router.post('/', canCreate, validate(returnCreate), ctrl.create);
 router.post('/:id/approve', canDecide, validate(idParam), ctrl.approve);

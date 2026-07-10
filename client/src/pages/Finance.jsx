@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   Wallet, TrendingUp, TrendingDown, Banknote, Landmark, Smartphone, Coins,
-  Plus, Trash2, ArrowDownLeft, ArrowUpRight, Boxes, Receipt, PiggyBank,
+  Plus, Trash2, Pencil, ArrowLeftRight, ArrowDownLeft, ArrowUpRight, Boxes, Receipt, PiggyBank,
   Factory, Package, Scale, FileBarChart, ChevronRight,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
@@ -32,6 +32,62 @@ function usePeriod() { return useState('all'); }
 const invalidateFinance = (qc) => ['finance'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
 
 // ── Modals ───────────────────────────────────────────────────────────────────
+// Move money between two business accounts (banked cash, corrections). Posts
+// a linked OUT+IN pair that shifts balances without touching profit or the
+// income/expense reports.
+function TransferModal({ accounts, onClose }) {
+  const qc = useQueryClient();
+  const [fromId, setFromId] = useState('');
+  const [toId, setToId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [notes, setNotes] = useState('');
+  const from = accounts.find((a) => a.id === fromId);
+
+  const save = useMutation({
+    mutationFn: () => api.post('/finance/transfers', { fromAccountId: fromId, toAccountId: toId, amount: Number(amount), notes }),
+    onSuccess: (res) => {
+      const d = unwrap(res).data;
+      toast.success(`Moved ${formatCurrency(d.amount)} from ${d.from} to ${d.to}`);
+      invalidateFinance(qc);
+      onClose();
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const valid = fromId && toId && fromId !== toId && Number(amount) > 0;
+  return (
+    <Modal open onClose={onClose} title="Transfer between accounts" footer={
+      <>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button loading={save.isPending} disabled={!valid} onClick={() => save.mutate()}>Transfer</Button>
+      </>
+    }>
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="From" required>
+            <Select value={fromId} onChange={(e) => setFromId(e.target.value)}>
+              <option value="">Select account…</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {formatCurrency(a.balance)}</option>)}
+            </Select>
+          </Field>
+          <Field label="To" required>
+            <Select value={toId} onChange={(e) => setToId(e.target.value)}>
+              <option value="">Select account…</option>
+              {accounts.filter((a) => a.id !== fromId).map((a) => <option key={a.id} value={a.id}>{a.name} — {formatCurrency(a.balance)}</option>)}
+            </Select>
+          </Field>
+        </div>
+        <Field label="Amount" required hint={from ? `${from.name} holds ${formatCurrency(from.balance)}` : undefined}>
+          <Input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Field label="Notes" hint="Optional — why the money moved">
+          <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Banked the cash drawer into M-Pesa" />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
 function AddAccountModal({ onClose }) {
   const qc = useQueryClient();
   const { data: brands = [] } = useQuery({
@@ -268,6 +324,7 @@ function Money({ label, value, tone, big }) {
 // ── Accounts tab ──────────────────────────────────────────────────────────────
 function Accounts({ onQuick }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const { data: accounts = [], isLoading } = useQuery({ queryKey: ['finance', 'accounts'], queryFn: async () => unwrap(await api.get('/finance/accounts')).data });
   if (isLoading) return <PageSpinner />;
   const total = accounts.reduce((s, a) => s + a.balance, 0);
@@ -276,6 +333,7 @@ function Accounts({ onQuick }) {
       <div className="flex items-center justify-between">
         <div><div className="text-xs uppercase tracking-wide text-faint">Total cash position</div><div className="text-2xl font-black text-brand-400 tabular-nums">{formatCurrency(total)}</div></div>
         <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setTransferOpen(true)}><ArrowLeftRight className="h-4 w-4" /> Transfer</Button>
           <Button variant="secondary" onClick={() => onQuick('income')}><ArrowDownLeft className="h-4 w-4" /> Income</Button>
           <Button variant="secondary" onClick={() => onQuick('expense')}><ArrowUpRight className="h-4 w-4" /> Expense</Button>
           <Button onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" /> Account</Button>
@@ -305,6 +363,7 @@ function Accounts({ onQuick }) {
         })}
       </div>
       {addOpen && <AddAccountModal onClose={() => setAddOpen(false)} />}
+      {transferOpen && <TransferModal accounts={accounts} onClose={() => setTransferOpen(false)} />}
     </div>
   );
 }
@@ -313,6 +372,7 @@ function Accounts({ onQuick }) {
 function Ledger({ expensesOnly }) {
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
+  const [editing, setEditing] = useState(null); // transaction being corrected
   const [account, setAccount] = useState('');
   const [type, setType] = useState('');
   const [brand, setBrand] = useState('');
@@ -366,7 +426,12 @@ function Ledger({ expensesOnly }) {
                   <TD className="max-w-[220px] truncate text-foreground">{t.category || t.description || t.reference || '—'}</TD>
                   <TD className="text-muted">{t.account?.name}</TD>
                   <TD className={`text-right font-semibold tabular-nums ${t.direction === 'IN' ? 'text-emerald-500' : 'text-rose-500'}`}>{t.direction === 'IN' ? '+' : '−'}{formatCurrency(t.amount)}</TD>
-                  <TD><button onClick={() => del.mutate(t.id)} className="text-faint hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></TD>
+                  <TD>
+                    <div className="flex items-center justify-end gap-2">
+                      <button title="Correct this transaction" onClick={() => setEditing(t)} className="text-faint hover:text-brand-400"><Pencil className="h-4 w-4" /></button>
+                      <button title="Delete" onClick={() => del.mutate(t.id)} className="text-faint hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                  </TD>
                 </TR>
               ))}
             </TBody>
@@ -374,7 +439,75 @@ function Ledger({ expensesOnly }) {
           <Pagination page={page} totalPages={data.meta?.totalPages} total={data.meta?.total} onChange={setPage} />
         </>
       )}
+      {editing && <EditTxnModal txn={editing} accounts={accounts} brands={brands} onClose={() => setEditing(null)} />}
     </Card>
+  );
+}
+
+// Correct a mis-recorded transaction: move it to the right account, fix the
+// brand/date/description — with a mandatory reason for the audit trail.
+// Amounts on sale-linked money stay locked (the sale document is the truth).
+function EditTxnModal({ txn, accounts, brands, onClose }) {
+  const qc = useQueryClient();
+  const saleLinked = txn.refType === 'Sale';
+  const [accountId, setAccountId] = useState(txn.accountId || '');
+  const [brandId, setBrandId] = useState(txn.brandId || '');
+  const [amount, setAmount] = useState(String(txn.amount ?? ''));
+  const [occurredAt, setOccurredAt] = useState(txn.occurredAt ? String(txn.occurredAt).slice(0, 10) : '');
+  const [description, setDescription] = useState(txn.description || '');
+  const [reason, setReason] = useState('');
+
+  // Brand-reserved accounts only accept their own brand's money.
+  const accountOptions = accounts.filter((a) => !a.brandId || !brandId || a.brandId === brandId);
+
+  const save = useMutation({
+    mutationFn: () => api.put(`/finance/transactions/${txn.id}`, {
+      accountId,
+      brandId: brandId || null,
+      ...(saleLinked ? {} : { amount: Number(amount) }),
+      occurredAt,
+      description,
+      reason,
+    }),
+    onSuccess: () => { toast.success('Transaction corrected'); invalidateFinance(qc); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  return (
+    <Modal open onClose={onClose} title={`Correct ${txn.txnNumber || 'transaction'}`} footer={
+      <>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button loading={save.isPending} disabled={!accountId || !reason.trim()} onClick={() => save.mutate()}>Save correction</Button>
+      </>
+    }>
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Account" required hint="Where the money actually is">
+            <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+              {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </Select>
+          </Field>
+          <Field label="Brand">
+            <Select value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+              <option value="">General (no brand)</option>
+              {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </Select>
+          </Field>
+          <Field label="Amount" hint={saleLinked ? 'Locked — comes from the sale. Recall the sale to change it.' : undefined}>
+            <Input type="number" min="0" value={amount} disabled={saleLinked} onChange={(e) => setAmount(e.target.value)} />
+          </Field>
+          <Field label="Date">
+            <Input type="date" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Description">
+          <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Field>
+        <Field label="Why is this being corrected?" required hint="Saved in the audit log">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Recorded to the wrong account by mistake" />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 

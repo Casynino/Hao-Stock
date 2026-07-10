@@ -304,66 +304,37 @@ function ReturnModal({ onClose }) {
   );
 }
 
-// ── Return card: everything visible without opening anything ─────────────────
-function ReturnCard({ r, canDecide, onView, onReject, approve }) {
+// ── Approval-center row (mirrors the Pending settlement approvals strip) ──────
+function PendingReturnRow({ r, canDecide, onView, onReject, approve }) {
   const totalBoxes = r.items.reduce((a, i) => a + i.quantity, 0);
   const totalValue = r.items.reduce((a, i) => a + i.quantity * Number(i.unitPrice || 0), 0);
   const busy = approve && approve.isPending && approve.variables === r.id;
   return (
-    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-bold text-foreground">{r.returnNumber}</span>
-        <Badge className={r.type === 'CUSTOMER_RETURN' ? 'bg-teal-500/15 text-teal-500' : 'bg-cyan-500/15 text-cyan-500'}>
-          {r.type === 'CUSTOMER_RETURN' ? 'Customer return' : 'Rep → The Lab'}
-        </Badge>
-        <Badge className="bg-amber-500/15 text-amber-500">Waiting approval</Badge>
-        <span className="ml-auto text-xs text-faint">{formatDateTime(r.processedAt)}</span>
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-wide text-faint">Sales rep / customer</div>
-          <div className="font-semibold text-foreground">
-            {r.salesRep ? `${r.salesRep.user?.name} (${r.salesRep.code})` : r.customer?.name || '—'}
-          </div>
+    <div className="flex flex-wrap items-start gap-3 px-4 py-3">
+      <button onClick={() => onView(r.id)} className="min-w-0 flex-1 text-left">
+        <div className="text-sm font-semibold text-foreground">
+          {r.salesRep ? `${r.salesRep.user?.name} (${r.salesRep.code})` : r.customer?.name || 'Customer'} · {formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {formatCurrency(totalValue)}
         </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-wide text-faint">Related order</div>
-          <div className="font-semibold text-foreground">{r.settlementNumber || '—'}</div>
-        </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-wide text-faint">Reason</div>
-          <div className="truncate font-medium text-muted" title={r.reason || ''}>{r.reason || '—'}</div>
-        </div>
-      </div>
-
-      <div className="mt-3 rounded-xl bg-surface/60 p-3">
-        <div className="mb-1 text-[11px] uppercase tracking-wide text-faint">Products returned</div>
-        <div className="space-y-1">
+        <div className="mt-1 space-y-0.5">
           {r.items.map((i, n) => (
-            <div key={i.id} className="flex items-center gap-2 text-sm">
+            <div key={i.id} className="flex items-center gap-2 text-xs text-muted">
               <span className="text-faint">{n + 1}.</span>
-              <span className="min-w-0 flex-1 truncate font-medium text-foreground">{i.product?.name}</span>
-              {i.product?.brand?.name && <Badge className="bg-brand-500/15 text-brand-400">{i.product.brand.name}</Badge>}
-              <span className="shrink-0 font-semibold tabular-nums text-foreground">{formatNumber(i.quantity)} box{i.quantity !== 1 ? 'es' : ''}</span>
+              <span className="min-w-0 flex-1 truncate">{i.product?.name}</span>
+              {i.product?.brand?.name && <Badge className="bg-brand-500/10 text-brand-400">{i.product.brand.name}</Badge>}
+              <span className="shrink-0 font-semibold tabular-nums text-foreground">× {formatNumber(i.quantity)}</span>
             </div>
           ))}
         </div>
-        <div className="mt-2 flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
-          <span>Total returned</span>
-          <span>{formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {formatCurrency(totalValue)}</span>
+        <div className="mt-1 text-xs text-faint">
+          {r.returnNumber}{r.settlementNumber ? ` · on ${r.settlementNumber}` : ''}{r.reason ? ` · ${r.reason}` : ''} · {formatDateTime(r.processedAt)}
         </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-        <Button variant="secondary" onClick={() => onView(r.id)}><Eye className="h-4 w-4" /> View</Button>
-        {canDecide && (
-          <>
-            <Button variant="ghost" className="text-rose-500" onClick={() => onReject(r.id)}><XCircle className="h-4 w-4" /> Reject</Button>
-            <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle className="h-4 w-4" /> Approve</Button>
-          </>
-        )}
-      </div>
+      </button>
+      {canDecide && (
+        <div className="flex shrink-0 gap-2 pt-1">
+          <Button variant="ghost" className="text-rose-500" onClick={() => onReject(r.id)}>Reject</Button>
+          <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle className="h-4 w-4" /> Approve</Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -454,27 +425,26 @@ export default function Returns() {
         <Card><PageSpinner /></Card>
       ) : (
         <div className="space-y-8">
-          {/* ── Pending — the action zone ── */}
-          <div>
-            <div className="mb-3 flex items-center gap-2">
-              <Clock className="h-4 w-4 text-amber-500" />
-              <h2 className="text-base font-bold text-foreground">
-                Pending returns
-                {pending.length > 0 && <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-black text-slate-950">{pending.length}</span>}
-              </h2>
+          {/* ── Pending — approval center pinned on top, settlements-style ── */}
+          {pending.length === 0 ? (
+            <div className="rounded-2xl border border-border bg-surface">
+              <EmptyState title="Nothing waiting approval" message="New return requests appear here the moment a rep submits them." icon={Undo2} />
             </div>
-            {pending.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-surface">
-                <EmptyState title="Nothing waiting" message="New return requests appear here the moment a rep submits them." icon={Undo2} />
+          ) : (
+            <Card className="border-amber-500/30">
+              <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                <Clock className="h-4 w-4 text-amber-500" />
+                <h2 className="text-sm font-bold text-foreground">Pending return approvals</h2>
+                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-500">{pending.length}</span>
+                <span className="ml-auto hidden text-xs text-faint sm:block">Inspect the goods before approving</span>
               </div>
-            ) : (
-              <div className="space-y-3">
+              <div className="divide-y divide-border">
                 {pending.map((r) => (
-                  <ReturnCard key={r.id} r={r} canDecide={canDecide} onView={setViewingId} onReject={setRejectingId} approve={approve} />
+                  <PendingReturnRow key={r.id} r={r} canDecide={canDecide} onView={setViewingId} onReject={setRejectingId} approve={approve} />
                 ))}
               </div>
-            )}
-          </div>
+            </Card>
+          )}
 
           {/* ── Approved ── */}
           {approved.length > 0 && (

@@ -527,6 +527,77 @@ function RepRequestsView({ onView }) {
   );
 }
 
+// ── Pending approval center (mirrors the settlements strip) ───────────────────
+// Every waiting request pinned on top with its lines visible; quick Approve
+// issues the full requested quantities, Review opens the modal to adjust.
+function PendingRequestApprovals({ onReview }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['stock-requests', 'pending-approvals'],
+    queryFn: async () => unwrap(await api.get('/stock-requests', { params: { status: 'PENDING', limit: 50 } })),
+    refetchInterval: 30_000,
+  });
+  const pending = data?.data || [];
+
+  const refresh = () => {
+    ['stock-requests', 'settlements', 'inventory', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  };
+  const approve = useMutation({
+    mutationFn: (id) => api.post(`/stock-requests/${id}/approve`, {}),
+    onSuccess: () => { toast.success('Approved — stock issued & 72h order opened'); refresh(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  const reject = useMutation({
+    mutationFn: (id) => api.post(`/stock-requests/${id}/reject`, {}),
+    onSuccess: () => { toast.success('Request rejected'); refresh(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  if (!pending.length) return null;
+
+  return (
+    <Card className="mb-6 border-sky-500/30">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <ClipboardList className="h-4 w-4 text-sky-400" />
+        <h2 className="text-sm font-bold text-foreground">Pending stock requests</h2>
+        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-bold text-sky-400">{pending.length}</span>
+        <span className="ml-auto hidden text-xs text-faint sm:block">Approve issues the stock and opens the 72h order</span>
+      </div>
+      <div className="divide-y divide-border">
+        {pending.map((r) => {
+          const busy = (approve.isPending && approve.variables === r.id) || (reject.isPending && reject.variables === r.id);
+          return (
+            <div key={r.id} className="flex flex-wrap items-start gap-3 px-4 py-3">
+              <button onClick={() => onReview(r)} className="min-w-0 flex-1 text-left">
+                <div className="text-sm font-semibold text-foreground">
+                  {r.salesRep?.user?.name} ({r.salesRep?.code}) · {formatCurrency(orderDisplayValue(r))}
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {r.items.map((i, n) => (
+                    <div key={i.id} className="flex items-center gap-2 text-xs text-muted">
+                      <span className="text-faint">{n + 1}.</span>
+                      <span className="min-w-0 flex-1 truncate">{i.product?.name}</span>
+                      <span className="shrink-0 font-semibold tabular-nums text-foreground">× {i.quantityRequested}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1 text-xs text-faint">
+                  {r.requestNumber} · {boxCount(r)} box(es) · {formatDateTime(r.requestedAt)}{r.notes ? ` · ${r.notes}` : ''}
+                </div>
+              </button>
+              <div className="flex shrink-0 gap-2 pt-1">
+                <Button variant="secondary" onClick={() => onReview(r)}>Review</Button>
+                <Button variant="ghost" className="text-rose-500" disabled={busy} onClick={() => reject.mutate(r.id)}>Reject</Button>
+                <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle2 className="h-4 w-4" /> Approve</Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 // ── Staff table (admin / warehouse review) ────────────────────────────────────
 
 function StaffRequestTable({ onView }) {
@@ -537,16 +608,21 @@ function StaffRequestTable({ onView }) {
     queryFn: async () => unwrap(await api.get('/stock-requests', { params: { page, limit: 15, status: status || undefined } })),
   });
 
+  // Pending requests live in the approval strip above — the history table
+  // shows decided ones unless the filter explicitly asks for pending.
+  const rows = (data?.data || []).filter((r) => status === 'PENDING' || r.status !== 'PENDING');
+
   return (
     <Card>
-      <div className="border-b border-border p-4">
-        <select className="input sm:w-48" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-          <option value="">All statuses</option>
+      <div className="flex flex-wrap items-center gap-3 border-b border-border p-4">
+        <h3 className="text-sm font-semibold text-muted">Request history</h3>
+        <select className="input ml-auto sm:w-48" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+          <option value="">All decided</option>
           {Object.entries(REQUEST_STATUS_META).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
         </select>
       </div>
 
-      {isLoading ? <PageSpinner /> : !data?.data?.length ? (
+      {isLoading ? <PageSpinner /> : !rows.length ? (
         <EmptyState title="No stock requests" icon={ClipboardList} />
       ) : (
         <>
@@ -557,7 +633,7 @@ function StaffRequestTable({ onView }) {
               </TR>
             </THead>
             <TBody>
-              {data.data.map((r) => (
+              {rows.map((r) => (
                 <TR key={r.id} className="cursor-pointer" onClick={() => onView(r)}>
                   <TD className="font-medium">{r.requestNumber}</TD>
                   <TD>{r.salesRep?.user?.name}</TD>
@@ -604,7 +680,12 @@ export default function StockRequests() {
         )}
       </PageHeader>
 
-      {isRep ? <RepRequestsView onView={setViewing} /> : <StaffRequestTable onView={setViewing} />}
+      {isRep ? <RepRequestsView onView={setViewing} /> : (
+        <>
+          <PendingRequestApprovals onReview={setViewing} />
+          <StaffRequestTable onView={setViewing} />
+        </>
+      )}
 
       {/* Cart sheet — slides up from bottom (new order or editing a pending one) */}
       <AnimatePresence>

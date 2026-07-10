@@ -1,5 +1,6 @@
 'use strict';
 
+const prisma = require('../config/prisma');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { ok, created, paginated } = require('../utils/response');
@@ -19,10 +20,39 @@ const create = asyncHandler(async (req, res) => {
     payload.warehouseId = null;
   }
 
+  // Where did the money go? Validate the chosen payment account against the
+  // sale's brand BEFORE creating anything: a brand-reserved account (e.g. the
+  // Civlily Airtel line) only accepts payments for its own brand.
+  let saleBrandId = null;
+  if (!payload.salesRepId) {
+    const productIds = [...new Set((payload.items || []).map((i) => i.productId))];
+    const prods = await prisma.product.findMany({ where: { id: { in: productIds } }, select: { brandId: true } });
+    const brandSet = new Set(prods.map((x) => x.brandId).filter(Boolean));
+    saleBrandId = brandSet.size === 1 ? [...brandSet][0] : null;
+    if (payload.accountId) {
+      const account = await prisma.businessAccount.findFirst({ where: { id: payload.accountId, isActive: true } });
+      if (!account) throw ApiError.badRequest('Select a valid payment account');
+      if (account.brandId && account.brandId !== saleBrandId) {
+        throw ApiError.badRequest(`${account.name} is not a payment account for this sale's brand`);
+      }
+    }
+  }
+
   const sale = await salesService.createSale(payload, req.user);
-  // A direct warehouse cash sale (no rep) is money into the business.
+  // A direct warehouse cash sale (no rep) is money into the business —
+  // recorded against the chosen account (falls back to Cash) and kept alive
+  // past the response by background().
   if (sale.type === 'CASH' && !sale.salesRepId) {
-    finance.recordSaleIncome({ saleId: sale.id, saleNumber: sale.saleNumber, amount: sale.total, fromSettlement: false, occurredAt: sale.soldAt }, req.user).catch(() => {});
+    const wa = require('../services/whatsappNotify.service');
+    wa.background(finance.recordSaleIncome({
+      saleId: sale.id,
+      saleNumber: sale.saleNumber,
+      amount: sale.total,
+      fromSettlement: false,
+      occurredAt: sale.soldAt,
+      accountId: payload.accountId || null,
+      brandId: saleBrandId,
+    }, req.user));
   }
   await audit.record(req, {
     action: 'CREATE',

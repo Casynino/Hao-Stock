@@ -390,11 +390,70 @@ async function updateTransaction(id, data) {
   const existing = await prisma.financeTransaction.findUnique({ where: { id } });
   if (!existing) throw ApiError.notFound('Transaction not found');
   const patch = {};
-  ['category', 'description', 'notes', 'accountId', 'reference'].forEach((k) => { if (data[k] !== undefined) patch[k] = data[k]; });
-  if (data.amount !== undefined) patch.amount = round2(toNumber(data.amount));
+  ['category', 'description', 'notes', 'accountId', 'reference', 'brandId'].forEach((k) => { if (data[k] !== undefined) patch[k] = data[k]; });
+  if (data.amount !== undefined) {
+    // Sale-linked money mirrors the sale document — correcting the amount here
+    // would silently desync revenue. The sale itself must be cancelled/redone.
+    if (existing.refType === 'Sale' && round2(toNumber(data.amount)) !== round2(toNumber(existing.amount))) {
+      throw ApiError.badRequest('This amount comes from a sale and cannot be edited here. Recall/cancel the sale instead.');
+    }
+    patch.amount = round2(toNumber(data.amount));
+  }
   if (data.occurredAt !== undefined) patch.occurredAt = resolveOccurredAt(data.occurredAt);
+
+  // A brand-reserved account only holds its own brand's money.
+  const targetAccountId = patch.accountId ?? existing.accountId;
+  const targetBrandId = patch.brandId !== undefined ? patch.brandId : existing.brandId;
+  const account = await prisma.businessAccount.findUnique({ where: { id: targetAccountId } });
+  if (!account) throw ApiError.badRequest('Account not found');
+  if (account.brandId && targetBrandId && targetBrandId !== account.brandId) {
+    throw ApiError.badRequest(`${account.name} is reserved for another brand's payments`);
+  }
+
   const updated = await prisma.financeTransaction.update({ where: { id }, data: patch });
   return { updated, previous: existing };
+}
+
+// Move money between two business accounts (e.g. banked cash into M-Pesa, or
+// fixing money recorded against the wrong account when an edit isn't enough).
+// Posts a linked OUT + IN pair of type TRANSFER — balance-effective on both
+// accounts but excluded from income/expense/cash-flow reporting.
+async function transferBetweenAccounts({ fromAccountId, toAccountId, amount, notes, occurredAt }, actor) {
+  const amt = round2(toNumber(amount));
+  if (!(amt > 0)) throw ApiError.badRequest('Enter an amount greater than zero');
+  if (!fromAccountId || !toAccountId) throw ApiError.badRequest('Choose both accounts');
+  if (fromAccountId === toAccountId) throw ApiError.badRequest('Choose two different accounts');
+
+  const balances = await accountBalances();
+  const from = balances.find((a) => a.id === fromAccountId);
+  const to = balances.find((a) => a.id === toAccountId);
+  if (!from || !to) throw ApiError.badRequest('Account not found');
+  if (from.balance < amt) {
+    throw ApiError.badRequest(`${from.name} only holds ${from.balance.toLocaleString('en-US')} — cannot transfer ${amt.toLocaleString('en-US')}`);
+  }
+
+  const when = resolveOccurredAt(occurredAt);
+  const reference = `Transfer ${from.name} → ${to.name}`;
+  return prisma.$transaction(async (tx) => {
+    const outNumber = await nextDocNumber(tx.financeTransaction, 'txnNumber', 'FTX');
+    const outTxn = await tx.financeTransaction.create({
+      data: {
+        txnNumber: outNumber, accountId: from.id, direction: 'OUT', type: 'TRANSFER', amount: amt,
+        category: 'Account transfer', description: `Transfer to ${to.name}`, reference,
+        notes: notes || null, occurredAt: when, createdById: actor?.id || null,
+      },
+    });
+    const inNumber = await nextDocNumber(tx.financeTransaction, 'txnNumber', 'FTX');
+    const inTxn = await tx.financeTransaction.create({
+      data: {
+        txnNumber: inNumber, accountId: to.id, direction: 'IN', type: 'TRANSFER', amount: amt,
+        category: 'Account transfer', description: `Transfer from ${from.name}`, reference,
+        refType: 'Transfer', refId: outTxn.id,
+        notes: notes || null, occurredAt: when, createdById: actor?.id || null,
+      },
+    });
+    return { out: outTxn, in: inTxn, amount: amt, from: from.name, to: to.name };
+  });
 }
 
 async function deleteTransaction(id) {
@@ -436,7 +495,9 @@ function epochWhere(range, epoch) {
 }
 
 async function flowBetween(start, end) {
-  const where = {};
+  // Internal account-to-account transfers move balances but are not business
+  // cash flow (they would inflate money-in AND money-out by the same amount).
+  const where = { type: { not: 'TRANSFER' } };
   if (start || end) where.occurredAt = { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) };
   const [i, o] = await Promise.all([
     prisma.financeTransaction.aggregate({ where: { ...where, direction: 'IN' }, _sum: { amount: true } }),
@@ -748,8 +809,8 @@ async function overview(period = 'month') {
     const r = periodRange(p);
     const base = epochWhere(r, epoch);
     const [inAgg, outAgg] = await Promise.all([
-      prisma.financeTransaction.aggregate({ where: { ...base, direction: 'IN' }, _sum: { amount: true } }),
-      prisma.financeTransaction.aggregate({ where: { ...base, direction: 'OUT' }, _sum: { amount: true } }),
+      prisma.financeTransaction.aggregate({ where: { ...base, direction: 'IN', type: { not: 'TRANSFER' } }, _sum: { amount: true } }),
+      prisma.financeTransaction.aggregate({ where: { ...base, direction: 'OUT', type: { not: 'TRANSFER' } }, _sum: { amount: true } }),
     ]);
     const moneyIn = round2(toNumber(inAgg._sum.amount));
     const moneyOut = round2(toNumber(outAgg._sum.amount));
@@ -861,6 +922,7 @@ module.exports = {
   recordExpense,
   recordIncome,
   recordSaleIncome,
+  transferBetweenAccounts,
   recordCommissionPayment,
   listTransactions,
   updateTransaction,

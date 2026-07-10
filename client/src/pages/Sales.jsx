@@ -29,6 +29,21 @@ function NewSaleModal({ open, onClose }) {
   const [items, setItems] = useState([]);
   const [discount, setDiscount] = useState(0);
   const [amountPaid, setAmountPaid] = useState('');
+  const [accountId, setAccountId] = useState('');
+
+  // Payment accounts — a brand-reserved account (Civlily Airtel / OHIS M-Pesa)
+  // is only offered when every item in the sale belongs to that brand.
+  const { data: payAccounts = [] } = useQuery({
+    queryKey: ['payment-accounts'],
+    queryFn: async () => unwrap(await api.get('/settlements/payment-accounts')).data,
+    enabled: !isRep,
+  });
+  const productBrand = useMemo(() => {
+    const map = new Map(products.map((p) => [p.id, p.brandId]));
+    const set = new Set(items.filter((l) => l.productId).map((l) => map.get(l.productId)).filter(Boolean));
+    return set.size === 1 ? [...set][0] : null;
+  }, [items, products]);
+  const accountOptions = payAccounts.filter((a) => !a.brandId || a.brandId === productBrand);
 
   const subtotal = useMemo(
     () => items.reduce((s, l) => s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 0), 0),
@@ -51,6 +66,7 @@ function NewSaleModal({ open, onClose }) {
       if (!isRep) {
         if (source.startsWith('w:')) payload.warehouseId = source.slice(2);
         else if (source.startsWith('r:')) payload.salesRepId = source.slice(2);
+        if (source.startsWith('w:') && accountId) payload.accountId = accountId;
       }
       return api.post('/sales', payload);
     },
@@ -114,6 +130,14 @@ function NewSaleModal({ open, onClose }) {
           <Field label="Amount paid" hint="Defaults to total">
             <Input type="number" min="0" value={amountPaid} onChange={(e) => setAmountPaid(e.target.value)} placeholder={String(total)} />
           </Field>
+          {!isRep && source.startsWith('w:') && (
+            <Field label="Where was it paid?" hint="Which account received the money">
+              <Select value={accountOptions.some((a) => a.id === accountId) ? accountId : ''} onChange={(e) => setAccountId(e.target.value)}>
+                <option value="">Cash (default)</option>
+                {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </Select>
+            </Field>
+          )}
         </div>
 
         <div className="rounded-lg bg-elevated p-3 text-sm">

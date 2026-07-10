@@ -160,6 +160,18 @@ const paySupplierBalance = asyncHandler(async (req, res) => {
   return created(res, txn);
 });
 
+// Move money between two business accounts (admin) — audited.
+const transferBetween = asyncHandler(async (req, res) => {
+  const result = await finance.transferBetweenAccounts(req.body, req.user);
+  await audit.record(req, {
+    action: 'CREATE',
+    entityType: 'FinanceTransaction',
+    entityId: result.out.id,
+    newValues: { kind: 'ACCOUNT_TRANSFER', from: result.from, to: result.to, amount: result.amount, reason: req.body.reason || null },
+  });
+  return created(res, result);
+});
+
 // ── Reports Archive (generated weekly/monthly PDFs) ──────────────────────────
 const reportArchive = asyncHandler(async (req, res) => {
   const archiveSvc = require('../services/reportArchive.service');
@@ -184,5 +196,5 @@ module.exports = {
   overview, sync, accounts, createAccount, updateAccount, categories, createCategory,
   transactions, recordExpense, recordIncome, recordAdjustment, updateTransaction, deleteTransaction,
   cashflow, report, suppliers, supplierDetail, paySupplier, paySupplierBalance,
-  reportArchive, reportArchivePdf,
+  reportArchive, reportArchivePdf, transferBetween,
 };

@@ -27,6 +27,7 @@ router.get('/transactions', ctrl.transactions);
 router.post('/income', ctrl.recordIncome);
 router.post('/expenses', ctrl.recordExpense);
 router.post('/adjustments', requireRoles(ROLES.ADMIN), ctrl.recordAdjustment); // balance corrections (admin only)
+router.post('/transfers', requireRoles(ROLES.ADMIN), ctrl.transferBetween); // move money between accounts (admin only)
 router.put('/transactions/:id', ctrl.updateTransaction);
 router.delete('/transactions/:id', ctrl.deleteTransaction);
 router.get('/report-archive', ctrl.reportArchive); // generated weekly/monthly PDFs

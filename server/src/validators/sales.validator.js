@@ -26,6 +26,7 @@ const saleCreate = {
       region: z.string().max(120).optional(),
       notes: z.string().max(500).optional(),
       soldAt: z.string().datetime().optional(),
+      accountId: id.optional().nullable(), // payment account the money went to
     })
     .refine((d) => d.salesRepId || d.warehouseId, {
       message: 'Provide salesRepId (rep sale) or warehouseId (warehouse sale)',

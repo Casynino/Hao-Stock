@@ -304,37 +304,65 @@ function ReturnModal({ onClose }) {
   );
 }
 
-// ── Approval-center row (mirrors the Pending settlement approvals strip) ──────
-function PendingReturnRow({ r, canDecide, onView, onReject, approve }) {
+// ── Pending return card — one card per return, everything readable ───────────
+function PendingReturnCard({ r, canDecide, onView, onReject, approve }) {
   const totalBoxes = r.items.reduce((a, i) => a + i.quantity, 0);
   const totalValue = r.items.reduce((a, i) => a + i.quantity * Number(i.unitPrice || 0), 0);
   const busy = approve && approve.isPending && approve.variables === r.id;
   return (
-    <div className="flex flex-wrap items-start gap-3 px-4 py-3">
-      <button onClick={() => onView(r.id)} className="min-w-0 flex-1 text-left">
-        <div className="text-sm font-semibold text-foreground">
-          {r.salesRep ? `${r.salesRep.user?.name} (${r.salesRep.code})` : r.customer?.name || 'Customer'} · {formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''} · {formatCurrency(totalValue)}
+    <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 sm:p-5">
+      {/* Header: number + type + time */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge className="bg-amber-500/15 text-amber-500">Waiting approval</Badge>
+        <Badge className={r.type === 'CUSTOMER_RETURN' ? 'bg-teal-500/15 text-teal-500' : 'bg-cyan-500/15 text-cyan-500'}>
+          {r.type === 'CUSTOMER_RETURN' ? 'Customer return' : 'Rep → The Lab'}
+        </Badge>
+        <span className="ml-auto text-xs text-faint">{r.returnNumber} · {formatDateTime(r.processedAt)}</span>
+      </div>
+
+      {/* Hero: who + how much */}
+      <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-faint">Returned by</div>
+          <div className="text-lg font-bold text-foreground">
+            {r.salesRep ? r.salesRep.user?.name : r.customer?.name || 'Customer'}
+            {r.salesRep && <span className="ml-1.5 text-sm font-medium text-faint">({r.salesRep.code})</span>}
+          </div>
+          {r.settlementNumber && <div className="mt-0.5 text-xs text-faint">on order {r.settlementNumber}</div>}
         </div>
-        <div className="mt-1 space-y-0.5">
-          {r.items.map((i, n) => (
-            <div key={i.id} className="flex items-center gap-2 text-xs text-muted">
-              <span className="text-faint">{n + 1}.</span>
-              <span className="min-w-0 flex-1 truncate">{i.product?.name}</span>
-              {i.product?.brand?.name && <Badge className="bg-brand-500/10 text-brand-400">{i.product.brand.name}</Badge>}
-              <span className="shrink-0 font-semibold tabular-nums text-foreground">× {formatNumber(i.quantity)}</span>
-            </div>
-          ))}
+        <div className="text-right">
+          <div className="text-[11px] uppercase tracking-widest text-faint">Total returned</div>
+          <div className="text-2xl font-black tabular-nums text-amber-400">{formatNumber(totalBoxes)} <span className="text-sm font-bold">box{totalBoxes !== 1 ? 'es' : ''}</span></div>
+          <div className="text-xs text-faint">{formatCurrency(totalValue)}</div>
         </div>
-        <div className="mt-1 text-xs text-faint">
-          {r.returnNumber}{r.settlementNumber ? ` · on ${r.settlementNumber}` : ''}{r.reason ? ` · ${r.reason}` : ''} · {formatDateTime(r.processedAt)}
+      </div>
+
+      {/* Products — quantity first, impossible to miss */}
+      <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface/70">
+        {r.items.map((i) => (
+          <div key={i.id} className="flex items-center gap-3 px-3 py-2.5">
+            <span className="w-14 shrink-0 text-base font-black tabular-nums text-foreground">
+              {formatNumber(i.quantity)} <span className="text-[10px] font-bold text-faint">BX</span>
+            </span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{i.product?.name}</span>
+            {i.product?.brand?.name && <Badge className="shrink-0 bg-brand-500/10 text-brand-400">{i.product.brand.name}</Badge>}
+          </div>
+        ))}
+      </div>
+
+      {/* Reason + actions */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {r.reason && <span className="min-w-0 flex-1 truncate text-xs italic text-muted" title={r.reason}>“{r.reason}”</span>}
+        <div className="ml-auto flex shrink-0 gap-2">
+          <Button variant="secondary" onClick={() => onView(r.id)}><Eye className="h-4 w-4" /> View</Button>
+          {canDecide && (
+            <>
+              <Button variant="ghost" className="text-rose-500" onClick={() => onReject(r.id)}><XCircle className="h-4 w-4" /> Reject</Button>
+              <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle className="h-4 w-4" /> Approve {formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''}</Button>
+            </>
+          )}
         </div>
-      </button>
-      {canDecide && (
-        <div className="flex shrink-0 gap-2 pt-1">
-          <Button variant="ghost" className="text-rose-500" onClick={() => onReject(r.id)}>Reject</Button>
-          <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle className="h-4 w-4" /> Approve</Button>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -343,17 +371,24 @@ function PendingReturnRow({ r, canDecide, onView, onReject, approve }) {
 function HistoryRow({ r, onView }) {
   const meta = RETURN_STATUS_META[r.status] || RETURN_STATUS_META.PENDING;
   const totalBoxes = r.items.reduce((a, i) => a + i.quantity, 0);
-  const itemsLabel = r.items.map((i) => `${i.product?.name} × ${i.quantity}`).join(', ');
   return (
-    <button onClick={() => onView(r.id)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left transition hover:bg-elevated">
-      <span className="text-sm font-semibold text-foreground">{r.returnNumber}</span>
-      <Badge className={meta.cls}>{meta.label}</Badge>
-      <span className="text-sm text-muted">{r.salesRep ? `${r.salesRep.user?.name} (${r.salesRep.code})` : r.customer?.name || '—'}</span>
-      {r.settlementNumber && <span className="text-xs text-faint">on {r.settlementNumber}</span>}
-      <span className="min-w-0 flex-1 truncate text-xs text-faint" title={itemsLabel}>{itemsLabel}</span>
-      <span className="shrink-0 text-sm font-semibold tabular-nums">{formatNumber(totalBoxes)} bx</span>
-      <span className="shrink-0 text-xs text-faint">{formatDate(r.processedAt)}</span>
-      <Eye className="h-3.5 w-3.5 shrink-0 text-faint" />
+    <button onClick={() => onView(r.id)} className="w-full px-4 py-3 text-left transition hover:bg-elevated">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-foreground">{r.returnNumber}</span>
+        <Badge className={meta.cls}>{meta.label}</Badge>
+        <span className="text-sm text-muted">{r.salesRep ? `${r.salesRep.user?.name} (${r.salesRep.code})` : r.customer?.name || '—'}</span>
+        {r.settlementNumber && <span className="text-xs text-faint">on {r.settlementNumber}</span>}
+        <span className="ml-auto shrink-0 text-sm font-bold tabular-nums text-foreground">{formatNumber(totalBoxes)} box{totalBoxes !== 1 ? 'es' : ''}</span>
+        <span className="shrink-0 text-xs text-faint">{formatDate(r.processedAt)}</span>
+        <Eye className="h-3.5 w-3.5 shrink-0 text-faint" />
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {r.items.map((i) => (
+          <span key={i.id} className="inline-flex items-center gap-1 rounded-md bg-elevated px-2 py-0.5 text-xs text-muted">
+            <span className="font-bold tabular-nums text-foreground">{formatNumber(i.quantity)}×</span> {i.product?.name}
+          </span>
+        ))}
+      </div>
     </button>
   );
 }
@@ -425,26 +460,26 @@ export default function Returns() {
         <Card><PageSpinner /></Card>
       ) : (
         <div className="space-y-8">
-          {/* ── Pending — approval center pinned on top, settlements-style ── */}
-          {pending.length === 0 ? (
-            <div className="rounded-2xl border border-border bg-surface">
-              <EmptyState title="Nothing waiting approval" message="New return requests appear here the moment a rep submits them." icon={Undo2} />
+          {/* ── Pending — one clear card per return, pinned on top ── */}
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <Clock className="h-4 w-4 text-amber-500" />
+              <h2 className="text-base font-bold text-foreground">Pending return approvals</h2>
+              {pending.length > 0 && <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-black text-slate-950">{pending.length}</span>}
+              <span className="ml-auto hidden text-xs text-faint sm:block">Inspect the goods before approving</span>
             </div>
-          ) : (
-            <Card className="border-amber-500/30">
-              <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-                <Clock className="h-4 w-4 text-amber-500" />
-                <h2 className="text-sm font-bold text-foreground">Pending return approvals</h2>
-                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-500">{pending.length}</span>
-                <span className="ml-auto hidden text-xs text-faint sm:block">Inspect the goods before approving</span>
+            {pending.length === 0 ? (
+              <div className="rounded-2xl border border-border bg-surface">
+                <EmptyState title="Nothing waiting approval" message="New return requests appear here the moment a rep submits them." icon={Undo2} />
               </div>
-              <div className="divide-y divide-border">
+            ) : (
+              <div className="space-y-4">
                 {pending.map((r) => (
-                  <PendingReturnRow key={r.id} r={r} canDecide={canDecide} onView={setViewingId} onReject={setRejectingId} approve={approve} />
+                  <PendingReturnCard key={r.id} r={r} canDecide={canDecide} onView={setViewingId} onReject={setRejectingId} approve={approve} />
                 ))}
               </div>
-            </Card>
-          )}
+            )}
+          </div>
 
           {/* ── Approved ── */}
           {approved.length > 0 && (

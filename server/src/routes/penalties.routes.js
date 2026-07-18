@@ -10,5 +10,6 @@ const router = express.Router();
 router.use(authenticate);
 router.get('/', ctrl.list);
 router.post('/apply', requireRoles(ROLES.ADMIN), ctrl.apply);
+router.post('/:id/waive', requireRoles(ROLES.ADMIN), ctrl.waive);
 
 module.exports = router;

@@ -1218,6 +1218,13 @@ model SettlementPenalty {
   appliedAt    DateTime            @default(now())
   notes        String?
 
+  // The Doctor can forgive a fine: the row stays as a permanent record but
+  // WAIVED fines no longer reduce the rep's commission balance.
+  status      String    @default("APPLIED") // APPLIED | WAIVED
+  waivedAt    DateTime?
+  waivedById  String?
+  waiveReason String?
+
   @@index([salesRepId])
   @@index([settlementId])
   @@index([appliedAt])

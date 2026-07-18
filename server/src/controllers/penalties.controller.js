@@ -39,4 +39,17 @@ const list = asyncHandler(async (req, res) => {
   return paginated(res, items, { page: pagination.page, limit: pagination.limit, total });
 });
 
-module.exports = { apply, list };
+// POST /penalties/:id/waive — forgive one fine (admin): stays on record,
+// stops reducing the rep's commission balance.
+const waive = asyncHandler(async (req, res) => {
+  const updated = await penaltyService.waivePenalty(req.params.id, req.user, req.body?.reason);
+  await audit.record(req, {
+    action: 'UPDATE',
+    entityType: 'SettlementPenalty',
+    entityId: updated.id,
+    newValues: { status: 'WAIVED', amount: updated.amount, reason: req.body?.reason || null },
+  });
+  return ok(res, updated);
+});
+
+module.exports = { apply, list, waive };

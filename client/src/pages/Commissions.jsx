@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Coins, Wallet, Clock, TrendingUp, AlertTriangle, Info, ShieldAlert } from 'lucide-react';
+import { Coins, Wallet, Clock, TrendingUp, AlertTriangle, Info, ShieldAlert, HeartHandshake } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES, WITHDRAWAL_STATUS_META } from '@/lib/constants';
@@ -76,9 +76,49 @@ function PenaltyBreakdown({ breakdown }) {
   );
 }
 
+// Forgive one fine: keeps the record, returns the money to the rep's balance.
+function ForgiveModal({ penalty, onClose }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('');
+  const waive = useMutation({
+    mutationFn: () => api.post(`/penalties/${penalty.id}/waive`, { reason: reason || undefined }),
+    onSuccess: () => {
+      toast.success(`Fine forgiven — ${formatCurrency(penalty.amount)} returned to ${penalty.salesRep?.user?.name || 'the rep'}`);
+      ['penalties', 'commissions', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      onClose();
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  return (
+    <Modal open onClose={onClose} title="Forgive this fine?" footer={
+      <>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button loading={waive.isPending} onClick={() => waive.mutate()}>
+          <HeartHandshake className="h-4 w-4" /> Forgive — return {formatCurrency(penalty.amount)}
+        </Button>
+      </>
+    }>
+      <div className="space-y-3 text-sm">
+        <p>
+          <b>{penalty.salesRep?.user?.name}</b> · {formatCurrency(penalty.amount)} fine on order{' '}
+          <b>{penalty.settlement?.settlementNumber || '—'}</b> ({formatDateTime(penalty.appliedAt)}).
+        </p>
+        <p className="text-muted">
+          The fine stays on record as “Forgiven”, but the {formatCurrency(penalty.amount)} goes back into the rep's
+          commission balance immediately. This only affects this one transaction.
+        </p>
+        <Field label="Reason" hint="Optional — shown in the audit log">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. order was cancelled — fine applied by mistake" />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
 // Permanent fine transactions (Commission/Wallet history). Each row is a real
 // deduction record, like any other financial transaction.
 function FinesHistory({ admin }) {
+  const [forgiving, setForgiving] = useState(null);
   const { data } = useQuery({
     queryKey: ['penalties', admin ? 'all' : 'mine'],
     queryFn: async () => unwrap(await api.get('/penalties', { params: { limit: 50 } })),
@@ -87,22 +127,42 @@ function FinesHistory({ admin }) {
   if (!items.length) return null;
   return (
     <Card className="mt-6">
-      <CardHeader title="Penalty transactions" subtitle="Every late-settlement fine — a permanent record in commission history." />
+      <CardHeader title="Penalty transactions" subtitle="Every late-settlement fine — a permanent record. Forgiven fines stay listed but no longer reduce the balance." />
       <Table>
-        <THead><TR>{admin && <TH>Rep</TH>}<TH>Type</TH><TH>Order</TH><TH className="text-right">Amount</TH><TH>Status</TH><TH>Date</TH></TR></THead>
+        <THead><TR>{admin && <TH>Rep</TH>}<TH>Type</TH><TH>Order</TH><TH className="text-right">Amount</TH><TH>Status</TH><TH>Date</TH>{admin && <TH />}</TR></THead>
         <TBody>
-          {items.map((p) => (
-            <TR key={p.id}>
-              {admin && <TD className="font-medium">{p.salesRep?.user?.name}</TD>}
-              <TD>Late Settlement Fine</TD>
-              <TD className="text-faint">{p.settlement?.settlementNumber || '—'}</TD>
-              <TD className="text-right font-semibold text-rose-400">−{formatCurrency(p.amount)}</TD>
-              <TD><Badge className="bg-rose-100 text-rose-700">Applied</Badge></TD>
-              <TD className="text-faint">{formatDateTime(p.appliedAt)}</TD>
-            </TR>
-          ))}
+          {items.map((p) => {
+            const waived = p.status === 'WAIVED';
+            return (
+              <TR key={p.id}>
+                {admin && <TD className="font-medium">{p.salesRep?.user?.name}</TD>}
+                <TD>Late Settlement Fine</TD>
+                <TD className="text-faint">{p.settlement?.settlementNumber || '—'}</TD>
+                <TD className={`text-right font-semibold ${waived ? 'text-faint line-through' : 'text-rose-400'}`}>−{formatCurrency(p.amount)}</TD>
+                <TD>
+                  {waived
+                    ? <Badge className="bg-emerald-100 text-emerald-700" title={p.waiveReason || undefined}>Forgiven</Badge>
+                    : <Badge className="bg-rose-100 text-rose-700">Applied</Badge>}
+                </TD>
+                <TD className="text-faint">{waived && p.waivedAt ? `${formatDateTime(p.appliedAt)} · forgiven ${formatDateTime(p.waivedAt)}` : formatDateTime(p.appliedAt)}</TD>
+                {admin && (
+                  <TD>
+                    {!waived && (
+                      <button
+                        onClick={() => setForgiving(p)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-500/20"
+                      >
+                        <HeartHandshake className="h-3.5 w-3.5" /> Forgive
+                      </button>
+                    )}
+                  </TD>
+                )}
+              </TR>
+            );
+          })}
         </TBody>
       </Table>
+      {forgiving && <ForgiveModal penalty={forgiving} onClose={() => setForgiving(null)} />}
     </Card>
   );
 }

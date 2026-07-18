@@ -48,6 +48,8 @@ async function applyDuePenalties() {
     if (pendingReturns > 0) continue;
 
     const due = penaltyDaysDue(s.deadlineAt, now);
+    // Count EVERY row including WAIVED ones: a forgiven fine is still a
+    // charged penalty-day, so forgiveness never causes a re-charge.
     const charged = await prisma.settlementPenalty.count({ where: { settlementId: s.id } });
     if (due <= charged) continue;
 
@@ -95,7 +97,7 @@ async function applyDuePenalties() {
 async function penaltyBreakdownForRep(salesRepId) {
   const grouped = await prisma.settlementPenalty.groupBy({
     by: ['settlementId'],
-    where: { salesRepId },
+    where: { salesRepId, status: 'APPLIED' },
     _sum: { amount: true },
     _count: true,
     _max: { daysOverdue: true },
@@ -134,8 +136,48 @@ async function penaltyBreakdownForRep(salesRepId) {
 
 // Total penalties charged to a rep (drives the commission balance).
 async function totalPenaltiesForRep(salesRepId) {
-  const agg = await prisma.settlementPenalty.aggregate({ where: { salesRepId }, _sum: { amount: true } });
+  const agg = await prisma.settlementPenalty.aggregate({ where: { salesRepId, status: 'APPLIED' }, _sum: { amount: true } });
   return round2(toNumber(agg._sum.amount));
+}
+
+// Forgive a fine: the row stays as a permanent record (and still counts for
+// idempotence so it is never re-charged), but it stops reducing the rep's
+// balance — the money returns to their commission instantly.
+async function waivePenalty(id, actor, reason) {
+  const p = await prisma.settlementPenalty.findUnique({
+    where: { id },
+    include: {
+      salesRep: { include: { user: { select: { id: true, name: true } } } },
+      settlement: { select: { settlementNumber: true } },
+    },
+  });
+  if (!p) {
+    const ApiError = require('../utils/ApiError');
+    throw ApiError.notFound('Penalty not found');
+  }
+  if (p.status === 'WAIVED') {
+    const ApiError = require('../utils/ApiError');
+    throw ApiError.badRequest('This fine has already been forgiven');
+  }
+
+  const updated = await prisma.settlementPenalty.update({
+    where: { id },
+    data: { status: 'WAIVED', waivedAt: new Date(), waivedById: actor?.id || null, waiveReason: reason || null },
+  });
+
+  const repUserId = p.salesRep?.user?.id;
+  if (repUserId) {
+    notification.notifyUser(repUserId, {
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: `${formatCurrency(p.amount)} fine forgiven`,
+      message: `The Lab forgave your late-settlement fine on order ${p.settlement?.settlementNumber || ''}. ${formatCurrency(p.amount)} has been returned to your commission balance.`,
+      entityType: 'Settlement',
+      entityId: p.settlementId,
+    }).catch(() => {});
+  }
+
+  return updated;
 }
 
 // Stored penalty transactions (history), most recent first.
@@ -164,6 +206,7 @@ module.exports = {
   applyDuePenalties,
   penaltyBreakdownForRep,
   totalPenaltiesForRep,
+  waivePenalty,
   listPenalties,
   penaltyDaysDue,
   PENALTY_PER_DAY,

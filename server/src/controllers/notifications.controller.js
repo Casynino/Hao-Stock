@@ -37,8 +37,11 @@ const generate = asyncHandler(async (req, res) => {
 // POST /notifications/broadcast — admin announcement to reps/staff/all.
 const broadcast = asyncHandler(async (req, res) => {
   const { title, message, severity, audience } = req.body || {};
-  if (!title || !message) throw ApiError.badRequest('title and message are required');
-  const result = await notificationService.broadcast({ title, message, severity, audience });
+  if (!title || !message) {
+    return res.status(400).json({ success: false, error: { message: 'title and message are required' } });
+  }
+  const result = await notifications.broadcast({ title, message, severity, audience });
+  await audit.record(req, { action: 'CREATE', entityType: 'Notification', entityId: 'broadcast', newValues: { title, audience: audience || 'reps', notified: result.notified } });
   return ok(res, result);
 });
 

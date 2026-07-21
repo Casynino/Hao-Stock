@@ -234,8 +234,8 @@ function ReturnModal({ onClose }) {
         {/* Pending-approval notice */}
         <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
           {isRep
-            ? 'Your boxes go back to The Lab and are automatically cleared off your open orders once approved.'
-            : 'Returns are pending until verified by the warehouse. Inventory updates only after approval.'}
+            ? 'Your boxes go back to The Lab and are cleared off your open orders once approved. Submitted boxes are locked, and the request must be decided within 24 hours or it expires with a TSh 15,000 delay fine.'
+            : 'Returns are pending until verified by the warehouse. Inventory updates only after approval. Pending returns expire after 24 hours.'}
         </div>
 
         {/* Routing selectors */}
@@ -315,10 +315,14 @@ function ReturnModal({ onClose }) {
 }
 
 // ── Pending row — same compact shape as "Pending settlement approvals" ───────
-function PendingReturnRow({ r, canDecide, onView, onReject, approve }) {
+function PendingReturnRow({ r, canDecide, onView, onReject, onCancel, approve }) {
   const totalBoxes = r.items.reduce((a, i) => a + i.quantity, 0);
   const totalValue = r.items.reduce((a, i) => a + i.quantity * Number(i.unitPrice || 0), 0);
   const busy = approve && approve.isPending && approve.variables === r.id;
+  // 24-hour decision window: after that the return expires automatically and
+  // the boxes go back on the order (with a delay fine for the rep).
+  const hoursLeft = Math.max(0, 24 - (Date.now() - new Date(r.processedAt).getTime()) / 3600000);
+  const expiring = hoursLeft <= 6;
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
       <button onClick={() => onView(r.id)} className="min-w-0 flex-1 text-left">
@@ -332,14 +336,18 @@ function PendingReturnRow({ r, canDecide, onView, onReject, approve }) {
         ))}
         <div className="mt-0.5 text-xs text-faint">
           {r.returnNumber}{r.settlementNumber ? ` · on ${r.settlementNumber}` : ''} · {formatDateTime(r.processedAt)}
+          <span className={expiring ? ' font-semibold text-rose-500' : ' text-amber-500'}> · expires in {Math.ceil(hoursLeft)}h</span>
         </div>
       </button>
-      {canDecide && (
-        <div className="flex shrink-0 gap-2">
-          <Button variant="ghost" className="text-rose-500" onClick={() => onReject(r.id)}>Reject</Button>
-          <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle className="h-4 w-4" /> Approve</Button>
-        </div>
-      )}
+      <div className="flex shrink-0 gap-2">
+        {onCancel && <Button variant="ghost" className="text-rose-500" onClick={() => onCancel(r.id)}>Cancel request</Button>}
+        {canDecide && (
+          <>
+            <Button variant="ghost" className="text-rose-500" onClick={() => onReject(r.id)}>Reject</Button>
+            <Button loading={busy} onClick={() => approve.mutate(r.id)}><CheckCircle className="h-4 w-4" /> Approve</Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -401,11 +409,19 @@ export default function Returns() {
     },
     onError: (e) => toast.error(apiError(e)),
   });
+  const cancel = useMutation({
+    mutationFn: (id) => api.post(`/returns/${id}/cancel`),
+    onSuccess: () => {
+      toast.success('Return request cancelled — the boxes are back on the order');
+      ['returns', 'settlements', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
 
   const all = data?.data || [];
   const pending = all.filter((r) => r.status === 'PENDING');
   const approved = all.filter((r) => r.status === 'APPROVED' || r.status === 'COMPLETED');
-  const rejected = all.filter((r) => r.status === 'REJECTED');
+  const rejected = all.filter((r) => ['REJECTED', 'CANCELLED', 'EXPIRED'].includes(r.status));
 
   return (
     <div>
@@ -448,7 +464,8 @@ export default function Returns() {
               </div>
               <div className="divide-y divide-border">
                 {pending.map((r) => (
-                  <PendingReturnRow key={r.id} r={r} canDecide={canDecide} onView={setViewingId} onReject={setRejectingId} approve={approve} />
+                  <PendingReturnRow key={r.id} r={r} canDecide={canDecide} onView={setViewingId} onReject={setRejectingId}
+                    onCancel={isRep ? (id) => cancel.mutate(id) : undefined} approve={approve} />
                 ))}
               </div>
             </Card>
@@ -470,7 +487,7 @@ export default function Returns() {
             <div>
               <div className="mb-2 flex items-center gap-2">
                 <XCircle className="h-4 w-4 text-rose-500" />
-                <h2 className="text-sm font-semibold text-muted">Rejected returns ({rejected.length})</h2>
+                <h2 className="text-sm font-semibold text-muted">Rejected / cancelled / expired ({rejected.length})</h2>
               </div>
               <Card><div className="divide-y divide-border">{rejected.map((r) => <HistoryRow key={r.id} r={r} onView={setViewingId} />)}</div></Card>
             </div>

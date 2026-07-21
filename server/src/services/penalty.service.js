@@ -48,9 +48,10 @@ async function applyDuePenalties() {
     if (pendingReturns > 0) continue;
 
     const due = penaltyDaysDue(s.deadlineAt, now);
-    // Count EVERY row including WAIVED ones: a forgiven fine is still a
-    // charged penalty-day, so forgiveness never causes a re-charge.
-    const charged = await prisma.settlementPenalty.count({ where: { settlementId: s.id } });
+    // Count EVERY daily row including WAIVED ones: a forgiven fine is still a
+    // charged penalty-day, so forgiveness never causes a re-charge. Rows with
+    // daysOverdue = 0 are return-expiry delay fines, not daily late-fines.
+    const charged = await prisma.settlementPenalty.count({ where: { settlementId: s.id, daysOverdue: { gt: 0 } } });
     if (due <= charged) continue;
 
     for (let day = charged + 1; day <= due; day++) {

@@ -40,13 +40,16 @@ async function validateSettlementLines(client, settlementId, salesRepId, lines, 
   const issuedMap = new Map();
   (transfer?.items || []).forEach((it) => issuedMap.set(it.productId, (issuedMap.get(it.productId) || 0) + it.baseQuantity));
 
-  const [settledRows, retRows] = await Promise.all([
+  const [settledRows, retRows, pendingRows] = await Promise.all([
     client.saleItem.groupBy({ by: ['productId'], where: { sale: { settlementId, status: { not: 'CANCELLED' } } }, _sum: { baseQuantity: true } }),
-    // Count only APPROVED + COMPLETED returns (PENDING returns don't yet affect the balance).
     client.returnItem.groupBy({ by: ['productId'], where: { return: { settlementId, status: { in: ['APPROVED', 'COMPLETED'] } } }, _sum: { baseQuantity: true } }),
+    // Boxes already inside a PENDING return are LOCKED — the same box can
+    // never sit in two return requests at once.
+    client.returnItem.groupBy({ by: ['productId'], where: { return: { settlementId, status: 'PENDING' } }, _sum: { baseQuantity: true } }),
   ]);
   const settledMap = new Map(settledRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
   const retMap = new Map(retRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
+  const pendingMap = new Map(pendingRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
 
   for (const l of lines) {
     const name = productMap.get(l.productId)?.name || 'This product';
@@ -54,9 +57,14 @@ async function validateSettlementLines(client, settlementId, salesRepId, lines, 
     if (issued === 0) {
       throw ApiError.badRequest(`${name} was not issued on order ${stl.settlementNumber} — it can't be returned here`);
     }
-    const remaining = issued - (settledMap.get(l.productId) || 0) - (retMap.get(l.productId) || 0);
+    const pending = pendingMap.get(l.productId) || 0;
+    const remaining = issued - (settledMap.get(l.productId) || 0) - (retMap.get(l.productId) || 0) - pending;
     if (l.baseQuantity > remaining) {
-      throw ApiError.badRequest(`Only ${remaining} box(es) of ${name} remain to return on order ${stl.settlementNumber}`);
+      throw ApiError.badRequest(
+        pending > 0
+          ? `Only ${Math.max(0, remaining)} box(es) of ${name} can still be returned on order ${stl.settlementNumber} — ${pending} box(es) are locked in a pending return.`
+          : `Only ${Math.max(0, remaining)} box(es) of ${name} remain to return on order ${stl.settlementNumber}`,
+      );
     }
   }
 }
@@ -400,6 +408,144 @@ async function rejectReturn(id, actor, reason) {
 
 // ── List / get ────────────────────────────────────────────────────────────────
 
+// ── Cancel — the rep withdraws their own pending request (or staff does) ─────
+// Nothing ever moved for a PENDING return, so cancelling simply unlocks the
+// boxes (the lock is computed from PENDING status) and resumes the penalty
+// countdown by giving back the paused hours.
+async function cancelReturn(id, actor, { asRep = false } = {}) {
+  const ret = await prisma.return.findUnique({ where: { id }, include: RETURN_INCLUDE });
+  if (!ret) throw ApiError.notFound('Return not found');
+  if (ret.status !== 'PENDING') throw ApiError.badRequest(`Only pending returns can be cancelled (this one is ${ret.status})`);
+  if (asRep && ret.salesRepId !== actor?.salesRepId) {
+    throw ApiError.forbidden('You can only cancel your own return request');
+  }
+
+  const updated = await prisma.return.update({
+    where: { id },
+    data: {
+      status: 'CANCELLED',
+      decidedById: actor ? actor.id : null,
+      decidedAt: new Date(),
+      rejectionReason: asRep ? 'Cancelled by the sales rep before approval.' : 'Cancelled by The Lab before approval.',
+    },
+    include: RETURN_INCLUDE,
+  });
+
+  // Give back the hours the return sat pending (same rule as rejection).
+  if (updated.settlementId) {
+    const stl = await prisma.settlement.findUnique({ where: { id: updated.settlementId }, select: { status: true, deadlineAt: true } });
+    if (stl && stl.status !== 'SETTLED') {
+      const pauseMs = Math.max(0, new Date(updated.decidedAt).getTime() - new Date(updated.processedAt).getTime());
+      if (pauseMs > 0) {
+        await prisma.settlement.update({
+          where: { id: updated.settlementId },
+          data: { deadlineAt: new Date(new Date(stl.deadlineAt).getTime() + pauseMs) },
+        });
+      }
+    }
+  }
+
+  if (asRep) {
+    notification.notifyAdmins({
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: 'Return request cancelled',
+      message: `${updated.salesRep?.user?.name || 'A rep'} cancelled return ${updated.returnNumber} — the boxes stay on their order.`,
+      entityType: 'Return',
+      entityId: id,
+    }).catch(() => {});
+  } else if (updated.salesRep?.user?.id) {
+    notification.notifyUser(updated.salesRep.user.id, {
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: 'Return request cancelled',
+      message: `The Lab cancelled return ${updated.returnNumber}. The boxes remain on your order — settle or resubmit the return.`,
+      entityType: 'Return',
+      entityId: id,
+    }).catch(() => {});
+  }
+
+  return updated;
+}
+
+// ── 24-hour window: pending returns expire automatically ─────────────────────
+// A return that sits undecided for 24h is auto-cancelled: the boxes unlock and
+// go back to the active order, the paused hours are given back, and the rep is
+// charged a TSh 15,000 delay fine (the return "pause" is not a parking lot).
+// Idempotent and safe to run from cron + polling piggybacks.
+const RETURN_WINDOW_HOURS = 24;
+const RETURN_EXPIRY_PENALTY = 15000;
+
+async function expireStaleReturns() {
+  const cutoff = new Date(Date.now() - RETURN_WINDOW_HOURS * 3600 * 1000);
+  const stale = await prisma.return.findMany({
+    where: { status: 'PENDING', processedAt: { lt: cutoff } },
+    include: { salesRep: { include: { user: { select: { id: true, name: true } } } } },
+  });
+
+  let expired = 0;
+  for (const ret of stale) {
+    await prisma.$transaction(async (tx) => {
+      await tx.return.update({
+        where: { id: ret.id },
+        data: {
+          status: 'EXPIRED',
+          decidedAt: new Date(),
+          rejectionReason: `Expired automatically — not approved within ${RETURN_WINDOW_HOURS} hours of submission.`,
+        },
+      });
+
+      if (ret.settlementId) {
+        const stl = await tx.settlement.findUnique({ where: { id: ret.settlementId }, select: { status: true, deadlineAt: true, settlementNumber: true } });
+        if (stl && stl.status !== 'SETTLED') {
+          // The paused window is given back so daily late-fines never
+          // double-charge those hours — the expiry fine below covers them.
+          const pauseMs = Math.max(0, Date.now() - new Date(ret.processedAt).getTime());
+          await tx.settlement.update({
+            where: { id: ret.settlementId },
+            data: { deadlineAt: new Date(new Date(stl.deadlineAt).getTime() + pauseMs) },
+          });
+
+          if (ret.type === 'SALES_RETURN' && ret.salesRepId) {
+            await tx.settlementPenalty.create({
+              data: {
+                salesRepId: ret.salesRepId,
+                settlementId: ret.settlementId,
+                amount: RETURN_EXPIRY_PENALTY,
+                daysOverdue: 0, // expiry fine, not a daily late-fine
+                notes: `Return ${ret.returnNumber} not completed within ${RETURN_WINDOW_HOURS} hours — delay fine.`,
+              },
+            });
+          }
+        }
+      }
+    }, { timeout: 30000 });
+    expired++;
+
+    const repUserId = ret.salesRep?.user?.id;
+    if (repUserId) {
+      notification.notifyUser(repUserId, {
+        type: 'GENERAL',
+        severity: 'CRITICAL',
+        title: `Return ${ret.returnNumber} expired — TSh ${RETURN_EXPIRY_PENALTY.toLocaleString('en-US')} fine`,
+        message: `Your return was not completed within ${RETURN_WINDOW_HOURS} hours, so it was cancelled automatically and a TSh ${RETURN_EXPIRY_PENALTY.toLocaleString('en-US')} delay fine was applied. The boxes are back on your order — settle them or submit a new return.`,
+        entityType: 'Return',
+        entityId: ret.id,
+      }).catch(() => {});
+    }
+    notification.notifyAdmins({
+      type: 'GENERAL',
+      severity: 'WARNING',
+      title: 'Return expired without a decision',
+      message: `Return ${ret.returnNumber} from ${ret.salesRep?.user?.name || 'a rep'} sat ${RETURN_WINDOW_HOURS}h without approval and was auto-cancelled. The boxes are back on the order.`,
+      entityType: 'Return',
+      entityId: ret.id,
+    }).catch(() => {});
+  }
+
+  return { expired };
+}
+
 async function listReturns(filters, pagination) {
   const where = {};
   if (filters.type) where.type = filters.type;
@@ -459,4 +605,6 @@ async function returnsSummary(filters = {}) {
 }
 
 module.exports = {
+  cancelReturn,
+  expireStaleReturns,
   returnsSummary, createReturn, approveReturn, rejectReturn, listReturns, getReturn, RETURN_INCLUDE };

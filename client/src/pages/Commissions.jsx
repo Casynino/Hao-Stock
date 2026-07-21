@@ -177,7 +177,8 @@ function PenaltyPolicyCard() {
           <ul className="list-disc space-y-1.5 pl-4">
             <li>Orders must be settled or returned within <b>72 hours</b> after stock is issued.</li>
             <li>After 72 hours, <b>TZS 10,000</b> is deducted daily from your commission.</li>
-            <li>No penalty during warehouse return review.</li>
+            <li>No penalty while a return awaits review — but the review window is <b>24 hours</b>.</li>
+            <li>A return not completed within 24 hours expires automatically and costs <b>TZS 15,000</b>; the boxes go back on your order.</li>
             <li>Penalties stop once everything is settled or returned.</li>
           </ul>
         </div>

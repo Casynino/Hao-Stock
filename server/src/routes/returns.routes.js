@@ -20,6 +20,7 @@ router.get('/', validate(returnQuery), ctrl.list);
 router.get('/summary', ctrl.summary); // must precede /:id
 router.get('/:id', validate(idParam), ctrl.get);
 router.post('/', canCreate, validate(returnCreate), ctrl.create);
+router.post('/:id/cancel', validate(idParam), ctrl.cancel); // rep (own) or staff
 router.post('/:id/approve', canDecide, validate(idParam), ctrl.approve);
 router.post('/:id/reject', canDecide, validate(idParam), ctrl.reject);
 

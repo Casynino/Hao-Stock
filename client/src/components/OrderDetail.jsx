@@ -22,7 +22,8 @@ function pendingBoxesByProduct(order) {
 
 function SettleBoxesModal({ order, onClose, onDone }) {
   const pendingMap = pendingBoxesByProduct(order);
-  const availFor = (l) => Math.max(0, l.remaining - (pendingMap[l.productId] || 0));
+  // Locked boxes: pending settlement submissions AND pending returns.
+  const availFor = (l) => Math.max(0, l.remaining - (pendingMap[l.productId] || 0) - (l.pendingReturn || 0));
   const lines = order.order.lines.filter((l) => availFor(l) > 0);
   const [productId, setProductId] = useState(lines[0]?.productId || '');
   const [boxes, setBoxes] = useState('');
@@ -88,14 +89,16 @@ function RecordReturnModal({ order, onClose, onDone }) {
   const { data: warehouses = [] } = useWarehouses();
   const warehouseId = warehouses[0]?.id;
 
-  // Only show lines that still have boxes outstanding
-  const returnableLines = order.order.lines.filter((l) => l.remaining > 0);
+  // Boxes already inside a pending return are LOCKED — only the rest can be
+  // put on a new return request.
+  const returnAvail = (l) => Math.max(0, l.remaining - (l.pendingReturn || 0));
+  const returnableLines = order.order.lines.filter((l) => returnAvail(l) > 0);
 
   // cart: { [productId]: qty }
   const [cart, setCart] = useState({});
   function setQty(productId, qty) {
     const line = returnableLines.find((l) => l.productId === productId);
-    const capped = Math.min(Math.max(0, qty), line?.remaining || 0);
+    const capped = Math.min(Math.max(0, qty), line ? returnAvail(line) : 0);
     setCart((prev) => {
       if (capped <= 0) { const n = { ...prev }; delete n[productId]; return n; }
       return { ...prev, [productId]: capped };
@@ -154,7 +157,10 @@ function RecordReturnModal({ order, onClose, onDone }) {
               <div key={line.productId} className={`flex items-center gap-3 px-1 py-3 transition ${inCart ? 'bg-brand-500/5' : ''}`}>
                 <div className="min-w-0 flex-1">
                   <div className={`text-sm font-medium leading-snug ${inCart ? 'text-foreground' : 'text-muted'}`}>{line.name}</div>
-                  <div className="mt-0.5 text-xs text-faint">{formatNumber(line.remaining)} box{line.remaining !== 1 ? 'es' : ''} available to return</div>
+                  <div className="mt-0.5 text-xs text-faint">
+                    {formatNumber(returnAvail(line))} box{returnAvail(line) !== 1 ? 'es' : ''} available to return
+                    {(line.pendingReturn || 0) > 0 && <span className="text-amber-500"> · {formatNumber(line.pendingReturn)} locked in a pending return</span>}
+                  </div>
                 </div>
                 {/* −  input  + */}
                 <div className="flex items-center gap-1.5">
@@ -166,7 +172,7 @@ function RecordReturnModal({ order, onClose, onDone }) {
                   <input
                     type="number"
                     min="0"
-                    max={line.remaining}
+                    max={returnAvail(line)}
                     value={qty === 0 ? '' : qty}
                     onChange={(e) => {
                       const v = parseInt(e.target.value, 10);
@@ -177,7 +183,7 @@ function RecordReturnModal({ order, onClose, onDone }) {
                   />
                   <button
                     onClick={() => inc(line.productId)}
-                    disabled={qty >= line.remaining}
+                    disabled={qty >= returnAvail(line)}
                     className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-lg font-bold text-slate-950 transition hover:bg-brand-400 disabled:opacity-40"
                   >+</button>
                 </div>
@@ -470,7 +476,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
                       <TD className="font-medium text-foreground">{l.name}</TD>
                       <TD>{formatNumber(l.assigned)}</TD>
                       <TD className="text-emerald-500">{formatNumber(l.settled)}</TD>
-                      <TD className="text-sky-400">{formatNumber(l.returned)}</TD>
+                      <TD className="text-sky-400">{formatNumber(l.returned)}{(l.pendingReturn || 0) > 0 && <span className="ml-1 text-xs text-amber-500">+{formatNumber(l.pendingReturn)} pending</span>}</TD>
                       <TD className={l.remaining > 0 && overdue ? 'font-semibold text-rose-500' : 'text-muted'}>{formatNumber(l.remaining)}</TD>
                     </TR>
                   ))}

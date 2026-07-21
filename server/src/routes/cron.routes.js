@@ -29,12 +29,13 @@ router.get(
   guard,
   asyncHandler(async (_req, res) => {
     const wa = require('../services/whatsappNotify.service');
+    const returnExpiry = await require('../services/returns.service').expireStaleReturns().catch(() => null);
     const overdue = await settlement.refreshOverdue();
     const reminders = await settlement.sendDueReminders();
     const penalties = await penalty.applyDuePenalties();
     const stockAlerts = await wa.scanStockAlerts().catch(() => null);
     const whatsappRetries = await wa.flush({ throttleMs: 0 }).catch(() => null);
-    return res.json({ success: true, data: { overdue, reminders, penalties, stockAlerts, whatsappRetries, at: new Date().toISOString() } });
+    return res.json({ success: true, data: { overdue, reminders, penalties, returnExpiry, stockAlerts, whatsappRetries, at: new Date().toISOString() } });
   }),
 );
 

@@ -137,6 +137,20 @@ async function notifyAdmins(data) {
   return create({ ...data, userId: null });
 }
 
+// Announcement to a whole audience ('reps' | 'staff' | 'all'): one targeted
+// notification per active user, so everyone sees it in their own bell.
+async function broadcast({ title, message, severity = 'INFO', audience = 'reps' }) {
+  const roleFilter =
+    audience === 'reps' ? { role: { name: 'SALES_REP' } }
+    : audience === 'staff' ? { role: { name: { in: ['ADMIN', 'WAREHOUSE_STAFF'] } } }
+    : {};
+  const users = await prisma.user.findMany({ where: { isActive: true, ...roleFilter }, select: { id: true } });
+  for (const u of users) {
+    await create({ type: 'GENERAL', severity, title, message, userId: u.id, entityType: 'Announcement', entityId: null });
+  }
+  return { notified: users.length };
+}
+
 // Notify a specific user by their User.id.
 async function notifyUser(userId, data) {
   if (!userId) return;
@@ -199,6 +213,7 @@ module.exports = {
   createIfAbsent,
   notifyAdmins,
   notifyUser,
+  broadcast,
   checkProductLowStock,
   generateSystemAlerts,
 };

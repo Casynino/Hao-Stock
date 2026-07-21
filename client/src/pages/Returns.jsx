@@ -149,7 +149,9 @@ function ReturnModal({ onClose }) {
   const { data: reps = [] } = useSalesReps();
   const { data: warehouses = [] } = useWarehouses();
 
-  const [type, setType] = useState('CUSTOMER_RETURN');
+  // Reps only ever return stock TO The Lab; the server auto-matches the boxes
+  // to their open orders. Customer returns are a staff flow.
+  const [type, setType] = useState(isRep ? 'SALES_RETURN' : 'CUSTOMER_RETURN');
   const [customerId, setCustomerId] = useState('');
   const [salesRepId, setSalesRepId] = useState('');
   const [warehouseId, setWarehouseId] = useState('');
@@ -186,8 +188,12 @@ function ReturnModal({ onClose }) {
       if (warehouseId) payload.warehouseId = warehouseId;
       return api.post('/returns', payload);
     },
-    onSuccess: () => {
-      toast.success('Return submitted — awaiting The Lab approval');
+    onSuccess: (res) => {
+      const d = unwrap(res).data;
+      const related = d?.related || [];
+      toast.success(related.length > 1
+        ? `Return submitted as ${related.join(' + ')} (matched to your open orders)`
+        : 'Return submitted — awaiting The Lab approval');
       qc.invalidateQueries({ queryKey: ['returns'] });
       onClose();
     },
@@ -195,7 +201,7 @@ function ReturnModal({ onClose }) {
   });
 
   const valid = hasCart && (
-    type === 'SALES_RETURN' ? (isRep ? warehouseId : salesRepId && warehouseId) : (isRep || salesRepId || warehouseId)
+    isRep ? true : type === 'SALES_RETURN' ? (salesRepId && warehouseId) : (salesRepId || warehouseId)
   );
 
   const footer = (
@@ -213,19 +219,23 @@ function ReturnModal({ onClose }) {
   return (
     <Modal open onClose={onClose} size="lg" title="Submit a return" footer={footer}>
       <div className="space-y-4">
-        {/* Type toggle */}
-        <div className="flex gap-2">
-          {[['CUSTOMER_RETURN', 'Customer return'], ['SALES_RETURN', 'Rep → The Lab']].map(([k, label]) => (
-            <button key={k} onClick={() => { setType(k); setCart({}); }}
-              className={`flex-1 rounded-lg border px-4 py-2 text-sm font-semibold transition ${type === k ? 'border-brand-500 bg-brand-500/10 text-brand-400' : 'border-border text-muted hover:bg-elevated'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
+        {/* Type toggle — staff only; reps always return to The Lab */}
+        {!isRep && (
+          <div className="flex gap-2">
+            {[['CUSTOMER_RETURN', 'Customer return'], ['SALES_RETURN', 'Rep → The Lab']].map(([k, label]) => (
+              <button key={k} onClick={() => { setType(k); setCart({}); }}
+                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-semibold transition ${type === k ? 'border-brand-500 bg-brand-500/10 text-brand-400' : 'border-border text-muted hover:bg-elevated'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Pending-approval notice */}
         <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
-          Returns are pending until verified by the warehouse. Inventory updates only after approval.
+          {isRep
+            ? 'Your boxes go back to The Lab and are automatically cleared off your open orders once approved.'
+            : 'Returns are pending until verified by the warehouse. Inventory updates only after approval.'}
         </div>
 
         {/* Routing selectors */}
@@ -247,7 +257,7 @@ function ReturnModal({ onClose }) {
               </Select>
             </Field>
           )}
-          {(type === 'SALES_RETURN' || !isRep) && (
+          {!isRep && (
             <Field label="Into The Lab" required={type === 'SALES_RETURN'}
               hint={type === 'CUSTOMER_RETURN' ? 'Or pick a rep ←' : undefined}>
               <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>

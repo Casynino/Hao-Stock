@@ -61,6 +61,33 @@ async function validateSettlementLines(client, settlementId, salesRepId, lines, 
   }
 }
 
+// For a rep's unlinked return: how many base units of each product are still
+// unaccounted (issued − settled − approved returns − pending returns) on each
+// of their open orders, oldest order first.
+async function openOrderAvailability(client, salesRepId) {
+  const open = await client.settlement.findMany({
+    where: { salesRepId, status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] } },
+    orderBy: { issuedAt: 'asc' },
+    select: { id: true, settlementNumber: true, transferId: true },
+  });
+  const result = [];
+  for (const stl of open) {
+    const transfer = stl.transferId
+      ? await client.stockTransfer.findUnique({ where: { id: stl.transferId }, include: { items: true } })
+      : null;
+    const avail = new Map();
+    (transfer?.items || []).forEach((it) => avail.set(it.productId, (avail.get(it.productId) || 0) + it.baseQuantity));
+    const [settledRows, retRows] = await Promise.all([
+      client.saleItem.groupBy({ by: ['productId'], where: { sale: { settlementId: stl.id, status: { not: 'CANCELLED' } } }, _sum: { baseQuantity: true } }),
+      client.returnItem.groupBy({ by: ['productId'], where: { return: { settlementId: stl.id, status: { in: ['APPROVED', 'COMPLETED', 'PENDING'] } } }, _sum: { baseQuantity: true } }),
+    ]);
+    settledRows.forEach((r) => avail.set(r.productId, (avail.get(r.productId) || 0) - (r._sum.baseQuantity || 0)));
+    retRows.forEach((r) => avail.set(r.productId, (avail.get(r.productId) || 0) - (r._sum.baseQuantity || 0)));
+    result.push({ settlementId: stl.id, settlementNumber: stl.settlementNumber, avail });
+  }
+  return result;
+}
+
 // ── Create (PENDING — no inventory moves yet) ─────────────────────────────────
 
 async function createReturn(payload, actor) {
@@ -72,7 +99,12 @@ async function createReturn(payload, actor) {
   if (type === 'CUSTOMER_RETURN' && !salesRepId && !warehouseId) {
     throw ApiError.badRequest('A customer return needs a destination: salesRepId or warehouseId');
   }
-  if (type === 'SALES_RETURN' && (!salesRepId || !warehouseId)) {
+  let destWarehouseId = warehouseId;
+  if (type === 'SALES_RETURN' && !destWarehouseId) {
+    const wh = await prisma.warehouse.findFirst({ where: { isActive: true }, orderBy: { isPrimary: 'desc' } });
+    destWarehouseId = wh?.id || null;
+  }
+  if (type === 'SALES_RETURN' && (!salesRepId || !destWarehouseId)) {
     throw ApiError.badRequest('A sales return needs both salesRepId (from) and warehouseId (to)');
   }
 
@@ -104,52 +136,101 @@ async function createReturn(payload, actor) {
       await validateSettlementLines(tx, settlementId, salesRepId, lines, productMap);
     }
 
-    const returnNumber = await nextDocNumber(tx.return, 'returnNumber', 'RET');
-    const ret = await tx.return.create({
-      data: {
-        returnNumber,
-        type,
-        status: 'PENDING',
-        customerId: customerId || null,
-        salesRepId: salesRepId || null,
-        settlementId: settlementId || null,
-        warehouseId: warehouseId || null,
-        reason: reason || null,
-        notes: notes || null,
-        processedAt: processedAt ? new Date(processedAt) : new Date(),
-        processedById: actor ? actor.id : null,
-        items: {
-          create: lines.map((l) => ({
-            productId: l.productId,
-            packagingUnitId: l.packagingUnitId,
-            quantity: l.quantity,
-            baseQuantity: l.baseQuantity,
-            condition: l.condition,
-            unitPrice: l.unitPrice,
-          })),
+    const makeReturn = async (stlId, stlLines, extraNote) => {
+      const returnNumber = await nextDocNumber(tx.return, 'returnNumber', 'RET');
+      return tx.return.create({
+        data: {
+          returnNumber,
+          type,
+          status: 'PENDING',
+          customerId: customerId || null,
+          salesRepId: salesRepId || null,
+          settlementId: stlId || null,
+          warehouseId: destWarehouseId || warehouseId || null,
+          reason: reason || null,
+          notes: [notes, extraNote].filter(Boolean).join(' ') || null,
+          processedAt: processedAt ? new Date(processedAt) : new Date(),
+          processedById: actor ? actor.id : null,
+          items: {
+            create: stlLines.map((l) => ({
+              productId: l.productId,
+              packagingUnitId: l.packagingUnitId,
+              quantity: l.quantity,
+              baseQuantity: l.baseQuantity,
+              condition: l.condition,
+              unitPrice: l.unitPrice,
+            })),
+          },
         },
-      },
-      include: RETURN_INCLUDE,
-    });
-    return ret;
+        include: RETURN_INCLUDE,
+      });
+    };
+
+    // A rep return that arrives WITHOUT an order link must still hit the
+    // rep's open orders — otherwise the boxes keep showing (and getting
+    // fined) on the order while the stock quietly moves. Allocate every
+    // line to the open orders oldest-first, splitting across orders when
+    // needed; boxes that aren't on any open order are refused.
+    if (type === 'SALES_RETURN' && salesRepId && !settlementId) {
+      const orders = await openOrderAvailability(tx, salesRepId);
+      const buckets = new Map(); // settlementId -> lines
+      for (const l of lines) {
+        const perUnit = l.quantity > 0 ? l.baseQuantity / l.quantity : 1;
+        let leftBase = l.baseQuantity;
+        for (const o of orders) {
+          if (leftBase <= 0) break;
+          const can = Math.min(leftBase, Math.max(0, o.avail.get(l.productId) || 0));
+          // allocate whole packaging units only
+          const units = Math.floor(can / perUnit);
+          if (units <= 0) continue;
+          const takeBase = units * perUnit;
+          o.avail.set(l.productId, (o.avail.get(l.productId) || 0) - takeBase);
+          const list = buckets.get(o.settlementId) || [];
+          list.push({ ...l, quantity: units, baseQuantity: takeBase });
+          buckets.set(o.settlementId, list);
+          leftBase -= takeBase;
+        }
+        if (leftBase > 0) {
+          const name = productMap.get(l.productId)?.name || 'This product';
+          const onOrders = l.baseQuantity - leftBase;
+          throw ApiError.badRequest(
+            `${name}: only ${Math.floor(onOrders / perUnit)} box(es) are still unaccounted on your open orders — you can't return more than that.`,
+          );
+        }
+      }
+
+      const createdReturns = [];
+      const numberOf = new Map(orders.map((o) => [o.settlementId, o.settlementNumber]));
+      for (const [stlId, stlLines] of buckets) {
+        createdReturns.push(await makeReturn(stlId, stlLines, `Return on order ${numberOf.get(stlId)}`));
+      }
+      return createdReturns;
+    }
+
+    return [await makeReturn(settlementId, lines, null)];
   }, { timeout: 30000 });
 
-  // Notify admins and warehouse staff that a return needs approval.
-  const submitterName = result.salesRep?.user?.name || actor?.name || 'A rep';
-  const totalBoxes = (result.items || []).reduce((s, i) => s + i.quantity, 0);
-  const itemList = result.items.map((i) => `${i.product?.name} × ${i.quantity}`).join(', ');
-  notification.notifyAdmins({
-    type: 'GENERAL',
-    severity: 'INFO',
-    title: 'Return approval required',
-    message: `${submitterName} submitted a return of ${totalBoxes} box(es): ${itemList}. Please verify and approve.`,
-    entityType: 'Return',
-    entityId: result.id,
-  }).catch(() => {});
+  // Notify admins and warehouse staff for every created return record.
   const wa = require('./whatsappNotify.service');
-  wa.background(wa.returnSubmitted(result));
+  for (const ret of result) {
+    const submitterName = ret.salesRep?.user?.name || actor?.name || 'A rep';
+    const totalBoxes = (ret.items || []).reduce((s, i) => s + i.quantity, 0);
+    const itemList = ret.items.map((i) => `${i.product?.name} × ${i.quantity}`).join(', ');
+    notification.notifyAdmins({
+      type: 'GENERAL',
+      severity: 'INFO',
+      title: 'Return approval required',
+      message: `${submitterName} submitted a return of ${totalBoxes} box(es): ${itemList}. Please verify and approve.`,
+      entityType: 'Return',
+      entityId: ret.id,
+    }).catch(() => {});
+    wa.background(wa.returnSubmitted(ret));
+  }
 
-  return result;
+  // Callers get the first record; `related` lists every number created when
+  // the return had to split across multiple orders.
+  const first = result[0];
+  return { ...first, related: result.map((r) => r.returnNumber) };
 }
 
 // ── Approve — execute inventory moves and close settlement if possible ────────

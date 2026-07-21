@@ -67,6 +67,7 @@ export const SALE_STATUS_META = {
   PARTIAL: { label: 'Partial', cls: 'bg-amber-100 text-amber-700' },
   UNPAID: { label: 'Unpaid', cls: 'bg-rose-100 text-rose-700' },
   CANCELLED: { label: 'Cancelled', cls: 'bg-elevated text-muted' },
+  EXPIRED: { label: 'Expired (24h)', cls: 'bg-orange-100 text-orange-700' },
 };
 
 export const CREDIT_STATUS_META = {

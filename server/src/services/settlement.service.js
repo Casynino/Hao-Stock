@@ -102,10 +102,11 @@ async function list(filters, pagination) {
 // returned value, outstanding. `client` lets callers read uncommitted writes
 // from inside a transaction.
 async function orderBreakdown(s, client = prisma) {
-  const [transfer, settledRows, retRows, rule] = await Promise.all([
+  const [transfer, settledRows, retRows, pendingRetRows, rule] = await Promise.all([
     s.transferId ? client.stockTransfer.findUnique({ where: { id: s.transferId }, include: { items: true } }) : null,
     client.saleItem.groupBy({ by: ['productId'], where: { sale: { settlementId: s.id, status: { not: 'CANCELLED' } } }, _sum: { baseQuantity: true } }),
     client.returnItem.groupBy({ by: ['productId'], where: { return: { settlementId: s.id, status: { in: ['APPROVED', 'COMPLETED'] } } }, _sum: { baseQuantity: true } }),
+    client.returnItem.groupBy({ by: ['productId'], where: { return: { settlementId: s.id, status: 'PENDING' } }, _sum: { baseQuantity: true } }),
     commission.getRule(),
   ]);
 
@@ -113,6 +114,7 @@ async function orderBreakdown(s, client = prisma) {
   (transfer?.items || []).forEach((it) => assignedMap.set(it.productId, (assignedMap.get(it.productId) || 0) + it.baseQuantity));
   const settledMap = new Map(settledRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
   const retMap = new Map(retRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
+  const pendingRetMap = new Map(pendingRetRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
 
   const productIds = [...new Set([...assignedMap.keys(), ...settledMap.keys(), ...retMap.keys()])];
   const products = await client.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, sku: true, sellingPrice: true, brandId: true } });
@@ -122,6 +124,7 @@ async function orderBreakdown(s, client = prisma) {
   let settledBoxes = 0;
   let returnedBoxes = 0;
   let remainingBoxes = 0;
+  let pendingReturnBoxes = 0;
   let returnedValue = 0;
   let remainingValue = 0;
   const lines = productIds.map((pid) => {
@@ -129,14 +132,18 @@ async function orderBreakdown(s, client = prisma) {
     const assigned = assignedMap.get(pid) || 0;
     const settled = settledMap.get(pid) || 0;
     const returned = retMap.get(pid) || 0;
+    // Boxes locked inside a PENDING return: still counted in `remaining`
+    // (nothing has moved yet) but NOT available for another return/settle.
+    const pendingReturn = pendingRetMap.get(pid) || 0;
     const remaining = Math.max(0, assigned - settled - returned);
     assignedBoxes += assigned;
     settledBoxes += settled;
     returnedBoxes += returned;
     remainingBoxes += remaining;
+    pendingReturnBoxes += pendingReturn;
     returnedValue += returned * toNumber(p.sellingPrice);
     remainingValue += remaining * toNumber(p.sellingPrice);
-    return { productId: pid, name: p.name, sku: p.sku, brandId: p.brandId || null, sellingPrice: toNumber(p.sellingPrice), assigned, settled, returned, remaining };
+    return { productId: pid, name: p.name, sku: p.sku, brandId: p.brandId || null, sellingPrice: toNumber(p.sellingPrice), assigned, settled, returned, pendingReturn, remaining };
   });
 
   const orderValue = toNumber(s.assignedValue);
@@ -149,6 +156,7 @@ async function orderBreakdown(s, client = prisma) {
       assignedBoxes,
       settledBoxes,
       returnedBoxes,
+      pendingReturnBoxes,
       remainingBoxes,
       orderValue,
       settledValue,

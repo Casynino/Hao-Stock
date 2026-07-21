@@ -76,4 +76,18 @@ const summary = asyncHandler(async (req, res) => {
   return ok(res, await returnsService.returnsSummary(filters));
 });
 
-module.exports = { create, list, get, approve, reject, summary };
+// POST /returns/:id/cancel — a rep withdraws their own pending request;
+// staff can cancel any pending return. Boxes unlock, countdown resumes.
+const cancel = asyncHandler(async (req, res) => {
+  const asRep = req.user.role === ROLES.SALES_REP;
+  const ret = await returnsService.cancelReturn(req.params.id, req.user, { asRep });
+  await audit.record(req, {
+    action: 'UPDATE',
+    entityType: 'Return',
+    entityId: ret.id,
+    newValues: { returnNumber: ret.returnNumber, status: 'CANCELLED', by: asRep ? 'rep' : 'staff' },
+  });
+  return ok(res, ret);
+});
+
+module.exports = { create, list, get, approve, reject, summary, cancel };

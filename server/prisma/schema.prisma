@@ -112,7 +112,8 @@ enum ReturnStatus {
   APPROVED  // verified and accepted — inventory has been updated
   REJECTED  // not accepted by warehouse
   COMPLETED // legacy: pre-approval-flow records (treated as APPROVED)
-  CANCELLED
+  CANCELLED // withdrawn by the rep (or staff) before a decision
+  EXPIRED   // not decided within the 24h window — auto-cancelled + delay fine
 }
 
 enum ItemCondition {

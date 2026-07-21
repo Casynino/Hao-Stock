@@ -39,6 +39,7 @@ const myOverview = asyncHandler(async (req, res) => {
   const wa = require('../services/whatsappNotify.service');
   wa.background(settlement.sendDueReminders());
   wa.background(penalty.applyDuePenalties());
+  wa.background(require('../services/returns.service').expireStaleReturns());
   wa.background(wa.flush());
 
   const [balances, commissionData, openOrders, pendingRequests] = await Promise.all([
@@ -119,6 +120,7 @@ const pendingActions = asyncHandler(async (_req, res) => {
   const wa = require('../services/whatsappNotify.service');
   wa.background(wa.flush());
   wa.background(wa.dailySummaryCatchup());
+  wa.background(require('../services/returns.service').expireStaleReturns());
 
   const [stockRequests, pendingSubs, returns, overdue] = await Promise.all([
     prisma.stockRequest.count({ where: { status: 'PENDING' } }),

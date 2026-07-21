@@ -16,5 +16,6 @@ router.get('/unread-count', ctrl.unreadCount);
 router.post('/read-all', ctrl.markAllRead);
 router.post('/:id/read', validate(idParam), ctrl.markRead);
 router.post('/generate', requireAdmin, ctrl.generate);
+router.post('/broadcast', requireAdmin, ctrl.broadcast); // announcement to reps/staff/all
 
 module.exports = router;

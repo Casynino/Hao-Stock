@@ -34,4 +34,13 @@ const generate = asyncHandler(async (req, res) => {
   return ok(res, result);
 });
 
-module.exports = { list, unreadCount, markRead, markAllRead, generate };
+// POST /notifications/broadcast — admin announcement to reps/staff/all.
+const broadcast = asyncHandler(async (req, res) => {
+  const { title, message, severity, audience } = req.body || {};
+  if (!title || !message) throw ApiError.badRequest('title and message are required');
+  const result = await notificationService.broadcast({ title, message, severity, audience });
+  return ok(res, result);
+});
+
+module.exports = {
+  broadcast, list, unreadCount, markRead, markAllRead, generate };

@@ -511,6 +511,7 @@ async function expireStaleReturns() {
               data: {
                 salesRepId: ret.salesRepId,
                 settlementId: ret.settlementId,
+                kind: 'EXPIRY_FINE',
                 amount: RETURN_EXPIRY_PENALTY,
                 daysOverdue: 0, // expiry fine, not a daily late-fine
                 notes: `Return ${ret.returnNumber} not completed within ${RETURN_WINDOW_HOURS} hours — delay fine.`,

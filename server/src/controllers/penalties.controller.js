@@ -52,4 +52,16 @@ const waive = asyncHandler(async (req, res) => {
   return ok(res, updated);
 });
 
-module.exports = { apply, list, waive };
+// POST /penalties/adjust — manual commission deduction (admin).
+const adjust = asyncHandler(async (req, res) => {
+  const row = await penaltyService.adjustCommission(req.body || {}, req.user);
+  await audit.record(req, {
+    action: 'CREATE',
+    entityType: 'SettlementPenalty',
+    entityId: row.id,
+    newValues: { kind: 'ADJUSTMENT', salesRepId: row.salesRepId, amount: row.amount, reason: req.body?.reason || null },
+  });
+  return ok(res, row);
+});
+
+module.exports = { apply, list, waive, adjust };

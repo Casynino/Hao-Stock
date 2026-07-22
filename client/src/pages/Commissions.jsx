@@ -136,8 +136,8 @@ function FinesHistory({ admin }) {
             return (
               <TR key={p.id}>
                 {admin && <TD className="font-medium">{p.salesRep?.user?.name}</TD>}
-                <TD>Late Settlement Fine</TD>
-                <TD className="text-faint">{p.settlement?.settlementNumber || '—'}</TD>
+                <TD>{p.kind === 'ADJUSTMENT' ? 'Commission Deduction' : p.kind === 'EXPIRY_FINE' ? 'Return Delay Fine (24h)' : 'Late Settlement Fine'}</TD>
+                <TD className="text-faint" title={p.notes || undefined}>{p.settlement?.settlementNumber || '—'}</TD>
                 <TD className={`text-right font-semibold ${waived ? 'text-faint line-through' : 'text-rose-400'}`}>−{formatCurrency(p.amount)}</TD>
                 <TD>
                   {waived
@@ -257,8 +257,60 @@ function RepView() {
   );
 }
 
+// Manual commission deduction: remove an amount from a rep's balance without
+// touching money or future accrual. Reversible via Forgive.
+function DeductModal({ reps, onClose }) {
+  const qc = useQueryClient();
+  const [salesRepId, setSalesRepId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const rep = reps.find((r) => r.salesRepId === salesRepId);
+
+  const deduct = useMutation({
+    mutationFn: () => api.post('/penalties/adjust', { salesRepId, amount: Number(amount), reason }),
+    onSuccess: () => {
+      toast.success(`${formatCurrency(Number(amount))} deducted from ${rep?.name || 'the rep'}'s commission`);
+      ['commissions', 'penalties', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      onClose();
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const valid = salesRepId && Number(amount) > 0 && reason.trim();
+  return (
+    <Modal open onClose={onClose} title="Deduct commission" footer={
+      <>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button loading={deduct.isPending} disabled={!valid} onClick={() => deduct.mutate()}>
+          Deduct {Number(amount) > 0 ? formatCurrency(Number(amount)) : ''}
+        </Button>
+      </>
+    }>
+      <div className="space-y-4">
+        <Field label="Sales rep" required>
+          <Select value={salesRepId} onChange={(e) => setSalesRepId(e.target.value)}>
+            <option value="">Select rep…</option>
+            {reps.map((r) => <option key={r.salesRepId} value={r.salesRepId}>{r.name} — available {formatCurrency(r.available)}</option>)}
+          </Select>
+        </Field>
+        <Field label="Amount to deduct" required hint={rep ? `${rep.name} currently has ${formatCurrency(rep.available)} available` : undefined}>
+          <Input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Field label="Reason" required hint="Shown to the rep and kept in the record">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Commission removed by The Lab" />
+        </Field>
+        <p className="text-xs text-faint">
+          This removes the amount from the rep's available balance only — future commission keeps accruing normally.
+          The deduction appears in Penalty transactions and can be reversed with Forgive.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
 function AdminView() {
   const qc = useQueryClient();
+  const [deducting, setDeducting] = useState(false);
   const { data: summary, isLoading } = useQuery({ queryKey: ['commissions', 'summary'], queryFn: async () => unwrap(await api.get('/commissions/summary')).data });
   const { data: wd } = useQuery({ queryKey: ['commissions', 'withdrawals', 'all'], queryFn: async () => unwrap(await api.get('/commissions/withdrawals', { params: { limit: 30 } })) });
 
@@ -293,7 +345,11 @@ function AdminView() {
         <Button variant="secondary" loading={applyPenalties.isPending} onClick={() => applyPenalties.mutate()}>
           <AlertTriangle className="h-4 w-4" /> Apply daily penalties
         </Button>
+        <Button variant="secondary" onClick={() => setDeducting(true)}>
+          <Coins className="h-4 w-4" /> Deduct commission
+        </Button>
       </div>
+      {deducting && <DeductModal reps={summary?.items || []} onClose={() => setDeducting(false)} />}
 
       <Card className="mt-4">
         <CardHeader title="Commission by representative" />

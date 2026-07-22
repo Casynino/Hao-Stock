@@ -59,6 +59,7 @@ async function applyDuePenalties() {
         data: {
           salesRepId: s.salesRepId,
           settlementId: s.id,
+          kind: 'LATE_FINE',
           amount: PENALTY_PER_DAY,
           daysOverdue: day,
           notes: `Late settlement fine — failed to complete ${s.settlementNumber} within 72 hours (day ${day}).`,
@@ -141,6 +142,46 @@ async function totalPenaltiesForRep(salesRepId) {
   return round2(toNumber(agg._sum.amount));
 }
 
+// Manual commission deduction by The Doctor: removes an amount from a rep's
+// available balance without touching money or future accrual. Lives in the
+// same ledger as fines, so it's permanent, visible on the Commissions page,
+// and reversible with the Forgive button if ever needed.
+async function adjustCommission({ salesRepId, amount, reason }, actor) {
+  const ApiError = require('../utils/ApiError');
+  const amt = round2(toNumber(amount));
+  if (!(amt > 0)) throw ApiError.badRequest('Enter an amount greater than zero');
+  if (!salesRepId) throw ApiError.badRequest('Choose a sales rep');
+  const rep = await prisma.salesRepresentative.findUnique({
+    where: { id: salesRepId },
+    include: { user: { select: { id: true, name: true } } },
+  });
+  if (!rep) throw ApiError.notFound('Sales rep not found');
+
+  const row = await prisma.settlementPenalty.create({
+    data: {
+      salesRepId,
+      settlementId: null,
+      kind: 'ADJUSTMENT',
+      amount: amt,
+      daysOverdue: 0,
+      notes: reason || `Commission deduction by The Lab.`,
+    },
+  });
+
+  if (rep.user?.id) {
+    notification.notifyUser(rep.user.id, {
+      type: 'GENERAL',
+      severity: 'WARNING',
+      title: `${formatCurrency(amt)} deducted from your commission`,
+      message: `The Lab deducted ${formatCurrency(amt)} from your commission balance.${reason ? ` Reason: ${reason}` : ''} Future commission is not affected.`,
+      entityType: 'Commission',
+      entityId: row.id,
+    }).catch(() => {});
+  }
+
+  return row;
+}
+
 // Forgive a fine: the row stays as a permanent record (and still counts for
 // idempotence so it is never re-charged), but it stops reducing the rep's
 // balance — the money returns to their commission instantly.
@@ -207,6 +248,7 @@ module.exports = {
   applyDuePenalties,
   penaltyBreakdownForRep,
   totalPenaltiesForRep,
+  adjustCommission,
   waivePenalty,
   listPenalties,
   penaltyDaysDue,

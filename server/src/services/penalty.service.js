@@ -106,10 +106,13 @@ async function penaltyBreakdownForRep(salesRepId) {
   });
   if (grouped.length === 0) return { total: 0, breakdown: [] };
 
-  const ids = grouped.map((g) => g.settlementId);
+  // Manual deductions have no settlement — keep them out of the id lookups.
+  const ids = grouped.map((g) => g.settlementId).filter(Boolean);
   const [settlements, pendingRets] = await Promise.all([
     prisma.settlement.findMany({ where: { id: { in: ids } }, select: { id: true, settlementNumber: true, status: true } }),
-    prisma.return.groupBy({ by: ['settlementId'], where: { settlementId: { in: ids }, status: 'PENDING' }, _count: true }),
+    ids.length
+      ? prisma.return.groupBy({ by: ['settlementId'], where: { settlementId: { in: ids }, status: 'PENDING' }, _count: true })
+      : [],
   ]);
   const sMap = new Map(settlements.map((s) => [s.id, s]));
   const pendingMap = new Map(pendingRets.map((r) => [r.settlementId, r._count]));
@@ -119,10 +122,10 @@ async function penaltyBreakdownForRep(salesRepId) {
     .map((g) => {
       const amt = round2(toNumber(g._sum.amount));
       total += amt;
-      const s = sMap.get(g.settlementId);
+      const s = g.settlementId ? sMap.get(g.settlementId) : null;
       return {
         settlementId: g.settlementId,
-        settlementNumber: s?.settlementNumber || '—',
+        settlementNumber: s?.settlementNumber || (g.settlementId ? '—' : 'Manual deduction'),
         daysOverdue: g._max.daysOverdue || g._count,
         fines: g._count,
         penaltyPerDay: PENALTY_PER_DAY,

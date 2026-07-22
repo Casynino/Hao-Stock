@@ -1212,9 +1212,13 @@ model SettlementPenalty {
   id           String              @id @default(cuid())
   salesRepId   String
   salesRep     SalesRepresentative @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
-  settlementId String
-  settlement   Settlement          @relation(fields: [settlementId], references: [id], onDelete: Cascade)
-  amount       Decimal             @db.Decimal(14, 2) // always 10,000 TZS
+  // Null for manual commission adjustments (not tied to an order).
+  settlementId String?
+  settlement   Settlement?         @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  // LATE_FINE (daily 72h fine) | EXPIRY_FINE (24h return window) | ADJUSTMENT
+  // (manual deduction by The Doctor). All reduce the rep's balance the same way.
+  kind         String              @default("LATE_FINE")
+  amount       Decimal             @db.Decimal(14, 2)
   daysOverdue  Int
   appliedAt    DateTime            @default(now())
   notes        String?

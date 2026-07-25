@@ -382,6 +382,10 @@ model SalesRepresentative {
   code          String   @unique // e.g. REP-001
   region        String?
   phone         String?
+  // Per-rep WhatsApp (CallMeBot): the rep activates their own number and gets
+  // their own apikey; when both are set, important alerts push to their phone.
+  whatsappPhone  String?
+  whatsappApiKey String?
   // Optional monthly sales target for performance tracking.
   monthlyTarget Decimal? @db.Decimal(14, 2)
   isActive      Boolean  @default(true)

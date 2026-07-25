@@ -634,6 +634,23 @@ async function extendDeadline(id, { deadlineAt, additionalHours }) {
     data: { deadlineAt: newDeadline, status: newStatus, reminderStage: 0 },
     include: INCLUDE,
   });
+
+  // Tell the rep — in-app AND (via the mirror) on their WhatsApp. The new
+  // deadline sits in the TITLE so each extension is a distinct message
+  // (the WhatsApp mirror dedupes on entity+title).
+  const repUserId = updated.salesRep?.user?.id;
+  if (repUserId) {
+    const dl = require('../utils/dates').dayjs(newDeadline).utc().add(3, 'hour').format('D MMM YYYY, HH:mm');
+    notification.notifyUser(repUserId, {
+      type: 'GENERAL',
+      severity: 'WARNING',
+      title: `Order ${updated.settlementNumber} extended to ${dl}`,
+      message: `The Lab extended your deadline on order ${updated.settlementNumber}. New deadline: ${dl} (EAT). Settle your boxes or return unsold stock BEFORE then — after the deadline the daily fine applies.`,
+      entityType: 'Settlement',
+      entityId: updated.id,
+    }).catch(() => {});
+  }
+
   return decorate(updated);
 }
 

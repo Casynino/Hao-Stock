@@ -154,7 +154,7 @@ async function deliver(row) {
   // the loser of this update skips, so a message is never sent twice.
   const claimed = await prisma.whatsAppNotification.updateMany({
     where: { id: row.id, status: 'PENDING', attempts: row.attempts },
-    data: { attempts: row.attempts + 1 },
+    data: { attempts: row.attempts + 1, lastAttemptAt: new Date() },
   });
   if (claimed.count === 0) {
     return { queued: true, sent: false, status: 'PENDING', reason: 'claimed-elsewhere', id: row.id };
@@ -238,6 +238,9 @@ async function flush({ throttleMs = 60000 } = {}) {
       status: 'PENDING',
       attempts: { lt: MAX_ATTEMPTS },
       createdAt: { gt: new Date(now - 48 * 3600 * 1000) },
+      // Anti-duplicate cool-down: an attempt may have actually been delivered
+      // even if it read as failed — never echo it within 10 minutes.
+      OR: [{ lastAttemptAt: null }, { lastAttemptAt: { lt: new Date(now - 10 * 60 * 1000) } }],
       ...(quiet ? { priority: 'CRITICAL' } : {}),
     },
     orderBy: { createdAt: 'asc' },

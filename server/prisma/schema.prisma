@@ -916,10 +916,11 @@ model WhatsAppNotification {
   dedupeKey String? @unique
   text      String
 
-  status    String    @default("PENDING") // PENDING | SENT | FAILED
-  attempts  Int       @default(0)
-  lastError String?
-  sentAt    DateTime?
+  status        String    @default("PENDING") // PENDING | SENT | FAILED
+  attempts      Int       @default(0)
+  lastError     String?
+  lastAttemptAt DateTime? // retries must wait 10+ min after this (anti-duplicate)
+  sentAt        DateTime?
 
   createdAt DateTime @default(now())
 

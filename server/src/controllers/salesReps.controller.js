@@ -229,6 +229,8 @@ const getProfile = asyncHandler(async (req, res) => {
       isActive: rep.isActive,
       joinDate: rep.createdAt,
       monthlyTarget: rep.monthlyTarget ? toNumber(rep.monthlyTarget) : null,
+      whatsappPhone: rep.whatsappPhone || null,
+      whatsappApiKey: rep.whatsappApiKey || null,
       customers: rep._count?.customers ?? 0,
     },
     stock: { items: stock, value },
@@ -300,6 +302,12 @@ const update = asyncHandler(async (req, res) => {
   });
   await audit.record(req, { action: 'UPDATE', entityType: 'SalesRepresentative', entityId: rep.id, oldValues: existing, newValues: req.body });
   return ok(res, rep);
+});
+
+// POST /sales-reps/:id/whatsapp-test — send a test to the rep's WhatsApp.
+const whatsappTest = asyncHandler(async (req, res) => {
+  const result = await require('../services/whatsappNotify.service').testRep(req.params.id);
+  return ok(res, result);
 });
 
 const remove = asyncHandler(async (req, res) => {
@@ -421,4 +429,4 @@ const addStock = asyncHandler(async (req, res) => {
   return created(res, { settlement: result.settlement, mode: result.mode, boxes: result.boxes, addedValue: result.addedValue });
 });
 
-module.exports = { list, get, getProfile, getStock, getReconciliation, create, update, remove, resetData, addStock };
+module.exports = { list, get, getProfile, getStock, getReconciliation, create, update, remove, resetData, addStock, whatsappTest };

@@ -903,6 +903,10 @@ model WhatsAppNotification {
   id        String  @id @default(cuid())
   type      String // STOCK_REQUEST | SETTLEMENT_SUBMITTED | RETURN_SUBMITTED | ...
   priority  String  @default("INFO") // INFO | ACTION | WARNING | CRITICAL
+  // Recipient: null = the business owner's configured number; otherwise a
+  // specific rep's CallMeBot number + apikey.
+  toPhone   String?
+  toApiKey  String?
   refType   String?
   refId     String?
   dedupeKey String? @unique

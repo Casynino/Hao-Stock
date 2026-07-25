@@ -110,8 +110,10 @@ function background(promise) {
   return p;
 }
 
-async function sendRaw(text) {
-  const { phone, apikey, configured } = await getConfig();
+async function sendRaw(text, creds = null) {
+  const { phone, apikey, configured } = creds && creds.phone && creds.apikey
+    ? { phone: creds.phone, apikey: creds.apikey, configured: true }
+    : await getConfig();
   if (!configured) return { sent: false, reason: 'WhatsApp not configured' };
   const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&apikey=${encodeURIComponent(apikey)}&text=${encodeURIComponent(text)}`;
   // Browser UA on purpose — CallMeBot's firewall 403s bot user agents.
@@ -130,14 +132,18 @@ async function sendRaw(text) {
 // budget on what matters: when it's nearly gone, hold INFO-priority rows in
 // our own queue (flush retries them once the window frees) so action-required
 // and critical alerts still land instantly.
-async function providerBudgetUsed() {
+async function providerBudgetUsed(toPhone = null) {
   return prisma.whatsAppNotification.count({
-    where: { status: 'SENT', sentAt: { gt: new Date(Date.now() - 240 * 60 * 1000) } },
+    where: {
+      status: 'SENT',
+      sentAt: { gt: new Date(Date.now() - 240 * 60 * 1000) },
+      toPhone: toPhone || null, // null = owner's number; each recipient has its own 16/4h budget
+    },
   });
 }
 
 async function deliver(row) {
-  if (row.priority === 'INFO' && row.type !== 'TEST' && (await providerBudgetUsed()) >= 14) {
+  if (row.priority === 'INFO' && row.type !== 'TEST' && (await providerBudgetUsed(row.toPhone)) >= 14) {
     return { queued: true, sent: false, status: 'PENDING', reason: 'provider-budget', id: row.id };
   }
 
@@ -152,7 +158,8 @@ async function deliver(row) {
     return { queued: true, sent: false, status: 'PENDING', reason: 'claimed-elsewhere', id: row.id };
   }
 
-  const result = await sendRaw(row.text).catch((e) => ({ sent: false, provider: e.message }));
+  const creds = row.toPhone && row.toApiKey ? { phone: row.toPhone, apikey: row.toApiKey } : null;
+  const result = await sendRaw(row.text, creds).catch((e) => ({ sent: false, provider: e.message }));
   const attempts = row.attempts + 1;
   const status = result.sent ? 'SENT' : attempts >= MAX_ATTEMPTS ? 'FAILED' : 'PENDING';
   const updated = await prisma.whatsAppNotification.update({
@@ -180,10 +187,13 @@ async function deliver(row) {
 
 // Queue a notification: log it (dedupe on dedupeKey) and try to send now.
 // Quiet hours hold non-critical messages as PENDING; flush() sends them later.
-async function queue(type, { priority, dedupeKey = null, refType = null, refId = null, text }) {
+async function queue(type, { priority, dedupeKey = null, refType = null, refId = null, text, toPhone = null, toApiKey = null }) {
   if (!(await isEnabled(type))) return { queued: false, reason: 'disabled' };
-  const { configured } = await getConfig();
-  if (!configured) return { queued: false, reason: 'not-configured' };
+  // A rep recipient carries its own creds; the owner path needs the settings.
+  if (!(toPhone && toApiKey)) {
+    const { configured } = await getConfig();
+    if (!configured) return { queued: false, reason: 'not-configured' };
+  }
 
   const prio = priority || TYPES[type]?.priority || 'INFO';
   // Trim on whole lines so a provider-side cut can't leave half a sentence.
@@ -200,7 +210,7 @@ async function queue(type, { priority, dedupeKey = null, refType = null, refId =
   let row;
   try {
     row = await prisma.whatsAppNotification.create({
-      data: { type, priority: prio, dedupeKey, refType, refId, text: body },
+      data: { type, priority: prio, dedupeKey, refType, refId, text: body, toPhone, toApiKey },
     });
   } catch (e) {
     if (e.code === 'P2002') return { queued: false, reason: 'duplicate' };
@@ -509,6 +519,79 @@ async function dailySummaryCatchup() {
   return dailySummary();
 }
 
+// ── Per-rep alerts ───────────────────────────────────────────────────────────
+// Reps activate their own CallMeBot number; when both phone+apikey are stored
+// on their profile, their important alerts are pushed to their WhatsApp.
+
+const SEVERITY_PRIORITY = { INFO: 'INFO', WARNING: 'WARNING', CRITICAL: 'CRITICAL' };
+
+async function repCreds(salesRepId) {
+  const rep = await prisma.salesRepresentative.findUnique({
+    where: { id: salesRepId },
+    select: { whatsappPhone: true, whatsappApiKey: true },
+  }).catch(() => null);
+  if (rep?.whatsappPhone && rep?.whatsappApiKey) return { phone: rep.whatsappPhone, apikey: rep.whatsappApiKey };
+  return null;
+}
+
+// Queue a message to a specific rep's WhatsApp. Returns {queued:false} when the
+// rep has no WhatsApp configured (caller ignores — in-app notice still stands).
+async function notifyRep(salesRepId, { title, message, severity = 'INFO', dedupeKey = null }) {
+  const creds = await repCreds(salesRepId);
+  if (!creds) return { queued: false, reason: 'no-whatsapp' };
+  const text = [`${PRIORITY_ICON[SEVERITY_PRIORITY[severity]] || '🟢'} *${title}*`, '', message, '', '_The Lab_'].join('\n');
+  return queue('REP_ALERT', {
+    priority: SEVERITY_PRIORITY[severity] || 'INFO',
+    dedupeKey,
+    refType: 'SalesRepresentative',
+    refId: salesRepId,
+    text,
+    toPhone: creds.phone,
+    toApiKey: creds.apikey,
+  });
+}
+
+// Mirror an in-app user notification to the rep's WhatsApp, if that user is a
+// rep with WhatsApp set. Called from notification.notifyUser — one hook that
+// covers every rep alert (approvals, rejections, penalties, reminders,
+// commission earned/ready). Never throws.
+async function mirrorToRep(userId, data) {
+  try {
+    if (!userId) return { queued: false };
+    const rep = await prisma.salesRepresentative.findFirst({
+      where: { userId, whatsappPhone: { not: null }, whatsappApiKey: { not: null } },
+      select: { id: true },
+    });
+    if (!rep) return { queued: false, reason: 'no-whatsapp' };
+    return await notifyRep(rep.id, {
+      title: data.title,
+      message: data.message,
+      severity: data.severity || 'INFO',
+      // Dedupe on the linked entity so a retried in-app notify never double-texts.
+      dedupeKey: data.entityId ? `rep:${rep.id}:${data.entityType || 'x'}:${data.entityId}:${data.title}` : null,
+    });
+  } catch {
+    return { queued: false };
+  }
+}
+
+// Test message to a specific rep's number (admin "Send test" on the profile).
+async function testRep(salesRepId) {
+  const creds = await repCreds(salesRepId);
+  if (!creds) return { sent: false, reason: 'no-whatsapp' };
+  const text = ['🟢 *THE LAB*', '', 'WhatsApp alerts are now active for you. You will get a message here whenever something important happens with your stock, settlements and commission.', '', '_The Lab_'].join('\n');
+  const result = await sendRaw(text, creds);
+  await prisma.whatsAppNotification.create({
+    data: {
+      type: 'TEST', priority: 'INFO', text, toPhone: creds.phone, toApiKey: creds.apikey,
+      refType: 'SalesRepresentative', refId: salesRepId,
+      status: result.sent ? 'SENT' : 'FAILED', attempts: 1, sentAt: result.sent ? new Date() : null,
+      lastError: result.sent ? null : String(result.reason || result.provider || 'send failed').slice(0, 300),
+    },
+  }).catch(() => {});
+  return result;
+}
+
 // ── Admin endpoints ──────────────────────────────────────────────────────────
 async function history(limit = 30) {
   return prisma.whatsAppNotification.findMany({
@@ -542,6 +625,9 @@ module.exports = {
   scanStockAlerts,
   dailySummary,
   dailySummaryCatchup,
+  notifyRep,
+  mirrorToRep,
+  testRep,
   history,
   test,
 };

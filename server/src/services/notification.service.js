@@ -61,7 +61,13 @@ async function createIfAbsent(data) {
     where: { type: data.type, entityId: data.entityId ?? null, isRead: false },
   });
   if (existing) return existing;
-  return prisma.notification.create({ data });
+  const created = await prisma.notification.create({ data });
+  // Mirror rep-targeted alerts (e.g. commission-ready) to WhatsApp too.
+  if (data.userId) {
+    const wa = require('./whatsappNotify.service');
+    wa.background(wa.mirrorToRep(data.userId, data));
+  }
+  return created;
 }
 
 // Scan current business state and raise system alerts. Safe to run on a
@@ -151,10 +157,17 @@ async function broadcast({ title, message, severity = 'INFO', audience = 'reps' 
   return { notified: users.length };
 }
 
-// Notify a specific user by their User.id.
+// Notify a specific user by their User.id. If that user is a sales rep with
+// WhatsApp configured, the alert is ALSO pushed to their phone — one hook that
+// covers every rep notification (approvals, rejections, penalties, deadline
+// reminders, commission earned/ready). The WhatsApp send is backgrounded so it
+// survives the serverless response freeze and never blocks the caller.
 async function notifyUser(userId, data) {
   if (!userId) return;
-  return create({ ...data, userId });
+  const created = await create({ ...data, userId });
+  const wa = require('./whatsappNotify.service');
+  wa.background(wa.mirrorToRep(userId, data));
+  return created;
 }
 
 // After stock leaves a warehouse, check if any product is now at or below its

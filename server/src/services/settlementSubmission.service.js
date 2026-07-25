@@ -140,13 +140,23 @@ async function approve(submissionId, actor) {
 
   const rep = await prisma.salesRepresentative.findUnique({ where: { id: sub.salesRepId }, select: { userId: true } });
   const closed = out.dec.status === 'SETTLED';
+  // Commission the rep just earned on these boxes + their new available balance,
+  // so the "settlement approved" message shows the money — in-app and WhatsApp.
+  let earnedLine = 'Commission has been credited.';
+  try {
+    const commission = require('./commission.service');
+    const perBox = toNumber((await commission.getRule()).perBox);
+    const earned = round2(sub.boxes * perBox);
+    const c = await commission.computeForRep(sub.salesRepId);
+    earnedLine = `You earned ${formatCurrency(earned)} commission (${sub.boxes} box(es) × ${formatCurrency(perBox)}). Available balance: ${formatCurrency(c.available)}.`;
+  } catch { /* rule optional */ }
   notification.notifyUser(rep?.userId, {
     type: 'GENERAL',
     severity: 'INFO',
     title: 'Settlement approved',
     message: closed
-      ? `Your settlement of ${sub.boxes} box(es) of ${sub.productName} was approved. Order ${out.dec.settlementNumber} is now fully closed.`
-      : `Your settlement of ${sub.boxes} box(es) of ${sub.productName} (${formatCurrency(sub.amount)}) was approved. Commission has been credited.`,
+      ? `Your settlement of ${sub.boxes} box(es) of ${sub.productName} was approved and order ${out.dec.settlementNumber} is now fully closed. ${earnedLine}`
+      : `Your settlement of ${sub.boxes} box(es) of ${sub.productName} (${formatCurrency(sub.amount)}) was approved. ${earnedLine}`,
     entityType: 'Settlement',
     entityId: sub.settlementId,
   }).catch(() => {});

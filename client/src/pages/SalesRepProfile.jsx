@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   ArrowLeft, Package, Timer, Wallet, AlertTriangle, TrendingUp, History,
   ShieldCheck, ShieldAlert, Power, CheckCircle2, Clock, Undo2, ClipboardList,
-  Boxes, ChevronRight, Mail, Phone, MapPin, Calendar, Coins, PackagePlus, Pencil,
+  Boxes, ChevronRight, Mail, Phone, MapPin, Calendar, Coins, PackagePlus, Pencil, MessageCircle,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -73,6 +73,8 @@ function EditRepModal({ rep, onClose }) {
     phone: rep.phone || '',
     region: rep.region || '',
     monthlyTarget: rep.monthlyTarget != null ? String(rep.monthlyTarget) : '',
+    whatsappPhone: rep.whatsappPhone || '',
+    whatsappApiKey: rep.whatsappApiKey || '',
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -84,6 +86,8 @@ function EditRepModal({ rep, onClose }) {
         region: form.region.trim() || null,
         phone: form.phone.trim() || null,
         monthlyTarget: target,
+        whatsappPhone: form.whatsappPhone.trim() || null,
+        whatsappApiKey: form.whatsappApiKey.trim() || null,
       });
     },
     onSuccess: () => {
@@ -121,6 +125,23 @@ function EditRepModal({ rep, onClose }) {
         <Field label="Monthly target (TZS)" hint="Optional">
           <Input type="number" min="0" value={form.monthlyTarget} onChange={set('monthlyTarget')} placeholder="0" />
         </Field>
+
+        <div className="rounded-xl border border-border bg-elevated/40 p-3">
+          <div className="mb-1 text-sm font-semibold text-foreground">WhatsApp alerts (CallMeBot)</div>
+          <p className="mb-3 text-xs text-faint">
+            The rep sends <b>“I allow callmebot to send me messages”</b> to CallMeBot from their own WhatsApp, then
+            gives you the number + API key from the reply. Once both are set, all their important alerts (approvals,
+            commission earned, deadline reminders, fines) are pushed to their phone.
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="WhatsApp number" hint="With country code, e.g. 255740093806">
+              <Input value={form.whatsappPhone} onChange={set('whatsappPhone')} placeholder="2557.." />
+            </Field>
+            <Field label="CallMeBot API key">
+              <Input value={form.whatsappApiKey} onChange={set('whatsappApiKey')} placeholder="e.g. 7539443" />
+            </Field>
+          </div>
+        </div>
       </div>
     </Modal>
   );
@@ -234,6 +255,16 @@ export default function SalesRepProfile() {
     onError: (e) => toast.error(apiError(e)),
   });
 
+  const testWa = useMutation({
+    mutationFn: () => api.post(`/sales-reps/${id}/whatsapp-test`),
+    onSuccess: (res) => {
+      const r = res.data?.data;
+      if (r?.sent) toast.success('Test sent — the rep should get it on WhatsApp');
+      else toast.error(`Not sent: ${r?.reason === 'no-whatsapp' ? 'no WhatsApp set for this rep' : 'delivery failed'}`);
+    },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
   const refreshAll = () => {
     qc.invalidateQueries({ queryKey: ['sales-rep-profile', id] });
     qc.invalidateQueries({ queryKey: ['settlements'] });
@@ -281,6 +312,11 @@ export default function SalesRepProfile() {
               {rep.isActive && (
                 <Button onClick={() => setAddOpen(true)}>
                   <PackagePlus className="h-4 w-4" /> Add stock
+                </Button>
+              )}
+              {rep.whatsappPhone && rep.whatsappApiKey && (
+                <Button variant="secondary" loading={testWa.isPending} onClick={() => testWa.mutate()}>
+                  <MessageCircle className="h-4 w-4" /> Test WhatsApp
                 </Button>
               )}
               {rep.isActive ? (

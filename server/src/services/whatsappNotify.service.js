@@ -117,14 +117,16 @@ async function sendRaw(text, creds = null) {
   if (!configured) return { sent: false, reason: 'WhatsApp not configured' };
   const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&apikey=${encodeURIComponent(apikey)}&text=${encodeURIComponent(text)}`;
   // Browser UA on purpose — CallMeBot's firewall 403s bot user agents.
+  // Generous timeout + trust any 2xx: CallMeBot can take >15s to answer while
+  // having ALREADY queued the message — classifying that as failure made the
+  // retry deliver the same text twice. A 2xx from them means accepted.
   const res = await fetch(url, {
     method: 'GET',
     headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(45000),
   });
   const body = await res.text().catch(() => '');
-  const sent = res.ok && /message queued|sent|will be delivered/i.test(body);
-  return { sent, status: res.status, provider: body.slice(0, 160) };
+  return { sent: res.ok, status: res.status, provider: body.slice(0, 160) };
 }
 
 // CallMeBot's free tier delivers ~16 messages per 240 minutes immediately;

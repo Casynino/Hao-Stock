@@ -43,6 +43,7 @@ const TYPES = {
   DAILY_SUMMARY: { label: 'Daily business report (21:00)', priority: 'INFO' },
   WEEKLY_REPORT: { label: 'Weekly business report (Monday 08:00, with PDF)', priority: 'INFO' },
   MONTHLY_REPORT: { label: 'Monthly business report (1st of month 08:00, with PDF)', priority: 'INFO' },
+  REP_ALERT: { label: "Sales rep alerts (to the rep's own WhatsApp)", priority: 'INFO' },
   TEST: { label: 'Test message', priority: 'INFO' },
 };
 

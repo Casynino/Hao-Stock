@@ -127,7 +127,17 @@ async function sendRaw(text, creds = null) {
     signal: AbortSignal.timeout(45000),
   });
   const body = await res.text().catch(() => '');
-  return { sent: res.ok, status: res.status, provider: body.slice(0, 160) };
+  // CallMeBot returns HTTP 200 even when it REFUSES to send (quota exhausted,
+  // bot paused). Trusting the status alone logged those as delivered — silently
+  // lying about messages the owner never received. Detect explicit refusals.
+  const refused = /message not sent|messages left|subscribe here/i.test(body);
+  const quotaExhausted = /messages left|subscribe here/i.test(body);
+  return {
+    sent: res.ok && !refused,
+    quotaExhausted,
+    status: res.status,
+    provider: body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200),
+  };
 }
 
 // CallMeBot's free tier delivers ~16 messages per 240 minutes immediately;
@@ -164,7 +174,11 @@ async function deliver(row) {
   const creds = row.toPhone && row.toApiKey ? { phone: row.toPhone, apikey: row.toApiKey } : null;
   const result = await sendRaw(row.text, creds).catch((e) => ({ sent: false, provider: e.message }));
   const attempts = row.attempts + 1;
-  const status = result.sent ? 'SENT' : attempts >= MAX_ATTEMPTS ? 'FAILED' : 'PENDING';
+  // A quota refusal will never succeed on retry — fail it immediately so the
+  // owner is told now instead of after five pointless attempts.
+  const status = result.sent ? 'SENT'
+    : result.quotaExhausted || attempts >= MAX_ATTEMPTS ? 'FAILED'
+    : 'PENDING';
   const updated = await prisma.whatsAppNotification.update({
     where: { id: row.id },
     data: {
@@ -179,8 +193,10 @@ async function deliver(row) {
     require('./notification.service').notifyAdmins({
       type: 'GENERAL',
       severity: 'CRITICAL',
-      title: 'WhatsApp notification failed',
-      message: `A ${row.type.replaceAll('_', ' ').toLowerCase()} message could not be delivered after ${attempts} attempts. Check Settings → WhatsApp notifications.`,
+      title: result.quotaExhausted ? 'WhatsApp quota exhausted — messages are NOT being delivered' : 'WhatsApp notification failed',
+      message: result.quotaExhausted
+        ? `WhatsApp alerts to ${row.toPhone || 'the owner number'} are no longer being delivered: the messaging provider reports the quota is used up. Every alert to that number will fail until it is renewed or the provider is changed.`
+        : `A ${row.type.replaceAll('_', ' ').toLowerCase()} message could not be delivered after ${attempts} attempts. Check Settings → WhatsApp notifications.`,
       entityType: 'WhatsAppNotification',
       entityId: row.id,
     }).catch(() => {});

@@ -632,12 +632,24 @@ async function summary() {
     }))
     .sort((a, b) => b.outstanding - a.outstanding);
 
+  // What is STILL OWED right now — order value minus everything settled and
+  // returned. This is the figure that must drop the moment a rep settles or
+  // returns, and rise when new stock is issued. (assignedValue is the gross
+  // value issued and never moves, so it is reported separately.)
+  const outstandingValue = round2(decorated.reduce((acc, s) => acc + s.balance, 0));
+  const issuedValue = round2(decorated.reduce((acc, s) => acc + toNumber(s.assignedValue), 0));
+  const settledValue = round2(decorated.reduce((acc, s) => acc + s.paid, 0));
+  const returnedValue = round2(decorated.reduce((acc, s) => acc + s.returned, 0));
+
   return {
     outstandingCount: decorated.length,
-    outstandingValue: round2(decorated.reduce((acc, s) => acc + toNumber(s.assignedValue), 0)),
+    outstandingValue,
+    issuedValue,
+    settledValue,
+    returnedValue,
     approachingCount: approaching.length,
     overdueCount: overdue.length,
-    overdueValue: round2(overdue.reduce((acc, s) => acc + toNumber(s.assignedValue), 0)),
+    overdueValue: round2(overdue.reduce((acc, s) => acc + s.balance, 0)),
     byRep,
     items: decorated.slice(0, 10).map((s) => ({
       id: s.id,

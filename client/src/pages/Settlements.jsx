@@ -227,34 +227,47 @@ function PendingApprovals({ onReview }) {
   );
 }
 
-// ── Compact per-rep strip: who is holding how much, at a glance ─────────────
-// Sits with the stat cards so the answer to "who owes me the most" is visible
-// without scrolling into the order list.
-function RepRollup({ rows }) {
+// ── One number: total money the reps still owe The Lab right now ────────────
+// issued − settled − returned. Rises when stock is issued, falls the moment a
+// settlement or return is approved.
+function OwedTotal({ summary }) {
   const navigate = useNavigate();
-  if (!rows?.length) return null;
+  if (!summary) return null;
+  const rows = summary.byRep || [];
   return (
-    <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-      {rows.map((r) => (
-        <button
-          key={r.salesRepId}
-          onClick={() => navigate(`/reps/${r.salesRepId}`)}
-          className="card-tile min-w-0 text-left transition hover:bg-elevated"
-        >
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-semibold text-foreground">{r.name}</span>
-            {r.overdueCount > 0 && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" title={`${r.overdueCount} overdue`} />}
+    <Card className="mb-6">
+      <div className="flex flex-wrap items-end justify-between gap-4 p-5">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-widest text-faint">Total owed by sales reps</div>
+          <div className="mt-1 text-3xl font-black tabular-nums text-rose-500 sm:text-4xl">
+            {formatCurrency(summary.outstandingValue)}
           </div>
-          <div className={clsx('mt-1 min-w-0 break-words text-lg font-black tabular-nums leading-snug',
-            r.overdueCount > 0 ? 'text-rose-500' : 'text-foreground')}>
-            {formatCurrency(r.outstanding)}
+          <div className="mt-1 text-xs text-faint">
+            {formatCurrency(summary.issuedValue)} issued
+            {summary.settledValue > 0 && <> · <span className="text-emerald-500">{formatCurrency(summary.settledValue)} settled</span></>}
+            {summary.returnedValue > 0 && <> · <span className="text-sky-400">{formatCurrency(summary.returnedValue)} returned</span></>}
+            {' '}· {summary.outstandingCount} active order{summary.outstandingCount !== 1 ? 's' : ''}
           </div>
-          <div className="mt-0.5 truncate text-[11px] text-faint">
-            {r.activeOrders} order{r.activeOrders !== 1 ? 's' : ''} · {hoursLabel(r.nearestHoursRemaining)}
+        </div>
+        {rows.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {rows.map((r) => (
+              <button
+                key={r.salesRepId}
+                onClick={() => navigate(`/reps/${r.salesRepId}`)}
+                title={`${r.activeOrders} order(s) · ${hoursLabel(r.nearestHoursRemaining)}`}
+                className={clsx(
+                  'rounded-lg px-2.5 py-1 text-xs transition hover:bg-surface',
+                  r.overdueCount > 0 ? 'bg-rose-500/10 text-rose-400' : 'bg-elevated text-muted',
+                )}
+              >
+                {r.name} <span className="font-bold tabular-nums text-foreground">{formatCurrency(r.outstanding)}</span>
+              </button>
+            ))}
           </div>
-        </button>
-      ))}
-    </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -279,14 +292,14 @@ function StaffSettlements({ viewing, setViewing }) {
       <PendingApprovals onReview={setViewing} />
       {summary && (
         <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
-          <StatCard label="Outstanding" value={summary.outstandingCount} icon={Timer} tone="brand" hint={formatCurrency(summary.outstandingValue)} />
+          <StatCard label="Outstanding" value={summary.outstandingCount} icon={Timer} tone="brand" hint={`${formatCurrency(summary.outstandingValue)} owed`} />
           <StatCard label="Approaching deadline" value={summary.approachingCount} icon={Clock} tone="amber" hint="within 12 hours" />
           <StatCard label="Overdue (>72h)" value={summary.overdueCount} icon={AlertTriangle} tone="rose" hint={formatCurrency(summary.overdueValue)} />
           <StatCard label="Total orders" value={data?.meta?.total ?? '—'} icon={CheckCircle2} tone="emerald" />
         </div>
       )}
 
-      <RepRollup rows={summary?.byRep} />
+      <OwedTotal summary={summary} />
 
       <Card>
         <div className="border-b border-border p-4">

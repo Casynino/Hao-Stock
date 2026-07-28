@@ -227,67 +227,34 @@ function PendingApprovals({ onReview }) {
   );
 }
 
-// ── Who is holding what: per-rep rollup across all active orders ────────────
-// Answers "which rep owes me the most right now" without reading every row.
+// ── Compact per-rep strip: who is holding how much, at a glance ─────────────
+// Sits with the stat cards so the answer to "who owes me the most" is visible
+// without scrolling into the order list.
 function RepRollup({ rows }) {
   const navigate = useNavigate();
   if (!rows?.length) return null;
-  const totals = rows.reduce((t, r) => ({
-    orders: t.orders + r.activeOrders,
-    value: t.value + r.orderValue,
-    settled: t.settled + r.settled,
-    outstanding: t.outstanding + r.outstanding,
-  }), { orders: 0, value: 0, settled: 0, outstanding: 0 });
-
   return (
-    <Card className="mb-6">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <Users className="h-4 w-4 text-brand-500" />
-        <h2 className="text-sm font-bold text-foreground">Outstanding by sales rep</h2>
-        <span className="ml-auto text-xs text-faint">Across all active orders</span>
-      </div>
-      <div className="overflow-x-auto">
-        <Table>
-          <THead>
-            <TR>
-              <TH>Rep</TH><TH>Orders</TH><TH>Order value</TH>
-              <TH>Settled</TH><TH>Outstanding</TH><TH>Next deadline</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {rows.map((r) => (
-              <TR key={r.salesRepId} className="cursor-pointer" onClick={() => navigate(`/reps/${r.salesRepId}`)}>
-                <TD>
-                  <span className="font-medium text-foreground">{r.name}</span>
-                  {r.code && <span className="ml-1.5 text-xs text-faint">{r.code}</span>}
-                  {r.overdueCount > 0 && (
-                    <Badge className="ml-2 bg-rose-100 text-rose-700">{r.overdueCount} overdue</Badge>
-                  )}
-                </TD>
-                <TD>{r.activeOrders}</TD>
-                <TD>{formatCurrency(r.orderValue)}</TD>
-                <TD className="text-emerald-500">{formatCurrency(r.settled)}</TD>
-                <TD className={r.outstanding > 0 ? 'font-semibold text-rose-500' : 'text-faint'}>{formatCurrency(r.outstanding)}</TD>
-                <TD>
-                  <div className="text-xs text-muted">{formatDateTime(r.nearestDeadlineAt)}</div>
-                  <div className={clsx('text-xs', r.nearestHoursRemaining < 0 ? 'text-rose-500' : r.approachingCount > 0 ? 'text-amber-500' : 'text-faint')}>
-                    {hoursLabel(r.nearestHoursRemaining)}
-                  </div>
-                </TD>
-              </TR>
-            ))}
-            <TR className="font-semibold">
-              <TD>Total</TD>
-              <TD>{totals.orders}</TD>
-              <TD>{formatCurrency(totals.value)}</TD>
-              <TD className="text-emerald-500">{formatCurrency(totals.settled)}</TD>
-              <TD className="text-rose-500">{formatCurrency(totals.outstanding)}</TD>
-              <TD />
-            </TR>
-          </TBody>
-        </Table>
-      </div>
-    </Card>
+    <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      {rows.map((r) => (
+        <button
+          key={r.salesRepId}
+          onClick={() => navigate(`/reps/${r.salesRepId}`)}
+          className="card-tile min-w-0 text-left transition hover:bg-elevated"
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-semibold text-foreground">{r.name}</span>
+            {r.overdueCount > 0 && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" title={`${r.overdueCount} overdue`} />}
+          </div>
+          <div className={clsx('mt-1 min-w-0 break-words text-lg font-black tabular-nums leading-snug',
+            r.overdueCount > 0 ? 'text-rose-500' : 'text-foreground')}>
+            {formatCurrency(r.outstanding)}
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-faint">
+            {r.activeOrders} order{r.activeOrders !== 1 ? 's' : ''} · {hoursLabel(r.nearestHoursRemaining)}
+          </div>
+        </button>
+      ))}
+    </div>
   );
 }
 

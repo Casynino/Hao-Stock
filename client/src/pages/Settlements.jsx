@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
   Timer, AlertTriangle, Clock, CheckCircle2, Eye,
-  ChevronRight, Wallet, TrendingDown, ShieldCheck, Users,
+  ChevronRight, Wallet, TrendingDown, ShieldCheck,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -227,50 +226,6 @@ function PendingApprovals({ onReview }) {
   );
 }
 
-// ── One number: total money the reps still owe The Lab right now ────────────
-// issued − settled − returned. Rises when stock is issued, falls the moment a
-// settlement or return is approved.
-function OwedTotal({ summary }) {
-  const navigate = useNavigate();
-  if (!summary) return null;
-  const rows = summary.byRep || [];
-  return (
-    <Card className="mb-6">
-      <div className="flex flex-wrap items-end justify-between gap-4 p-5">
-        <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-widest text-faint">Total owed by sales reps</div>
-          <div className="mt-1 text-3xl font-black tabular-nums text-rose-500 sm:text-4xl">
-            {formatCurrency(summary.outstandingValue)}
-          </div>
-          <div className="mt-1 text-xs text-faint">
-            {formatCurrency(summary.issuedValue)} issued
-            {summary.settledValue > 0 && <> · <span className="text-emerald-500">{formatCurrency(summary.settledValue)} settled</span></>}
-            {summary.returnedValue > 0 && <> · <span className="text-sky-400">{formatCurrency(summary.returnedValue)} returned</span></>}
-            {' '}· {summary.outstandingCount} active order{summary.outstandingCount !== 1 ? 's' : ''}
-          </div>
-        </div>
-        {rows.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {rows.map((r) => (
-              <button
-                key={r.salesRepId}
-                onClick={() => navigate(`/reps/${r.salesRepId}`)}
-                title={`${r.activeOrders} order(s) · ${hoursLabel(r.nearestHoursRemaining)}`}
-                className={clsx(
-                  'rounded-lg px-2.5 py-1 text-xs transition hover:bg-surface',
-                  r.overdueCount > 0 ? 'bg-rose-500/10 text-rose-400' : 'bg-elevated text-muted',
-                )}
-              >
-                {r.name} <span className="font-bold tabular-nums text-foreground">{formatCurrency(r.outstanding)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
 // ── Staff / admin view: full table ──────────────────────────────────────────
 
 function StaffSettlements({ viewing, setViewing }) {
@@ -292,14 +247,12 @@ function StaffSettlements({ viewing, setViewing }) {
       <PendingApprovals onReview={setViewing} />
       {summary && (
         <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
-          <StatCard label="Outstanding" value={summary.outstandingCount} icon={Timer} tone="brand" hint={`${formatCurrency(summary.outstandingValue)} owed`} />
+          <StatCard label="Outstanding" value={formatCurrency(summary.outstandingValue)} icon={Timer} tone="brand" hint={`${summary.outstandingCount} active order${summary.outstandingCount !== 1 ? 's' : ''}`} />
           <StatCard label="Approaching deadline" value={summary.approachingCount} icon={Clock} tone="amber" hint="within 12 hours" />
           <StatCard label="Overdue (>72h)" value={summary.overdueCount} icon={AlertTriangle} tone="rose" hint={formatCurrency(summary.overdueValue)} />
           <StatCard label="Total orders" value={data?.meta?.total ?? '—'} icon={CheckCircle2} tone="emerald" />
         </div>
       )}
-
-      <OwedTotal summary={summary} />
 
       <Card>
         <div className="border-b border-border p-4">

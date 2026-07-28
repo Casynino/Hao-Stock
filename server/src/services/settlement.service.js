@@ -583,12 +583,62 @@ async function summary() {
   const overdue = decorated.filter((s) => s.status === 'OVERDUE');
   const approaching = decorated.filter((s) => s.approaching);
 
+  // Per-rep rollup: who is holding how much, how much they have settled, what
+  // is still outstanding, and how close their nearest deadline is. Answers
+  // "which rep owes me the most right now" without reading every order.
+  const byRepMap = new Map();
+  for (const s of decorated) {
+    const id = s.salesRepId;
+    const row = byRepMap.get(id) || {
+      salesRepId: id,
+      name: s.salesRep?.user?.name || 'Rep',
+      code: s.salesRep?.code || null,
+      activeOrders: 0,
+      orderValue: 0,
+      settled: 0,
+      returned: 0,
+      outstanding: 0,
+      overdueCount: 0,
+      overdueValue: 0,
+      approachingCount: 0,
+      nearestDeadlineAt: null,
+      nearestHoursRemaining: null,
+    };
+    row.activeOrders += 1;
+    row.orderValue += toNumber(s.assignedValue);
+    row.settled += s.paid;
+    row.returned += s.returned;
+    row.outstanding += s.balance;
+    if (s.status === 'OVERDUE') {
+      row.overdueCount += 1;
+      row.overdueValue += s.balance;
+    }
+    if (s.approaching) row.approachingCount += 1;
+    // decorated is ordered by deadline ascending, so the first wins.
+    if (row.nearestDeadlineAt === null) {
+      row.nearestDeadlineAt = s.deadlineAt;
+      row.nearestHoursRemaining = s.hoursRemaining;
+    }
+    byRepMap.set(id, row);
+  }
+  const byRep = [...byRepMap.values()]
+    .map((r) => ({
+      ...r,
+      orderValue: round2(r.orderValue),
+      settled: round2(r.settled),
+      returned: round2(r.returned),
+      outstanding: round2(r.outstanding),
+      overdueValue: round2(r.overdueValue),
+    }))
+    .sort((a, b) => b.outstanding - a.outstanding);
+
   return {
     outstandingCount: decorated.length,
     outstandingValue: round2(decorated.reduce((acc, s) => acc + toNumber(s.assignedValue), 0)),
     approachingCount: approaching.length,
     overdueCount: overdue.length,
     overdueValue: round2(overdue.reduce((acc, s) => acc + toNumber(s.assignedValue), 0)),
+    byRep,
     items: decorated.slice(0, 10).map((s) => ({
       id: s.id,
       settlementNumber: s.settlementNumber,

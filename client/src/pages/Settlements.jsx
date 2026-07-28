@@ -1,11 +1,12 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
   Timer, AlertTriangle, Clock, CheckCircle2, Eye,
-  ChevronRight, Wallet, TrendingDown, ShieldCheck,
+  ChevronRight, Wallet, TrendingDown, ShieldCheck, Users,
 } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -226,6 +227,70 @@ function PendingApprovals({ onReview }) {
   );
 }
 
+// ── Who is holding what: per-rep rollup across all active orders ────────────
+// Answers "which rep owes me the most right now" without reading every row.
+function RepRollup({ rows }) {
+  const navigate = useNavigate();
+  if (!rows?.length) return null;
+  const totals = rows.reduce((t, r) => ({
+    orders: t.orders + r.activeOrders,
+    value: t.value + r.orderValue,
+    settled: t.settled + r.settled,
+    outstanding: t.outstanding + r.outstanding,
+  }), { orders: 0, value: 0, settled: 0, outstanding: 0 });
+
+  return (
+    <Card className="mb-6">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <Users className="h-4 w-4 text-brand-500" />
+        <h2 className="text-sm font-bold text-foreground">Outstanding by sales rep</h2>
+        <span className="ml-auto text-xs text-faint">Across all active orders</span>
+      </div>
+      <div className="overflow-x-auto">
+        <Table>
+          <THead>
+            <TR>
+              <TH>Rep</TH><TH>Orders</TH><TH>Order value</TH>
+              <TH>Settled</TH><TH>Outstanding</TH><TH>Next deadline</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {rows.map((r) => (
+              <TR key={r.salesRepId} className="cursor-pointer" onClick={() => navigate(`/reps/${r.salesRepId}`)}>
+                <TD>
+                  <span className="font-medium text-foreground">{r.name}</span>
+                  {r.code && <span className="ml-1.5 text-xs text-faint">{r.code}</span>}
+                  {r.overdueCount > 0 && (
+                    <Badge className="ml-2 bg-rose-100 text-rose-700">{r.overdueCount} overdue</Badge>
+                  )}
+                </TD>
+                <TD>{r.activeOrders}</TD>
+                <TD>{formatCurrency(r.orderValue)}</TD>
+                <TD className="text-emerald-500">{formatCurrency(r.settled)}</TD>
+                <TD className={r.outstanding > 0 ? 'font-semibold text-rose-500' : 'text-faint'}>{formatCurrency(r.outstanding)}</TD>
+                <TD>
+                  <div className="text-xs text-muted">{formatDateTime(r.nearestDeadlineAt)}</div>
+                  <div className={clsx('text-xs', r.nearestHoursRemaining < 0 ? 'text-rose-500' : r.approachingCount > 0 ? 'text-amber-500' : 'text-faint')}>
+                    {hoursLabel(r.nearestHoursRemaining)}
+                  </div>
+                </TD>
+              </TR>
+            ))}
+            <TR className="font-semibold">
+              <TD>Total</TD>
+              <TD>{totals.orders}</TD>
+              <TD>{formatCurrency(totals.value)}</TD>
+              <TD className="text-emerald-500">{formatCurrency(totals.settled)}</TD>
+              <TD className="text-rose-500">{formatCurrency(totals.outstanding)}</TD>
+              <TD />
+            </TR>
+          </TBody>
+        </Table>
+      </div>
+    </Card>
+  );
+}
+
 // ── Staff / admin view: full table ──────────────────────────────────────────
 
 function StaffSettlements({ viewing, setViewing }) {
@@ -253,6 +318,8 @@ function StaffSettlements({ viewing, setViewing }) {
           <StatCard label="Total orders" value={data?.meta?.total ?? '—'} icon={CheckCircle2} tone="emerald" />
         </div>
       )}
+
+      <RepRollup rows={summary?.byRep} />
 
       <Card>
         <div className="border-b border-border p-4">

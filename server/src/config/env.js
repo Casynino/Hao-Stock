@@ -65,8 +65,11 @@ const env = {
 
   seed: {
     adminName: optional('SEED_ADMIN_NAME', 'System Administrator'),
-    adminEmail: optional('SEED_ADMIN_EMAIL', 'admin@haostock.co.tz'),
-    adminPassword: optional('SEED_ADMIN_PASSWORD', 'Admin@12345'),
+    adminEmail: optional('SEED_ADMIN_EMAIL', 'admin@example.com'),
+    // NO DEFAULT on purpose: a published fallback password would let anyone
+    // who reads this repo sign in to any deployment seeded without the var.
+    // The seed script must refuse to run rather than use a known value.
+    adminPassword: optional('SEED_ADMIN_PASSWORD', null),
   },
 };
 

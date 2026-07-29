@@ -79,6 +79,11 @@ async function main() {
   });
 
   // Admin (owner) — the only user; create reps later from the Users page.
+  // Refuse to seed with a guessable/absent password. A published default would
+  // hand admin access to anyone who reads this repo.
+  if (!env.seed.adminPassword || String(env.seed.adminPassword).length < 8) {
+    throw new Error('SEED_ADMIN_PASSWORD is required (min 8 chars). Set it before seeding — there is no default.');
+  }
   const passwordHash = await bcrypt.hash(env.seed.adminPassword, env.bcryptSaltRounds);
   const admin = await prisma.user.upsert({
     where: { email: env.seed.adminEmail.toLowerCase() },
@@ -184,7 +189,7 @@ async function main() {
   }
 
   console.log('\n✅ Seed complete. System ready for live usage.');
-  console.log(`\nLog in as admin:  ${env.seed.adminEmail}  /  ${env.seed.adminPassword}`);
+  console.log(`\nLog in as admin:  ${env.seed.adminEmail}  /  (the SEED_ADMIN_PASSWORD you set)`);
 }
 
 main()

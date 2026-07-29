@@ -170,12 +170,18 @@ in development.
 
 ## Seed accounts
 
-| Role            | Email                         | Password       |
-| --------------- | ----------------------------- | -------------- |
-| Administrator   | `admin@haostock.co.tz`        | `Admin@12345`  |
-| Warehouse Staff | `warehouse@haostock.co.tz`    | `Warehouse@123`|
-| Sales Rep       | `juma@haostock.co.tz`         | `SalesRep@123` |
-| Sales Rep       | `asha@haostock.co.tz`         | `SalesRep@123` |
+The seed creates one administrator plus demo warehouse/sales-rep accounts.
+
+**Credentials are never published here.** Set them yourself before seeding:
+
+```bash
+SEED_ADMIN_EMAIL="you@example.com"
+SEED_ADMIN_PASSWORD="<a strong password you choose>"
+```
+
+If `SEED_ADMIN_PASSWORD` is not set, seeding fails rather than falling back to a
+known default. Change every seeded password immediately after the first login,
+and never run the seed against a production database.
 
 The seed also creates the CIVILLY and OHIS rolling-paper catalog (with Pack/Box/Carton
 packaging), opening warehouse stock, a van load for a rep, and sample cash & credit sales.

@@ -27,7 +27,7 @@ Base URL: `/api` (e.g. `http://localhost:4000/api`).
 
 ```jsonc
 // POST /auth/login
-{ "email": "admin@haostock.co.tz", "password": "Admin@12345" }
+{ "email": "you@example.com", "password": "<your password>" }
 ```
 
 ## Users & roles (Admin)

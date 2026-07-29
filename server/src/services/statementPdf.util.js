@@ -37,7 +37,7 @@ function createStatement({ title, periodLabel, generatedAt }) {
   doc.font('Helvetica').fontSize(10).fillColor('#a3e635').text(title, left, 52);
   doc.fillColor('#cbd5e1').fontSize(9).text(`Period: ${periodLabel}`, left, 66);
   doc.text(`Generated: ${generatedAt}`, right - 220, 26, { width: 220, align: 'right' });
-  doc.text('hao-stock.vercel.app', right - 220, 40, { width: 220, align: 'right' });
+  doc.text(require('../config/env').appUrl.replace(/^https?:\/\//, ''), right - 220, 40, { width: 220, align: 'right' });
   doc.y = 112;
 
   // Start a new page when fewer than `needed` points remain.

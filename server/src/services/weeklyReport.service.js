@@ -20,7 +20,7 @@ const reorder = require('./reorder.service');
 const settlement = require('./settlement.service');
 const { dayjs } = require('../utils/dates');
 
-const APP_URL = process.env.PUBLIC_APP_URL || 'https://hao-stock.vercel.app';
+const APP_URL = env.appUrl;
 const fmt = (n) => `TSh ${Math.round(Number(n) || 0).toLocaleString('en-US')}`;
 
 async function getSetting(key) {

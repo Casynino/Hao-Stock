@@ -10,7 +10,7 @@ const prisma = require('../config/prisma');
 const env = require('../config/env');
 const ApiError = require('../utils/ApiError');
 
-const APP_URL = process.env.PUBLIC_APP_URL || 'https://hao-stock.vercel.app';
+const APP_URL = env.appUrl;
 
 function signReport(id) {
   return crypto.createHmac('sha256', env.jwt.secret).update(`report:${id}`).digest('hex').slice(0, 32);

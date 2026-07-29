@@ -56,6 +56,12 @@ const env = {
 
   logLevel: optional('LOG_LEVEL', 'info'),
 
+  // The public origin this deployment is reached at. Used to build the signed
+  // links in WhatsApp reports and the footer of generated PDFs. Set
+  // PUBLIC_APP_URL in the host's env vars; renaming the deployment then needs
+  // no code change. Trailing slashes are stripped so links never double up.
+  appUrl: String(optional('PUBLIC_APP_URL', 'https://the-lab.vercel.app')).replace(/\/+$/, ''),
+
   business: {
     currency: optional('CURRENCY', 'TZS'),
     locale: optional('LOCALE', 'en-TZ'),

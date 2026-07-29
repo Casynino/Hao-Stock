@@ -1,4 +1,4 @@
-# Hao Stock — full local stack: Postgres + API + web.
+# The Lab — full local stack: Postgres + API + web.
 # Usage:
 #   docker compose up --build
 # Then open http://localhost:8080 and log in with the admin account you seeded

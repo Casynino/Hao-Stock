@@ -1,9 +1,9 @@
 {
-  "name": "hao-stock-client",
+  "name": "the-lab-client",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Hao Stock — Wholesale Distribution ERP (frontend)",
+  "description": "The Lab — Distribution ERP (frontend)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

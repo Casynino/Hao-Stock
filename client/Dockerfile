@@ -1,4 +1,4 @@
-# Hao Stock — frontend image (build with Vite, serve with Nginx)
+# The Lab — frontend image (build with Vite, serve with Nginx)
 FROM node:20-alpine AS build
 
 WORKDIR /app

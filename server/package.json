@@ -1,8 +1,8 @@
 {
-  "name": "hao-stock-server",
+  "name": "the-lab-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Hao Stock — Ledger-based Wholesale Distribution ERP (backend API)",
+  "description": "The Lab — Ledger-based Distribution ERP (backend API)",
   "license": "UNLICENSED",
   "type": "commonjs",
   "main": "src/server.js",

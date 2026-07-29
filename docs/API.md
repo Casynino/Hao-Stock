@@ -1,4 +1,4 @@
-# Hao Stock API Reference
+# The Lab — API Reference
 
 Base URL: `/api` (e.g. `http://localhost:4000/api`).
 

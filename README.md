@@ -78,7 +78,11 @@ Rep requests stock  →  Admin approves  →  stock issued, 72-hour order opens
 - Stock requests with an approval centre; approval issues stock and opens the 72h order.
 - Box-by-box settlement (issued / settled / returned / remaining) with an approval gate.
 - Returns with a full lifecycle: lock → 24h window → approve, reject, cancel or expire.
-- Commission per settled box, with withdrawal requests and approvals.
+- Commission per settled box at per-brand rates — from 1 Aug 2026, OHIS TSh 5,000
+  and Civlily TSh 3,000. The rate is frozen on the order when it is created, so
+  changing the rules never re-prices orders that already exist.
+- Withdrawals once a rep's balance reaches TSh 250,000 — a money target, not a
+  box count, since boxes of different brands are no longer worth the same.
 - Automatic late-settlement penalties, forgivable, plus manual commission adjustments.
 - Deadline extensions that re-arm reminders and notify the rep.
 

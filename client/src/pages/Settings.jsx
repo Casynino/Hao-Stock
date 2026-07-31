@@ -10,7 +10,7 @@ const PRIORITY_ICON = { INFO: '🟢', ACTION: '🟡', WARNING: '🟠', CRITICAL:
 
 // Settings the WhatsApp panel manages itself — hidden from the raw list below.
 const MANAGED_PREFIXES = ['whatsapp.notify.', 'whatsapp.quiet'];
-const MANAGED_KEYS = ['whatsapp.lastWeeklySent'];
+const MANAGED_KEYS = ['whatsapp.lastWeeklySent', 'commission.boxThreshold'];
 
 function useSettingSave() {
   const qc = useQueryClient();

@@ -152,11 +152,27 @@ async function main() {
     { key: 'commission.boxThreshold', value: '50', type: 'NUMBER', group: 'commission', description: 'Legacy. Superseded by commission.v1PerBox and no longer read.' },
     { key: 'settlement.windowHours', value: '72', type: 'NUMBER', group: 'settlement' },
   ];
+  // Values the API refuses to change, so re-seeding must not change them either.
+  // A deployment whose withdrawal minimum was never 250,000 has a frozen V1 rate
+  // that is not 5,000 (300,000 / 50 = 6,000), and overwriting it here would
+  // re-price every box settled on every pre-August order.
+  const FROZEN = new Set(['commission.v1PerBox', 'commission.boxThreshold']);
   for (const s of settingDefs) {
     await prisma.setting.upsert({
       where: { key: s.key },
-      update: { value: s.value },
-      create: { key: s.key, value: s.value, type: s.type || 'STRING', group: s.group, updatedById: admin.id },
+      // Descriptions are what stop the next person reading a bare "50" in the
+      // Settings screen as a target, so they are refreshed even when frozen.
+      update: FROZEN.has(s.key)
+        ? { description: s.description ?? undefined }
+        : { value: s.value, description: s.description ?? undefined },
+      create: {
+        key: s.key,
+        value: s.value,
+        type: s.type || 'STRING',
+        group: s.group,
+        description: s.description || null,
+        updatedById: admin.id,
+      },
     });
   }
   console.log('✔ settings (commission: OHIS 5,000 / Civlily 3,000 per box from 1 Aug 2026; withdraw at 250,000)');

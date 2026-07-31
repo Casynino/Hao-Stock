@@ -474,7 +474,9 @@ async function cancelReturn(id, actor, { asRep = false } = {}) {
 // charged a TSh 15,000 delay fine (the return "pause" is not a parking lot).
 // Idempotent and safe to run from cron + polling piggybacks.
 const RETURN_WINDOW_HOURS = 24;
-const RETURN_EXPIRY_PENALTY = 15000;
+// The failed-return fine depends on the order's programme: an extended order
+// carries a steeper price (penalty.service owns both rates).
+const returnFineFor = (stl) => require('./penalty.service').returnFailureRateFor(stl);
 
 async function expireStaleReturns() {
   const cutoff = new Date(Date.now() - RETURN_WINDOW_HOURS * 3600 * 1000);
@@ -485,6 +487,7 @@ async function expireStaleReturns() {
 
   let expired = 0;
   for (const ret of stale) {
+    let fineApplied = 0;
     await prisma.$transaction(async (tx) => {
       await tx.return.update({
         where: { id: ret.id },
@@ -496,7 +499,7 @@ async function expireStaleReturns() {
       });
 
       if (ret.settlementId) {
-        const stl = await tx.settlement.findUnique({ where: { id: ret.settlementId }, select: { status: true, deadlineAt: true, settlementNumber: true } });
+        const stl = await tx.settlement.findUnique({ where: { id: ret.settlementId }, select: { status: true, deadlineAt: true, settlementNumber: true, selfExtendedAt: true } });
         if (stl && stl.status !== 'SETTLED') {
           // The paused window is given back so daily late-fines never
           // double-charge those hours — the expiry fine below covers them.
@@ -507,14 +510,17 @@ async function expireStaleReturns() {
           });
 
           if (ret.type === 'SALES_RETURN' && ret.salesRepId) {
+            fineApplied = returnFineFor(stl);
             await tx.settlementPenalty.create({
               data: {
                 salesRepId: ret.salesRepId,
                 settlementId: ret.settlementId,
                 kind: 'EXPIRY_FINE',
-                amount: RETURN_EXPIRY_PENALTY,
+                amount: fineApplied,
                 daysOverdue: 0, // expiry fine, not a daily late-fine
-                notes: `Return ${ret.returnNumber} not completed within ${RETURN_WINDOW_HOURS} hours — delay fine.`,
+                notes: stl.selfExtendedAt
+                  ? `Extended period return failure — return ${ret.returnNumber} not completed within ${RETURN_WINDOW_HOURS} hours.`
+                  : `Return ${ret.returnNumber} not completed within ${RETURN_WINDOW_HOURS} hours — delay fine.`,
               },
             });
           }
@@ -528,8 +534,8 @@ async function expireStaleReturns() {
       notification.notifyUser(repUserId, {
         type: 'GENERAL',
         severity: 'CRITICAL',
-        title: `Return ${ret.returnNumber} expired — TSh ${RETURN_EXPIRY_PENALTY.toLocaleString('en-US')} fine`,
-        message: `Your return was not completed within ${RETURN_WINDOW_HOURS} hours, so it was cancelled automatically and a TSh ${RETURN_EXPIRY_PENALTY.toLocaleString('en-US')} delay fine was applied. The boxes are back on your order — settle them or submit a new return.`,
+        title: `Return ${ret.returnNumber} expired — TSh ${fineApplied.toLocaleString('en-US')} fine`,
+        message: `Your return was not completed within ${RETURN_WINDOW_HOURS} hours, so it was cancelled automatically and a TSh ${fineApplied.toLocaleString('en-US')} delay fine was applied. The boxes are back on your order — settle them or submit a new return.`,
         entityType: 'Return',
         entityId: ret.id,
       }).catch(() => {});

@@ -12,6 +12,11 @@ const { dayjs } = require('../utils/dates');
 
 const SETTLEMENT_WINDOW_HOURS = 72;
 const APPROACHING_HOURS = 12; // flag as "approaching" within this many hours of deadline
+// Rep self-extension: +96h added ON TOP of the original 72h window (so the
+// total becomes 168h / 7 days). Activated by the rep, no approval needed, but
+// it raises the penalties — see penalty.service (daily fine) and
+// returns.service (failed-return fine).
+const SELF_EXTENSION_HOURS = 96;
 
 const INCLUDE = {
   salesRep: { include: { user: { select: { id: true, name: true } } } },
@@ -36,6 +41,13 @@ function decorate(s) {
   // Outstanding = order value minus what's been settled AND returned. Returns
   // discharge the rep's liability just like settlement does.
   const balance = round2(Math.max(0, toNumber(s.assignedValue) - paid - returned));
+  // Extension state, so every screen shows the same story: which programme the
+  // order is on, and what a late day now costs.
+  const penalty = require('./penalty.service');
+  const extensionUsed = Boolean(s.selfExtendedAt);
+  const extensionStatus = !extensionUsed
+    ? (settled ? 'NOT_USED' : 'AVAILABLE')
+    : status === 'OVERDUE' ? 'EXPIRED' : 'ACTIVE';
   return {
     ...s,
     status,
@@ -44,6 +56,15 @@ function decorate(s) {
     paid,
     returned,
     balance,
+    extensionUsed,
+    extensionStatus,          // AVAILABLE | ACTIVE | EXPIRED | NOT_USED (closed order)
+    extensionHours: SELF_EXTENSION_HOURS,
+    // Can the rep still take it? Only once, only on a live order, and only
+    // before the deadline passes — an extension is extra time, not an escape
+    // from fines already running.
+    canSelfExtend: !settled && !extensionUsed && status !== 'OVERDUE',
+    penaltyPerDay: penalty.dailyRateFor(s),
+    returnFailurePenalty: penalty.returnFailureRateFor(s),
   };
 }
 
@@ -664,6 +685,68 @@ async function summary() {
   };
 }
 
+// ── Rep self-extension ───────────────────────────────────────────────────────
+// The rep grants themselves +96h ON TOP of the original 72h window (the extra
+// time starts when the original deadline would have expired, so the total is
+// 168h). No approval needed — but the order moves onto the Extended Settlement
+// Programme, where the daily late fine doubles and a failed return costs more.
+// Once only, and only while the order is still live and not yet overdue.
+async function selfExtend(id, actor) {
+  const s = await prisma.settlement.findUnique({ where: { id }, include: INCLUDE });
+  if (!s) throw ApiError.notFound('Order not found');
+
+  // Reps may only extend their own order.
+  if (actor?.salesRepId && s.salesRepId !== actor.salesRepId) {
+    throw ApiError.forbidden('This order is not yours');
+  }
+  const dec = decorate(s);
+  if (dec.status === 'SETTLED') throw ApiError.badRequest('This order is already closed');
+  if (s.selfExtendedAt) throw ApiError.badRequest('This order has already been extended — the extension can only be used once');
+  if (dec.status === 'OVERDUE') {
+    throw ApiError.badRequest('This order is already overdue. The extension must be activated before the deadline passes.');
+  }
+
+  const previous = new Date(s.deadlineAt);
+  const newDeadline = dayjs(previous).add(SELF_EXTENSION_HOURS, 'hour').toDate();
+
+  const updated = await prisma.settlement.update({
+    where: { id },
+    data: {
+      deadlineAt: newDeadline,
+      preExtensionDeadline: previous,
+      selfExtendedAt: new Date(),
+      selfExtendedById: actor ? actor.id : null,
+      // Re-arm the 24h/6h/1h reminders against the new deadline.
+      reminderStage: 0,
+    },
+    include: INCLUDE,
+  });
+
+  const penalty = require('./penalty.service');
+  const when = dayjs(newDeadline).utc().add(3, 'hour').format('D MMM YYYY, HH:mm');
+  const repUserId = updated.salesRep?.user?.id;
+  if (repUserId) {
+    notification.notifyUser(repUserId, {
+      type: 'GENERAL',
+      severity: 'WARNING',
+      title: `Order ${updated.settlementNumber} extended to ${when}`,
+      message: `You activated the ${SELF_EXTENSION_HOURS}-hour extension on order ${updated.settlementNumber}. New deadline: ${when} (EAT). No fine until then — but after it, the late fine is ${formatCurrency(penalty.EXTENDED_PENALTY_PER_DAY)} per day, and a return not completed within 24 hours costs ${formatCurrency(penalty.EXTENDED_RETURN_FAILURE_PENALTY)}.`,
+      entityType: 'Settlement',
+      entityId: updated.id,
+    }).catch(() => {});
+  }
+  notification.notifyAdmins({
+    type: 'GENERAL',
+    severity: 'INFO',
+    title: 'Settlement extension activated',
+    message: `${updated.salesRep?.user?.name || 'A rep'} self-extended order ${updated.settlementNumber} by ${SELF_EXTENSION_HOURS}h. New deadline ${when} (EAT); late fine now ${formatCurrency(penalty.EXTENDED_PENALTY_PER_DAY)}/day.`,
+    entityType: 'Settlement',
+    entityId: updated.id,
+  }).catch(() => {});
+
+  return decorate(updated);
+}
+
 // Extend (or set) the deadline for an open order. Admins use this when a rep
 // needs more time. If the order is OVERDUE it reverts to OPEN/PARTIAL once
 // the new deadline is in the future.
@@ -723,6 +806,8 @@ module.exports = {
   get,
   orderBreakdown,
   productOutstanding,
+  selfExtend,
+  SELF_EXTENSION_HOURS,
   settle,
   settleBoxesTx,
   addStockToRep,

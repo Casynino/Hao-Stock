@@ -1137,6 +1137,13 @@ model Settlement {
   reminderStage Int     @default(0) // deadline reminders sent: 0=none,1=24h,2=6h,3=1h
   notes         String?
 
+  // Rep-activated self-extension: +96h added AFTER the original 72h window, so
+  // the total becomes 168h. No approval needed, but it raises the stakes —
+  // the daily late fine doubles and a failed return costs more. Null = unused.
+  selfExtendedAt        DateTime?
+  selfExtendedById      String?
+  preExtensionDeadline  DateTime? // the deadline before the extension (audit)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

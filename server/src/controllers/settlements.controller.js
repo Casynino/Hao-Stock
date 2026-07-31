@@ -82,6 +82,25 @@ const rejectSubmission = asyncHandler(async (req, res) => {
   return ok(res, result);
 });
 
+// POST /settlements/:id/self-extend — the rep grants themselves +96h.
+const selfExtend = asyncHandler(async (req, res) => {
+  const dec = await settlement.selfExtend(req.params.id, req.user);
+  await audit.record(req, {
+    action: 'UPDATE',
+    entityType: 'Settlement',
+    entityId: dec.id,
+    newValues: {
+      kind: 'SELF_EXTENSION',
+      settlementNumber: dec.settlementNumber,
+      previousDeadline: dec.preExtensionDeadline,
+      newDeadline: dec.deadlineAt,
+      hoursAdded: settlement.SELF_EXTENSION_HOURS,
+      penaltyPerDay: dec.penaltyPerDay,
+    },
+  });
+  return ok(res, dec);
+});
+
 const refreshOverdue = asyncHandler(async (_req, res) => ok(res, await settlement.refreshOverdue()));
 
 const extendDeadline = asyncHandler(async (req, res) => {
@@ -96,6 +115,6 @@ const extendDeadline = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  list, summary, get, settle, refreshOverdue, extendDeadline,
+  list, summary, get, settle, refreshOverdue, extendDeadline, selfExtend,
   submitSettlement, pendingApprovals, approveSubmission, rejectSubmission, paymentAccounts,
 };

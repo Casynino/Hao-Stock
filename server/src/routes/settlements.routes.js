@@ -25,6 +25,8 @@ router.get('/:id', validate(idParam), ctrl.get);
 router.post('/:id/settle-boxes', settlers, validate({ ...idParam, ...settlementSettleBoxes }), ctrl.submitSettlement);
 router.post('/:id/settle', staff, validate({ ...idParam, ...settlementSettle }), ctrl.settle);
 router.post('/:id/extend-deadline', staff, validate(idParam), ctrl.extendDeadline);
+// The rep activates their own +96h extension (no approval); staff may too.
+router.post('/:id/self-extend', settlers, validate(idParam), ctrl.selfExtend);
 router.post('/refresh-overdue', requireAdmin, ctrl.refreshOverdue);
 
 module.exports = router;

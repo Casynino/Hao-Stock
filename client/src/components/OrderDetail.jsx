@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Wallet, Undo2, CheckCircle2, Clock } from 'lucide-react';
+import { Wallet, Undo2, CheckCircle2, Clock, CalendarPlus, ShieldAlert } from 'lucide-react';
 import api, { unwrap, apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useProducts, useWarehouses } from '@/lib/hooks';
@@ -197,6 +197,56 @@ function RecordReturnModal({ order, onClose, onDone }) {
 }
 
 // --- Extend deadline (staff / admin only) -----------------------------------
+// The rep grants themselves +96h. Deliberately spells out the trade-off before
+// they commit — more time, but a doubled late fine and a costlier failed return.
+function SelfExtendModal({ order, onClose, onDone }) {
+  const [confirmed, setConfirmed] = useState(false);
+  const extend = useMutation({
+    mutationFn: () => api.post(`/settlements/${order.id}/self-extend`),
+    onSuccess: () => { toast.success('Extension activated — you have 96 more hours'); onDone(); onClose(); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  const newDeadline = new Date(new Date(order.deadlineAt).getTime() + (order.extensionHours || 96) * 3600000);
+
+  return (
+    <Modal open onClose={onClose} title="Extend settlement time" footer={
+      <>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button loading={extend.isPending} disabled={!confirmed} onClick={() => extend.mutate()}>
+          <CalendarPlus className="h-4 w-4" /> Activate extension
+        </Button>
+      </>
+    }>
+      <div className="space-y-4 text-sm">
+        <div className="rounded-xl border border-border bg-elevated p-3">
+          <div className="flex justify-between"><span className="text-muted">Current deadline</span><span className="font-medium">{formatDateTime(order.deadlineAt)}</span></div>
+          <div className="mt-1 flex justify-between"><span className="text-muted">Extra time</span><span className="font-medium text-brand-400">+{order.extensionHours || 96} hours</span></div>
+          <div className="mt-1 flex justify-between border-t border-border pt-1 font-semibold">
+            <span>New deadline</span><span>{formatDateTime(newDeadline)}</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-amber-300">
+          <div className="mb-1.5 flex items-center gap-2 font-semibold text-amber-400">
+            <ShieldAlert className="h-4 w-4" /> What changes if you take it
+          </div>
+          <ul className="list-disc space-y-1 pl-4 text-xs">
+            <li>No fine at all until the new deadline.</li>
+            <li>After it, the late fine becomes <b>{formatCurrency(20000)} per day</b> (normally {formatCurrency(10000)}).</li>
+            <li>A return still has to be approved within <b>24 hours</b>; if it isn't, the fine is <b>{formatCurrency(30000)}</b> (normally {formatCurrency(15000)}).</li>
+            <li>This can only be used <b>once</b> on this order, and can't be undone.</li>
+          </ul>
+        </div>
+
+        <label className="flex cursor-pointer items-start gap-2">
+          <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5" />
+          <span className="text-muted">I understand the higher penalties and want the extra time.</span>
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
 function ExtendDeadlineModal({ order, onClose, onDone }) {
   const [mode, setMode] = useState('quick'); // 'quick' | 'custom'
   const [hours, setHours] = useState(24);
@@ -376,6 +426,11 @@ export default function OrderDetailModal({ settlementId, onClose }) {
           <>
             <Button variant="secondary" onClick={onClose}>Close</Button>
             {staff && active && <Button variant="ghost" onClick={() => setSub('extend')}><Clock className="h-4 w-4" /> Extend deadline</Button>}
+            {canAct && active && order.canSelfExtend && (
+              <Button variant="secondary" onClick={() => setSub('self-extend')}>
+                <CalendarPlus className="h-4 w-4" /> Extend settlement time
+              </Button>
+            )}
             {canAct && active && remaining > 0 && <Button variant="secondary" onClick={() => setSub('return')}><Undo2 className="h-4 w-4" /> Return</Button>}
             {canAct && active && remaining > 0 && <Button onClick={() => setSub('settle')}><Wallet className="h-4 w-4" /> Submit settlement</Button>}
             {staff && active && (remaining <= 0
@@ -395,6 +450,42 @@ export default function OrderDetailModal({ settlementId, onClose }) {
               )}
               <div><div className="text-xs text-faint">Issued</div><div className="font-medium">{formatDateTime(order.issuedAt)}</div></div>
             </div>
+
+            {/* Extension status + the penalty rule currently in force */}
+            {active && (
+              <div className={`rounded-xl border px-3 py-2.5 text-sm ${
+                order.extensionStatus === 'ACTIVE' ? 'border-brand-500/30 bg-brand-500/10'
+                : order.extensionStatus === 'EXPIRED' ? 'border-rose-500/30 bg-rose-500/10'
+                : 'border-border bg-elevated'}`}>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <span className="text-xs uppercase tracking-wide text-faint">Extension</span>
+                  <Badge className={
+                    order.extensionStatus === 'ACTIVE' ? 'bg-brand-500/20 text-brand-400'
+                    : order.extensionStatus === 'EXPIRED' ? 'bg-rose-100 text-rose-700'
+                    : 'bg-elevated text-muted'}>
+                    {order.extensionStatus === 'ACTIVE' ? 'Extension active'
+                      : order.extensionStatus === 'EXPIRED' ? 'Extension expired'
+                      : 'Not used'}
+                  </Badge>
+                  {order.hoursRemaining != null && (
+                    <span className={order.hoursRemaining < 0 ? 'text-rose-400' : 'text-muted'}>
+                      {order.hoursRemaining < 0
+                        ? `${Math.abs(Math.round(order.hoursRemaining))}h overdue`
+                        : `${Math.round(order.hoursRemaining)}h remaining`}
+                    </span>
+                  )}
+                  <span className="ml-auto text-xs text-faint">
+                    Late penalty: <b className={order.extensionUsed ? 'text-rose-400' : 'text-muted'}>{formatCurrency(order.penaltyPerDay)}/day</b>
+                  </span>
+                </div>
+                {order.extensionUsed && order.preExtensionDeadline && (
+                  <div className="mt-1 text-xs text-faint">
+                    Original deadline was {formatDateTime(order.preExtensionDeadline)} · extended by {order.extensionHours}h
+                    {order.selfExtendedAt ? ` on ${formatDateTime(order.selfExtendedAt)}` : ''}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Pending-return warning */}
             {order.pendingReturns > 0 && (
@@ -514,6 +605,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
       {order && sub === 'settle' && <SettleBoxesModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'return' && <RecordReturnModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {order && sub === 'extend' && <ExtendDeadlineModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
+      {order && sub === 'self-extend' && <SelfExtendModal order={order} onClose={() => setSub(null)} onDone={refresh} />}
       {rejectingReturn && <RejectReturnModal ret={rejectingReturn} onClose={() => setRejectingReturn(null)} onDone={refresh} />}
       {rejectingSubmission && <RejectSubmissionModal submission={rejectingSubmission} onClose={() => setRejectingSubmission(null)} onDone={refresh} />}
     </>

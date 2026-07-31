@@ -20,7 +20,17 @@ const prisma = require('../config/prisma');
 const notification = require('./notification.service');
 const { round2, toNumber, formatCurrency } = require('../utils/money');
 
-const PENALTY_PER_DAY = 10000; // TZS
+const PENALTY_PER_DAY = 10000; // TZS — standard 72h programme
+// A rep who self-extends gets 96 extra hours but accepts a steeper price:
+// the daily late fine doubles, and a failed return costs more.
+const EXTENDED_PENALTY_PER_DAY = 20000; // TZS — after the full 168h expires
+const RETURN_FAILURE_PENALTY = 15000; // TZS — return not decided within 24h
+const EXTENDED_RETURN_FAILURE_PENALTY = 30000; // TZS — same, on an extended order
+
+// The daily late-fine rate for a settlement. `s` needs only selfExtendedAt.
+const dailyRateFor = (s) => (s && s.selfExtendedAt ? EXTENDED_PENALTY_PER_DAY : PENALTY_PER_DAY);
+// The fine when a return isn't decided inside its 24h window.
+const returnFailureRateFor = (s) => (s && s.selfExtendedAt ? EXTENDED_RETURN_FAILURE_PENALTY : RETURN_FAILURE_PENALTY);
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Penalty-days owed for an overdue settlement: 1 the instant the deadline passes,
@@ -54,22 +64,25 @@ async function applyDuePenalties() {
     const charged = await prisma.settlementPenalty.count({ where: { settlementId: s.id, daysOverdue: { gt: 0 } } });
     if (due <= charged) continue;
 
+    const rate = dailyRateFor(s);
     for (let day = charged + 1; day <= due; day++) {
       await prisma.settlementPenalty.create({
         data: {
           salesRepId: s.salesRepId,
           settlementId: s.id,
           kind: 'LATE_FINE',
-          amount: PENALTY_PER_DAY,
+          amount: rate,
           daysOverdue: day,
-          notes: `Late settlement fine — failed to complete ${s.settlementNumber} within 72 hours (day ${day}).`,
+          notes: s.selfExtendedAt
+            ? `Extended settlement period expired — ${s.settlementNumber} not completed within 168 hours (day ${day}).`
+            : `Late settlement fine — failed to complete ${s.settlementNumber} within 72 hours (day ${day}).`,
         },
       });
       applied++;
     }
 
     const newFines = due - charged;
-    const fineValue = newFines * PENALTY_PER_DAY;
+    const fineValue = newFines * rate;
     const repUserId = s.salesRep?.user?.id;
     const repName = s.salesRep?.user?.name || 'A rep';
     if (repUserId) {
@@ -77,7 +90,9 @@ async function applyDuePenalties() {
         type: 'GENERAL',
         severity: 'CRITICAL',
         title: `${formatCurrency(fineValue)} late settlement fine applied`,
-        message: `${formatCurrency(fineValue)} has been deducted from your commission because order ${s.settlementNumber} is overdue (${due} day${due !== 1 ? 's' : ''}). Settle or return to stop the daily fine.`,
+        message: s.selfExtendedAt
+          ? `${formatCurrency(fineValue)} has been deducted from your commission: the EXTENDED settlement period (168 hours) on order ${s.settlementNumber} has expired (${due} day${due !== 1 ? 's' : ''} late). ${formatCurrency(rate)} applies every further day until you settle or return.`
+          : `${formatCurrency(fineValue)} has been deducted from your commission because order ${s.settlementNumber} is overdue (${due} day${due !== 1 ? 's' : ''}). Settle or return to stop the daily fine.`,
         entityType: 'Settlement',
         entityId: s.id,
       }).catch(() => {});
@@ -109,7 +124,7 @@ async function penaltyBreakdownForRep(salesRepId) {
   // Manual deductions have no settlement — keep them out of the id lookups.
   const ids = grouped.map((g) => g.settlementId).filter(Boolean);
   const [settlements, pendingRets] = await Promise.all([
-    prisma.settlement.findMany({ where: { id: { in: ids } }, select: { id: true, settlementNumber: true, status: true } }),
+    prisma.settlement.findMany({ where: { id: { in: ids } }, select: { id: true, settlementNumber: true, status: true, selfExtendedAt: true } }),
     ids.length
       ? prisma.return.groupBy({ by: ['settlementId'], where: { settlementId: { in: ids }, status: 'PENDING' }, _count: true })
       : [],
@@ -128,7 +143,7 @@ async function penaltyBreakdownForRep(salesRepId) {
         settlementNumber: s?.settlementNumber || (g.settlementId ? '—' : 'Manual deduction'),
         daysOverdue: g._max.daysOverdue || g._count,
         fines: g._count,
-        penaltyPerDay: PENALTY_PER_DAY,
+        penaltyPerDay: dailyRateFor(s),
         totalPenalty: amt,
         closed: s?.status === 'SETTLED',
         exemptPendingReturn: (pendingMap.get(g.settlementId) || 0) > 0,
@@ -255,5 +270,10 @@ module.exports = {
   waivePenalty,
   listPenalties,
   penaltyDaysDue,
+  dailyRateFor,
+  returnFailureRateFor,
   PENALTY_PER_DAY,
+  EXTENDED_PENALTY_PER_DAY,
+  RETURN_FAILURE_PENALTY,
+  EXTENDED_RETURN_FAILURE_PENALTY,
 };

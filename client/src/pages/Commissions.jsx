@@ -286,7 +286,7 @@ function RepView() {
             </p>
           ) : !canWithdraw ? (
             <p className="text-sm text-amber-400">
-              Minimum withdrawal is {formatCurrency(c.rule.amountPerThreshold)} — keep settling boxes to reach it.
+              Minimum withdrawal is {formatCurrency(c.rule.amountPerThreshold)} — keep settling to reach it.
             </p>
           ) : null}
           <div className="ml-auto">

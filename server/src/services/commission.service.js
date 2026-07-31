@@ -6,11 +6,16 @@ const notification = require('./notification.service');
 const { penaltyBreakdownForRep } = require('./penalty.service');
 const { toNumber, round2, formatCurrency } = require('../utils/money');
 
-// Commission rule is configurable via settings:
-//   commission.boxThreshold        (default 50)
-//   commission.amountPerThreshold  (default 250000 TZS)
-// Commission is PROPORTIONAL: rate per box = amount / threshold. So 120 boxes
-// at 250,000 per 50 boxes = 120 * 5,000 = 600,000 (matches the spec example).
+// Commission settings:
+//   commission.amountPerThreshold  (default 250000 TZS) — the MINIMUM WITHDRAWAL,
+//     a pure money target. A rep can withdraw once their available balance
+//     reaches it, however many boxes that took.
+//   commission.boxThreshold        (default 50) — legacy. Its ONLY remaining job
+//     is deriving the V1 flat per-box rate (250,000 / 50 = 5,000) for orders
+//     created before 1 Aug 2026. Since rates now differ per brand, boxes and
+//     money are no longer interchangeable: 50 boxes is 250,000 of OHIS but only
+//     150,000 of Civlily. Never present boxThreshold to a user as a target and
+//     never use it to decide withdrawal eligibility.
 async function getRule() {
   const rows = await prisma.setting.findMany({
     where: { key: { in: ['commission.boxThreshold', 'commission.amountPerThreshold'] } },

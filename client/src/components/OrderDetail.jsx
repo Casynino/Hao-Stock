@@ -581,7 +581,7 @@ export default function OrderDetailModal({ settlementId, onClose }) {
                 </TBody>
               </Table>
               <p className="mt-1 text-xs text-faint">Remaining = Issued − Settled − Returned. The order closes only when every box is <span className="text-emerald-500">settled</span> or <span className="text-sky-400">returned</span>. After the 72h deadline, unaccounted boxes show as <span className="text-rose-500">missing</span> · value {formatCurrency(order.order.totals.remainingValue)}.</p>
-              <p className="mt-1 text-xs text-faint">Commission earned: <span className="font-medium text-brand-600">{formatCurrency(order.order.totals.commission)}</span> ({formatNumber(order.order.totals.settledBoxes)} boxes settled) · paid via Commissions.</p>
+              <p className="mt-1 text-xs text-faint">Commission earned on {formatNumber(order.order.totals.settledBoxes)} settled box(es): <span className="font-medium text-brand-600">{formatCurrency(order.order.totals.commission)}</span> · rate depends on brand · paid via Commissions.</p>
             </div>
 
             {/* Settlement history — each settle is a recorded sale transaction */}

@@ -4,6 +4,7 @@ const prisma = require('../config/prisma');
 const asyncHandler = require('../utils/asyncHandler');
 const { ok } = require('../utils/response');
 const audit = require('../services/audit.service');
+const ApiError = require('../utils/ApiError');
 
 const list = asyncHandler(async (_req, res) => {
   const settings = await prisma.setting.findMany({ orderBy: [{ group: 'asc' }, { key: 'asc' }] });
@@ -15,9 +16,19 @@ const get = asyncHandler(async (req, res) => {
   return ok(res, setting);
 });
 
+// Historical rates. Orders were issued and settled on these numbers, so an edit
+// here would rewrite commission reps have already been paid — never a
+// legitimate change, and impossible to undo once balances have moved.
+const FROZEN_KEYS = new Set(['commission.v1PerBox', 'commission.boxThreshold']);
+
 // Create or update a setting by key.
 const upsert = asyncHandler(async (req, res) => {
   const { value, type, group, description } = req.body;
+  if (FROZEN_KEYS.has(req.params.key)) {
+    throw ApiError.badRequest(
+      `${req.params.key} is the historical commission rate and cannot be changed — it would re-price commission reps have already earned. To change what NEW orders pay, update the per-brand rates in commission.service.js.`,
+    );
+  }
   const setting = await prisma.setting.upsert({
     where: { key: req.params.key },
     create: {

@@ -8,6 +8,20 @@ import { AuthProvider } from '@/context/AuthContext';
 import { queryClient } from '@/lib/queryClient';
 import './index.css';
 
+// Every deploy renames the hashed chunks. A tab left open across one will ask
+// for a chunk that no longer exists the moment it hits a lazy route (the
+// invoice page), and the request fails. Reloading pulls a fresh index.html
+// naming the new chunks. Guarded by a session flag so a chunk that is genuinely
+// unfetchable — offline, or a stale entry cached under its old URL — fails
+// visibly instead of reloading forever.
+window.addEventListener('vite:preloadError', (event) => {
+  if (sessionStorage.getItem('chunkReloadAttempted')) return;
+  sessionStorage.setItem('chunkReloadAttempted', '1');
+  event.preventDefault();
+  window.location.reload();
+});
+window.addEventListener('load', () => sessionStorage.removeItem('chunkReloadAttempted'));
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

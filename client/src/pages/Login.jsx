@@ -42,7 +42,7 @@ function CountUp({ to, duration = 1500, prefix = '', suffix = '' }) {
 const STATS = [
   { icon: Clock, to: 24, suffix: '/7', label: 'Live tracking' },
   { icon: Timer, to: 72, suffix: 'h', label: 'Settlement window' },
-  { icon: Coins, to: 5000, prefix: 'TSh ', label: 'Commission / box' },
+  { icon: Coins, to: 5000, prefix: 'up to TSh ', label: 'Commission / box' },
   { icon: ShieldCheck, to: 0, label: 'Losses reported' },
 ];
 

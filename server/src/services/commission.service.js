@@ -10,20 +10,26 @@ const { toNumber, round2, formatCurrency } = require('../utils/money');
 //   commission.amountPerThreshold  (default 250000 TZS) — the MINIMUM WITHDRAWAL,
 //     a pure money target. A rep can withdraw once their available balance
 //     reaches it, however many boxes that took.
-//   commission.boxThreshold        (default 50) — legacy. Its ONLY remaining job
-//     is deriving the V1 flat per-box rate (250,000 / 50 = 5,000) for orders
-//     created before 1 Aug 2026. Since rates now differ per brand, boxes and
-//     money are no longer interchangeable: 50 boxes is 250,000 of OHIS but only
-//     150,000 of Civlily. Never present boxThreshold to a user as a target and
-//     never use it to decide withdrawal eligibility.
+//   commission.v1PerBox            (default 5000) — what one box earned before
+//     1 Aug 2026. A historical fact, frozen: settings.controller refuses to
+//     change it, because re-pricing commission a rep already earned is never a
+//     legitimate edit. It used to be derived as amount/boxThreshold, which made
+//     raising the withdrawal minimum silently rewrite past earnings.
+//   commission.boxThreshold        (default 50) — dead. Kept so old rows read
+//     cleanly. Since rates now differ per brand, boxes and money are no longer
+//     interchangeable at all: 50 boxes is 250,000 of OHIS but 150,000 of
+//     Civlily, so no box count is ever a withdrawal target.
 async function getRule() {
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ['commission.boxThreshold', 'commission.amountPerThreshold'] } },
+    where: { key: { in: ['commission.boxThreshold', 'commission.amountPerThreshold', 'commission.v1PerBox'] } },
   });
   const map = new Map(rows.map((r) => [r.key, Number(r.value)]));
   const boxThreshold = map.get('commission.boxThreshold') || 50;
   const amountPerThreshold = map.get('commission.amountPerThreshold') || 250000;
-  return { boxThreshold, amountPerThreshold, perBox: round2(amountPerThreshold / boxThreshold) };
+  // Pre-migration databases fall back to the old derivation, so the rate a rep
+  // was earning does not jump the moment this ships.
+  const perBox = map.get('commission.v1PerBox') || round2(amountPerThreshold / boxThreshold);
+  return { boxThreshold, amountPerThreshold, perBox };
 }
 
 // ── Versioned commission rules ───────────────────────────────────────────────
@@ -80,16 +86,26 @@ async function earnedForRep(salesRepId, legacyPerBox) {
     const amount = qty * rate;
     earned += amount;
     boxes += qty;
-    const row = byBrand.get(brand) || { brand, boxes: 0, amount: 0, rate };
+    const row = byBrand.get(brand) || { brand, boxes: 0, amount: 0, rates: new Set() };
     row.boxes += qty;
     row.amount += amount;
-    row.rate = rate; // latest rate seen for this brand
+    row.rates.add(rate);
     byBrand.set(brand, row);
   }
   return {
     earned: round2(earned),
     boxes,
-    byBrand: [...byBrand.values()].map((b) => ({ ...b, amount: round2(b.amount) })).sort((a, b) => b.amount - a.amount),
+    // `rate` is only meaningful when every box of this brand was paid the same.
+    // One brand can span both rules — Civlily on a pre-August order earns 5,000,
+    // on a later one 3,000 — and quoting either would contradict `amount`.
+    byBrand: [...byBrand.values()]
+      .map((b) => ({
+        brand: b.brand,
+        boxes: b.boxes,
+        amount: round2(b.amount),
+        rate: b.rates.size === 1 ? [...b.rates][0] : null,
+      }))
+      .sort((a, b) => b.amount - a.amount),
   };
 }
 

@@ -20,7 +20,7 @@
       "destination": "/api/index"
     },
     {
-      "source": "/((?!assets/).*)",
+      "source": "/:path((?!assets/).*)",
       "destination": "/index.html"
     }
   ],

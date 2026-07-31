@@ -147,8 +147,9 @@ async function main() {
     { key: 'credit.defaultTermDays', value: String(env.business.defaultCreditTermDays), type: 'NUMBER', group: 'credit' },
     { key: 'reorder.lookbackDays', value: String(env.business.reorderLookbackDays), type: 'NUMBER', group: 'reorder' },
     { key: 'reorder.coverDays', value: '30', type: 'NUMBER', group: 'reorder' },
-    { key: 'commission.boxThreshold', value: '50', type: 'NUMBER', group: 'commission' },
-    { key: 'commission.amountPerThreshold', value: '250000', type: 'NUMBER', group: 'commission' },
+    { key: 'commission.v1PerBox', value: '5000', type: 'NUMBER', group: 'commission', description: 'Commission per box for orders issued before 1 Aug 2026. Historical fact — frozen so past earnings cannot be re-priced.' },
+    { key: 'commission.amountPerThreshold', value: '250000', type: 'NUMBER', group: 'commission', description: 'Minimum commission balance a rep must reach to request a withdrawal. Money only — it no longer affects any per-box rate.' },
+    { key: 'commission.boxThreshold', value: '50', type: 'NUMBER', group: 'commission', description: 'Legacy. Superseded by commission.v1PerBox and no longer read.' },
     { key: 'settlement.windowHours', value: '72', type: 'NUMBER', group: 'settlement' },
   ];
   for (const s of settingDefs) {
@@ -158,7 +159,7 @@ async function main() {
       create: { key: s.key, value: s.value, type: s.type || 'STRING', group: s.group, updatedById: admin.id },
     });
   }
-  console.log('✔ settings (incl. commission: 250,000 TZS per 50 boxes)');
+  console.log('✔ settings (commission: OHIS 5,000 / Civlily 3,000 per box from 1 Aug 2026; withdraw at 250,000)');
 
   // Opening warehouse stock — exact box counts (skip products with 0 boxes).
   // Only set once, so re-running the seed never double-stocks.

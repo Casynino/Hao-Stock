@@ -424,7 +424,7 @@ export default function SalesRepProfile() {
             <div className="grid grid-cols-2 gap-3">
               <Money label="Total earned" value={formatCurrency(c.earned)} tone="emerald"
                 sub={c.earnedByBrand?.length
-                  ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand} @ ${formatCurrency(b.rate)}`).join(' · ')
+                  ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand} — ${formatCurrency(b.amount)}`).join(' · ')
                   : `${formatNumber(c.boxesSettled)} boxes settled`} />
               <Money label="Paid out" value={formatCurrency(c.paid)} />
               <Money label="Available" value={formatCurrency(c.available)} tone={c.available < 0 ? 'rose' : 'emerald'} />

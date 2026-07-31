@@ -296,7 +296,7 @@ async function stockRequestSubmitted(req) {
 async function settlementSubmitted({ sub, settlement, product, repName }) {
   const commission = require('./commission.service');
   let perBox = 0;
-  try { perBox = toNumber((await commission.getRule()).perBox); } catch { /* rule optional */ }
+  try { perBox = toNumber(await commission.rateForProductOnOrder(settlement.id, product.id)); } catch { /* rule optional */ }
   const text = compose({
     priority: 'ACTION',
     title: 'SETTLEMENT SUBMITTED',

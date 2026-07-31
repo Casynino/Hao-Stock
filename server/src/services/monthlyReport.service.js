@@ -80,8 +80,8 @@ async function buildMonthlyData(monthKey) {
     require('./commission.service').summaryAllReps().catch(() => ({ items: [] })),
   ]);
 
-  let perBox = 0;
-  try { perBox = Number((await require('./commission.service').getRule()).perBox) || 0; } catch { /* no rule */ }
+  let earnedByRep = new Map();
+  try { earnedByRep = (await require('./commission.service').earnedBetween(start, end)).byRep; } catch { /* no rule */ }
 
   const repName = new Map(repsAll.map((r) => [r.id, r.user?.name || r.code]));
   const paidByRep = new Map(paidRows.map((r) => [r.salesRepId, Number(r._sum.amount) || 0]));
@@ -98,7 +98,7 @@ async function buildMonthlyData(monthKey) {
     .map(([id, r]) => ({
       ...r,
       revenue: round2(r.revenue),
-      commissionEarned: round2(r.boxes * perBox),
+      commissionEarned: round2(earnedByRep.get(id) || 0),
       commissionPaid: paidByRep.get(id) || 0,
       outstanding: outstandingByRep.get(id) ?? null,
     }))

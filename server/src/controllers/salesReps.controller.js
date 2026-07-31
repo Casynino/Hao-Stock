@@ -243,6 +243,7 @@ const getProfile = asyncHandler(async (req, res) => {
       penalties: comm.penalties,
       penaltyBreakdown: comm.penaltyBreakdown,
       boxesSettled: comm.boxesSettled,
+      earnedByBrand: comm.earnedByBrand,
       perBox: comm.rule.perBox,
       threshold,
       eligible: comm.available >= threshold,

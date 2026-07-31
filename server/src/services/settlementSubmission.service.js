@@ -145,7 +145,7 @@ async function approve(submissionId, actor) {
   let earnedLine = 'Commission has been credited.';
   try {
     const commission = require('./commission.service');
-    const perBox = toNumber((await commission.getRule()).perBox);
+    const perBox = toNumber(await commission.rateForProductOnOrder(sub.settlementId, sub.productId));
     const earned = round2(sub.boxes * perBox);
     const c = await commission.computeForRep(sub.salesRepId);
     earnedLine = `You earned ${formatCurrency(earned)} commission (${sub.boxes} box(es) × ${formatCurrency(perBox)}). Available balance: ${formatCurrency(c.available)}.`;

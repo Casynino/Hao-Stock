@@ -129,11 +129,10 @@ async function buildWeeklyData(weekKey) {
 
   // Commission: earned this period (boxes settled × rate), paid this period,
   // and what is payable right now across all reps.
-  let perBox = 0;
-  try { perBox = Number((await require('./commission.service').getRule()).perBox) || 0; } catch { /* no rule */ }
-  const boxesThisPeriod = repPerformance.reduce((s, r) => s + r.boxes, 0);
+  let earnedThisPeriod = 0;
+  try { earnedThisPeriod = (await require('./commission.service').earnedBetween(rangeStart, rangeEnd)).total; } catch { /* no rule */ }
   const commission = {
-    earned: Math.round(boxesThisPeriod * perBox * 100) / 100,
+    earned: earnedThisPeriod,
     paid: Number(paidAgg._sum.amount) || 0,
     outstanding: (commissionAll.items || []).reduce((s, r) => s + Math.max(0, Number(r.available) || 0), 0),
   };

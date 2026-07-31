@@ -21,6 +21,138 @@ async function getRule() {
   return { boxThreshold, amountPerThreshold, perBox: round2(amountPerThreshold / boxThreshold) };
 }
 
+// ── Versioned commission rules ───────────────────────────────────────────────
+// The rule that applies to a settled box is the one that was in force WHEN THE
+// ORDER WAS CREATED — frozen on the settlement as commissionRuleVersion. That
+// means changing the rules never re-prices history: old orders keep paying the
+// old rate even when they are settled months later.
+//
+//   V1  flat rate per box for every brand (the configurable legacy rate)
+//   V2  per-brand rates, effective 1 Aug 2026 00:00 Tanzania time
+const COMMISSION_V2_FROM = '2026-08-01T00:00:00+03:00'; // EAT
+
+// Brand names are matched loosely (upper-cased, letters only) because the same
+// brand is spelled "Civlily" in production and "CIVILLY" in the seed data.
+// Anything not listed falls back to V2_DEFAULT, so a new brand still pays.
+const V2_RATES = { OHIS: 5000, CIVLILY: 3000, CIVILLY: 3000 };
+const V2_DEFAULT = 5000;
+const normalizeBrand = (name) => String(name || '').toUpperCase().replace(/[^A-Z]/g, '');
+
+// Is an order created at `when` on the new rules?
+function ruleVersionFor(when) {
+  return new Date(when || Date.now()) >= new Date(COMMISSION_V2_FROM) ? 'V2' : 'V1';
+}
+
+// Rate for one settled box, given the order's frozen rule and the box's brand.
+// `legacyPerBox` is the V1 rate (configurable in settings, currently 5,000).
+function rateForBox(ruleVersion, brandName, legacyPerBox) {
+  if (ruleVersion !== 'V2') return legacyPerBox;
+  const key = normalizeBrand(brandName);
+  return V2_RATES[key] ?? V2_DEFAULT;
+}
+
+// What a rep has EARNED: every settled box priced with its own order's rule and
+// its own product's brand. Returns the total plus a per-brand breakdown.
+async function earnedForRep(salesRepId, legacyPerBox) {
+  const items = await prisma.saleItem.findMany({
+    where: { sale: { is: { salesRepId, settlementId: { not: null }, status: { not: 'CANCELLED' } } } },
+    select: {
+      baseQuantity: true,
+      product: { select: { brand: { select: { name: true } } } },
+      sale: { select: { settlement: { select: { commissionRuleVersion: true } } } },
+    },
+  });
+
+  let earned = 0;
+  let boxes = 0;
+  const byBrand = new Map();
+  for (const it of items) {
+    const qty = it.baseQuantity || 0;
+    const brand = it.product?.brand?.name || '—';
+    // A sale whose settlement vanished (SetNull) falls back to the legacy rate.
+    const version = it.sale?.settlement?.commissionRuleVersion || 'V1';
+    const rate = rateForBox(version, brand, legacyPerBox);
+    const amount = qty * rate;
+    earned += amount;
+    boxes += qty;
+    const row = byBrand.get(brand) || { brand, boxes: 0, amount: 0, rate };
+    row.boxes += qty;
+    row.amount += amount;
+    row.rate = rate; // latest rate seen for this brand
+    byBrand.set(brand, row);
+  }
+  return {
+    earned: round2(earned),
+    boxes,
+    byBrand: [...byBrand.values()].map((b) => ({ ...b, amount: round2(b.amount) })).sort((a, b) => b.amount - a.amount),
+  };
+}
+
+// The rates in force for an order created RIGHT NOW, labelled with the real
+// brand names from the catalogue (production spells it "Civlily", the seed
+// "CIVILLY" — both resolve to the same rate). Drives the rate card in the UI.
+async function currentRates() {
+  const rule = await getRule();
+  const version = ruleVersionFor(new Date());
+  const brands = await prisma.brand
+    .findMany({ where: { isActive: true }, select: { name: true }, orderBy: { name: 'asc' } })
+    .catch(() => []);
+  const names = brands.length ? brands.map((b) => b.name) : Object.keys(V2_RATES);
+  return {
+    version,
+    effectiveFrom: COMMISSION_V2_FROM,
+    perBrand: names.map((name) => ({ brand: name, perBox: rateForBox(version, name, rule.perBox) })),
+  };
+}
+
+// Per-box rate for one product on one order — the number the "you earned X"
+// messages quote. Resolves the order's frozen rule and the product's brand.
+async function rateForProductOnOrder(settlementId, productId) {
+  const [rule, stl, prod] = await Promise.all([
+    getRule(),
+    settlementId
+      ? prisma.settlement.findUnique({ where: { id: settlementId }, select: { commissionRuleVersion: true } }).catch(() => null)
+      : null,
+    productId
+      ? prisma.product.findUnique({ where: { id: productId }, select: { brand: { select: { name: true } } } }).catch(() => null)
+      : null,
+  ]);
+  return rateForBox(stl?.commissionRuleVersion || 'V1', prod?.brand?.name, rule.perBox);
+}
+
+// Commission earned inside a date window (by sale date), priced per box with
+// each order's own rule. Used by the weekly and monthly reports.
+async function earnedBetween(start, end) {
+  const rule = await getRule();
+  const items = await prisma.saleItem.findMany({
+    where: {
+      sale: {
+        is: {
+          soldAt: { gte: start, lte: end },
+          settlementId: { not: null },
+          status: { not: 'CANCELLED' },
+          salesRepId: { not: null },
+        },
+      },
+    },
+    select: {
+      baseQuantity: true,
+      product: { select: { brand: { select: { name: true } } } },
+      sale: { select: { salesRepId: true, settlement: { select: { commissionRuleVersion: true } } } },
+    },
+  });
+  let total = 0;
+  const byRep = new Map();
+  for (const it of items) {
+    const rate = rateForBox(it.sale?.settlement?.commissionRuleVersion || 'V1', it.product?.brand?.name, rule.perBox);
+    const amount = (it.baseQuantity || 0) * rate;
+    total += amount;
+    const id = it.sale.salesRepId;
+    byRep.set(id, round2((byRep.get(id) || 0) + amount));
+  }
+  return { total: round2(total), byRep };
+}
+
 // Boxes a rep has SETTLED (paid for) across all their orders. Each settlement
 // records a CASH sale linked to the order, so settled boxes = base units sold
 // on settlement-linked sales (the base unit is the Box). Commission is earned
@@ -46,13 +178,14 @@ async function withdrawalTotals(salesRepId) {
 }
 
 async function computeForRep(salesRepId) {
-  const [rule, boxes, wt, penaltyData] = await Promise.all([
-    getRule(),
-    boxesSettledByRep(salesRepId),
+  const rule = await getRule();
+  const [earnedData, wt, penaltyData, rates] = await Promise.all([
+    earnedForRep(salesRepId, rule.perBox),
     withdrawalTotals(salesRepId),
     penaltyBreakdownForRep(salesRepId),
+    currentRates(),
   ]);
-  const earned = round2(boxes * rule.perBox);
+  const { earned, boxes } = earnedData;
   // Penalties are REAL applied deductions (persisted transactions). The balance
   // is earned − paid − pending withdrawals − penalties, and is NOT clamped, so a
   // rep with more fines than earnings goes negative (owes The Lab). Future
@@ -62,7 +195,9 @@ async function computeForRep(salesRepId) {
   const available = round2(earned - wt.paid - wt.pendingRequests - penalties);
   return {
     rule,
+    rates,
     boxesSettled: round2(boxes),
+    earnedByBrand: earnedData.byBrand,
     earned,
     paid: wt.paid,
     pending,
@@ -199,6 +334,14 @@ async function decideWithdrawal(id, action, actor) {
 
 module.exports = {
   getRule,
+  ruleVersionFor,
+  rateForBox,
+  earnedForRep,
+  earnedBetween,
+  currentRates,
+  rateForProductOnOrder,
+  COMMISSION_V2_FROM,
+  V2_RATES,
   computeForRep,
   summaryAllReps,
   requestWithdrawal,

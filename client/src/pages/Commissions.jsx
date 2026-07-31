@@ -190,6 +190,56 @@ function PenaltyPolicyCard() {
   );
 }
 
+// What a box is worth today, per brand. Orders keep the rate that was in force
+// when they were CREATED, so this card describes new orders only.
+function RatesCard({ rates }) {
+  if (!rates?.perBrand?.length) return null;
+  const live = rates.version === 'V2';
+  const from = new Date(rates.effectiveFrom);
+  return (
+    <Card className="mt-4">
+      <CardHeader
+        title="Commission rate per box"
+        subtitle={live
+          ? 'These rates apply to every order created from 1 August 2026.'
+          : `New rates start ${from.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`}
+      />
+      <div className="grid grid-cols-2 gap-3 p-4 pt-0 sm:grid-cols-3">
+        {rates.perBrand.map((r) => (
+          <div key={r.brand} className="rounded-lg border border-white/10 bg-white/5 p-3">
+            <p className="text-xs uppercase tracking-wide text-faint">{r.brand}</p>
+            <p className="mt-1 text-lg font-semibold text-emerald-300">{formatCurrency(r.perBox)}</p>
+            <p className="text-xs text-faint">per box</p>
+          </div>
+        ))}
+      </div>
+      <p className="px-4 pb-4 text-xs text-faint">
+        Orders you already have keep the rate they were issued with — nothing you have earned changes.
+      </p>
+    </Card>
+  );
+}
+
+// How far the rep is from the withdrawal minimum.
+function WithdrawalProgress({ available, minimum }) {
+  const pct = Math.max(0, Math.min(100, (available / minimum) * 100));
+  const short = Math.max(0, minimum - available);
+  return (
+    <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-3">
+      <div className="flex items-baseline justify-between text-xs">
+        <span className="text-faint">Progress to withdrawal</span>
+        <span className="font-medium text-body">{formatCurrency(Math.max(0, available))} / {formatCurrency(minimum)}</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <p className="mt-2 text-xs text-faint">
+        {short > 0 ? `${formatCurrency(short)} to go before you can request a withdrawal.` : 'You can request a withdrawal now.'}
+      </p>
+    </div>
+  );
+}
+
 function RepView() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -212,7 +262,15 @@ function RepView() {
           tone={balanceNegative ? 'rose' : 'emerald'}
           hint={balanceNegative ? 'Penalty debt — settle overdue orders' : 'Ready to withdraw'}
         />
-        <StatCard label="Total Earned" value={formatCurrency(c.earned)} icon={Coins} tone="violet" hint={`${formatNumber(c.boxesSettled)} boxes × ${formatCurrency(c.rule.perBox)}`} />
+        <StatCard
+          label="Total Earned"
+          value={formatCurrency(c.earned)}
+          icon={Coins}
+          tone="violet"
+          hint={c.earnedByBrand?.length
+            ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand}`).join(' · ')
+            : `${formatNumber(c.boxesSettled)} boxes settled`}
+        />
         <StatCard label="Total Paid Out" value={formatCurrency(c.paid)} icon={TrendingUp} tone="brand" />
         <StatCard label="Pending Requests" value={formatCurrency(c.pendingRequests)} icon={Clock} tone="amber" hint="Awaiting approval" />
         {hasPenalties && (
@@ -220,27 +278,34 @@ function RepView() {
         )}
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-4">
-        {balanceNegative ? (
-          <p className="text-sm text-rose-400">
-            Your balance is negative due to overdue penalties. Settle your outstanding orders to restore your balance before withdrawing.
-          </p>
-        ) : !canWithdraw ? (
-          <p className="text-sm text-amber-400">
-            Minimum withdrawal is {formatCurrency(c.rule.amountPerThreshold)} — keep settling boxes to reach it.
-          </p>
-        ) : null}
-        <div className="ml-auto">
-          <Button onClick={() => setOpen(true)} disabled={!canWithdraw}>
-            <Coins className="h-4 w-4" /> Request withdrawal
-          </Button>
+      <div className="mt-4">
+        <div className="flex items-center justify-between gap-4">
+          {balanceNegative ? (
+            <p className="text-sm text-rose-400">
+              Your balance is negative due to overdue penalties. Settle your outstanding orders to restore your balance before withdrawing.
+            </p>
+          ) : !canWithdraw ? (
+            <p className="text-sm text-amber-400">
+              Minimum withdrawal is {formatCurrency(c.rule.amountPerThreshold)} — keep settling boxes to reach it.
+            </p>
+          ) : null}
+          <div className="ml-auto">
+            <Button onClick={() => setOpen(true)} disabled={!canWithdraw}>
+              <Coins className="h-4 w-4" /> Request withdrawal
+            </Button>
+          </div>
         </div>
+        {!balanceNegative && !canWithdraw && (
+          <WithdrawalProgress available={c.available} minimum={c.rule.amountPerThreshold} />
+        )}
       </div>
 
       {hasPenalties && <PenaltyBreakdown breakdown={c.penaltyBreakdown} />}
 
+      <RatesCard rates={c.rates} />
+
       <Card className="mt-4">
-        <CardHeader title="My withdrawal requests" subtitle={`Rule: ${formatCurrency(c.rule.amountPerThreshold)} per ${c.rule.boxThreshold} boxes`} />
+        <CardHeader title="My withdrawal requests" subtitle={`Minimum withdrawal: ${formatCurrency(c.rule.amountPerThreshold)}`} />
         {!wd?.data?.length ? <EmptyState title="No withdrawals yet" /> : (
           <Table>
             <THead><TR><TH>Amount</TH><TH>Status</TH><TH>Requested</TH></TR></THead>

@@ -74,10 +74,15 @@ async function createForIssuance(client, { salesRepId, assignedValue, transferId
   const issued = issuedAt ? new Date(issuedAt) : new Date();
   const deadlineAt = dayjs(issued).add(SETTLEMENT_WINDOW_HOURS, 'hour').toDate();
   const settlementNumber = await nextDocNumber(client.settlement, 'settlementNumber', 'STL');
+  // Freeze the commission rule in force right now onto the order. Every box
+  // later settled against it is priced with THIS rule, so changing the rates
+  // never re-prices orders that already exist.
+  const commissionRuleVersion = require('./commission.service').ruleVersionFor(issued);
   return client.settlement.create({
     data: {
       settlementNumber,
       salesRepId,
+      commissionRuleVersion,
       assignedValue: round2(assignedValue),
       issuedAt: issued,
       deadlineAt,
@@ -138,7 +143,7 @@ async function orderBreakdown(s, client = prisma) {
   const pendingRetMap = new Map(pendingRetRows.map((r) => [r.productId, r._sum.baseQuantity || 0]));
 
   const productIds = [...new Set([...assignedMap.keys(), ...settledMap.keys(), ...retMap.keys()])];
-  const products = await client.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, sku: true, sellingPrice: true, brandId: true } });
+  const products = await client.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, sku: true, sellingPrice: true, brandId: true, brand: { select: { name: true } } } });
   const pMap = new Map(products.map((p) => [p.id, p]));
 
   let assignedBoxes = 0;
@@ -148,6 +153,9 @@ async function orderBreakdown(s, client = prisma) {
   let pendingReturnBoxes = 0;
   let returnedValue = 0;
   let remainingValue = 0;
+  // Commission is priced line by line: this order's frozen rule × each
+  // product's brand rate. A mixed OHIS/Civlily order earns both rates.
+  let commissionEarned = 0;
   const lines = productIds.map((pid) => {
     const p = pMap.get(pid) || {};
     const assigned = assignedMap.get(pid) || 0;
@@ -164,7 +172,9 @@ async function orderBreakdown(s, client = prisma) {
     pendingReturnBoxes += pendingReturn;
     returnedValue += returned * toNumber(p.sellingPrice);
     remainingValue += remaining * toNumber(p.sellingPrice);
-    return { productId: pid, name: p.name, sku: p.sku, brandId: p.brandId || null, sellingPrice: toNumber(p.sellingPrice), assigned, settled, returned, pendingReturn, remaining };
+    const perBox = commission.rateForBox(s.commissionRuleVersion || 'V1', p.brand?.name, rule.perBox);
+    commissionEarned += settled * perBox;
+    return { productId: pid, name: p.name, sku: p.sku, brandId: p.brandId || null, commissionPerBox: perBox, sellingPrice: toNumber(p.sellingPrice), assigned, settled, returned, pendingReturn, remaining };
   });
 
   const orderValue = toNumber(s.assignedValue);
@@ -183,7 +193,7 @@ async function orderBreakdown(s, client = prisma) {
       settledValue,
       returnedValue: round2(returnedValue),
       remainingValue: round2(remainingValue),
-      commission: round2(settledBoxes * rule.perBox), // earned from settled boxes
+      commission: round2(commissionEarned), // earned from settled boxes, at each brand's rate
       outstanding,
     },
   };

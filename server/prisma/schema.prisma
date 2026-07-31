@@ -1137,6 +1137,12 @@ model Settlement {
   reminderStage Int     @default(0) // deadline reminders sent: 0=none,1=24h,2=6h,3=1h
   notes         String?
 
+  // The commission rule in force WHEN THIS ORDER WAS CREATED. Frozen at
+  // creation so changing the rules never re-prices historical settlements:
+  //   V1 — flat rate per box for every brand (orders before 1 Aug 2026)
+  //   V2 — per-brand rates (orders from 1 Aug 2026 00:00 EAT)
+  commissionRuleVersion String @default("V1")
+
   // Rep-activated self-extension: +96h added AFTER the original 72h window, so
   // the total becomes 168h. No approval needed, but it raises the stakes —
   // the daily late fine doubles and a failed return costs more. Null = unused.

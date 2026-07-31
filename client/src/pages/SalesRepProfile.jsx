@@ -422,7 +422,10 @@ export default function SalesRepProfile() {
           <Section icon={Wallet} title="Commission overview"
             action={isAdmin && <Button variant="ghost" className="text-xs" onClick={() => navigate('/commissions')}>Payouts</Button>}>
             <div className="grid grid-cols-2 gap-3">
-              <Money label="Total earned" value={formatCurrency(c.earned)} tone="emerald" sub={`${formatNumber(c.boxesSettled)} boxes × ${formatCurrency(c.perBox)}`} />
+              <Money label="Total earned" value={formatCurrency(c.earned)} tone="emerald"
+                sub={c.earnedByBrand?.length
+                  ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand} @ ${formatCurrency(b.rate)}`).join(' · ')
+                  : `${formatNumber(c.boxesSettled)} boxes settled`} />
               <Money label="Paid out" value={formatCurrency(c.paid)} />
               <Money label="Available" value={formatCurrency(c.available)} tone={c.available < 0 ? 'rose' : 'emerald'} />
               <Money label="Penalties" value={formatCurrency(c.penalties)} tone={c.penalties > 0 ? 'rose' : 'default'} />

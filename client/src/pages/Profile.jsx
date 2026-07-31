@@ -225,7 +225,10 @@ export default function Profile() {
                 </div>
               </div>
               <p className="text-xs text-white/40">
-                Rate: {formatCurrency(commission.rule.perBox)} per box · {formatCurrency(commission.rule.amountPerThreshold)} per {commission.rule.boxThreshold} boxes
+                {commission.rates?.perBrand?.length
+                  ? commission.rates.perBrand.map((r) => `${r.brand} ${formatCurrency(r.perBox)}/box`).join(' · ')
+                  : `Rate: ${formatCurrency(commission.rule.perBox)} per box`}
+                {' · '}Minimum withdrawal {formatCurrency(commission.rule.amountPerThreshold)}
               </p>
             </div>
           )}

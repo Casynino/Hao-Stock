@@ -20,11 +20,7 @@
       "destination": "/api/index"
     },
     {
-      "source": "/assets/(.*)",
-      "destination": "/asset-not-found"
-    },
-    {
-      "source": "/(.*)",
+      "source": "/((?!assets/).*)",
       "destination": "/index.html"
     }
   ],

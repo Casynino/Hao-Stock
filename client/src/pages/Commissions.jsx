@@ -271,9 +271,13 @@ function RepView() {
           value={formatCurrency(c.earned)}
           icon={Coins}
           tone="violet"
-          hint={c.earnedByBrand?.length
-            ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand}`).join(' · ')
-            : `${formatNumber(c.boxesSettled)} boxes settled`}
+          hint={[
+            c.earnedByBrand?.length
+              ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand}`).join(' · ')
+              : `${formatNumber(c.boxesSettled)} boxes settled`,
+            // Without this the rep reads a total that his own box count contradicts.
+            c.adjustment ? `adjustment ${formatCurrency(c.adjustment)}` : null,
+          ].filter(Boolean).join(' · ')}
         />
         <StatCard label="Total Paid Out" value={formatCurrency(c.paid)} icon={TrendingUp} tone="brand" />
         <StatCard label="Pending Requests" value={formatCurrency(c.pendingRequests)} icon={Clock} tone="amber" hint="Awaiting approval" />
@@ -281,6 +285,12 @@ function RepView() {
           <StatCard label="Total Penalties" value={formatCurrency(c.penalties)} icon={AlertTriangle} tone="rose" hint="Deducted from balance" />
         )}
       </div>
+
+      {c.adjustmentNote && (
+        <div className="mt-4 rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-muted">
+          <span className="font-medium text-foreground">Commission adjustment {formatCurrency(c.adjustment)}</span> — {c.adjustmentNote}
+        </div>
+      )}
 
       <div className="mt-4">
         <div className="flex items-center justify-between gap-4">

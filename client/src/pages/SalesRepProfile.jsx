@@ -423,9 +423,13 @@ export default function SalesRepProfile() {
             action={isAdmin && <Button variant="ghost" className="text-xs" onClick={() => navigate('/commissions')}>Payouts</Button>}>
             <div className="grid grid-cols-2 gap-3">
               <Money label="Total earned" value={formatCurrency(c.earned)} tone="emerald"
-                sub={c.earnedByBrand?.length
-                  ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand} — ${formatCurrency(b.amount)}`).join(' · ')
-                  : `${formatNumber(c.boxesSettled)} boxes settled`} />
+                sub={[
+                  c.earnedByBrand?.length
+                    ? c.earnedByBrand.map((b) => `${formatNumber(b.boxes)} ${b.brand} — ${formatCurrency(b.amount)}`).join(' · ')
+                    : `${formatNumber(c.boxesSettled)} boxes settled`,
+                  // Without this the brand lines would not add up to the headline.
+                  c.adjustment ? `adjustment ${formatCurrency(c.adjustment)}` : null,
+                ].filter(Boolean).join(' · ')} />
               <Money label="Paid out" value={formatCurrency(c.paid)} />
               <Money label="Available" value={formatCurrency(c.available)} tone={c.available < 0 ? 'rose' : 'emerald'} />
               <Money label="Penalties" value={formatCurrency(c.penalties)} tone={c.penalties > 0 ? 'rose' : 'default'} />
@@ -436,6 +440,16 @@ export default function SalesRepProfile() {
                 ? <span>Eligible to withdraw — balance ≥ {formatCurrency(c.threshold)}</span>
                 : <span>Not eligible — needs {formatCurrency(c.threshold)} (has {formatCurrency(c.available)})</span>}
             </div>
+            {c.hasCustomThreshold && (
+              <div className="mt-2 text-xs text-faint">
+                This rep withdraws at {formatCurrency(c.threshold)} — their own terms, not the business default.
+              </div>
+            )}
+            {c.adjustmentNote && (
+              <div className="mt-2 rounded-lg border border-border bg-elevated px-3 py-2 text-xs text-faint">
+                <span className="font-medium text-muted">Commission adjustment {formatCurrency(c.adjustment)}</span> — {c.adjustmentNote}
+              </div>
+            )}
             {c.pendingRequests > 0 && <p className="mt-2 text-xs text-amber-400">{formatCurrency(c.pendingRequests)} in pending withdrawal requests.</p>}
           </Section>
 

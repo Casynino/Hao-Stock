@@ -216,7 +216,7 @@ const getProfile = asyncHandler(async (req, res) => {
     });
   }
 
-  const threshold = comm.rule.amountPerThreshold;
+  const threshold = comm.minWithdrawal;
   return ok(res, {
     rep: {
       id: rep.id,
@@ -246,6 +246,13 @@ const getProfile = asyncHandler(async (req, res) => {
       earnedByBrand: comm.earnedByBrand,
       perBox: comm.rule.perBox,
       threshold,
+      hasCustomThreshold: comm.hasCustomThreshold,
+      // Surfaced so the earned figure and its per-brand breakdown cannot
+      // silently disagree when an account has been squared up.
+      grossEarned: comm.grossEarned,
+      adjustment: comm.adjustment,
+      adjustmentNote: comm.adjustmentNote,
+      adjustedAt: comm.adjustedAt,
       eligible: comm.available >= threshold,
     },
     settlements: { active: activeSettlements, activeCount: active.length, total: settlementsRes.total },

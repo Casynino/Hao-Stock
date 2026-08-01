@@ -250,7 +250,7 @@ function RepView() {
 
   const hasPenalties = c.penalties > 0;
   const balanceNegative = c.available < 0;
-  const canWithdraw = c.available >= c.rule.amountPerThreshold;
+  const canWithdraw = c.available >= c.minWithdrawal;
 
   return (
     <>
@@ -286,7 +286,7 @@ function RepView() {
             </p>
           ) : !canWithdraw ? (
             <p className="text-sm text-amber-400">
-              Minimum withdrawal is {formatCurrency(c.rule.amountPerThreshold)} — keep settling to reach it.
+              Minimum withdrawal is {formatCurrency(c.minWithdrawal)} — keep settling to reach it.
             </p>
           ) : null}
           <div className="ml-auto">
@@ -296,7 +296,7 @@ function RepView() {
           </div>
         </div>
         {!balanceNegative && !canWithdraw && (
-          <WithdrawalProgress available={c.available} minimum={c.rule.amountPerThreshold} />
+          <WithdrawalProgress available={c.available} minimum={c.minWithdrawal} />
         )}
       </div>
 
@@ -305,7 +305,7 @@ function RepView() {
       <RatesCard rates={c.rates} />
 
       <Card className="mt-4">
-        <CardHeader title="My withdrawal requests" subtitle={`Minimum withdrawal: ${formatCurrency(c.rule.amountPerThreshold)}`} />
+        <CardHeader title="My withdrawal requests" subtitle={`Minimum withdrawal: ${formatCurrency(c.minWithdrawal)}`} />
         {!wd?.data?.length ? <EmptyState title="No withdrawals yet" /> : (
           <Table>
             <THead><TR><TH>Amount</TH><TH>Status</TH><TH>Requested</TH></TR></THead>
@@ -320,7 +320,7 @@ function RepView() {
 
       <PenaltyPolicyCard />
 
-      {open && <WithdrawModal available={c.available} minWithdrawal={c.rule.amountPerThreshold} onClose={() => setOpen(false)} />}
+      {open && <WithdrawModal available={c.available} minWithdrawal={c.minWithdrawal} onClose={() => setOpen(false)} />}
     </>
   );
 }

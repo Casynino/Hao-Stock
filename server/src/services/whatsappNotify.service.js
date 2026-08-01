@@ -349,7 +349,7 @@ async function commissionReadyCheck(salesRepId) {
   const commission = require('./commission.service');
   const notification = require('./notification.service');
   const c = await commission.computeForRep(salesRepId);
-  const threshold = toNumber(c.rule?.amountPerThreshold) || 0;
+  const threshold = toNumber(c.minWithdrawal) || 0;
   if (threshold <= 0 || c.available < threshold) return { queued: false, reason: 'below-threshold' };
 
   const rep = await prisma.salesRepresentative.findUnique({

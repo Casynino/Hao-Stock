@@ -388,6 +388,17 @@ model SalesRepresentative {
   whatsappApiKey String?
   // Optional monthly sales target for performance tracking.
   monthlyTarget Decimal? @db.Decimal(14, 2)
+  // Per-rep minimum withdrawal. NULL means the business-wide default in
+  // commission.amountPerThreshold. Set only where a rep has been placed on
+  // different terms.
+  withdrawalThreshold Decimal? @db.Decimal(14, 2)
+  // A one-off correction ADDED to this rep's derived commission total. Earnings
+  // are computed from settled boxes and must stay that way, so a negotiated
+  // write-down or a squared-up account is recorded here instead of by editing
+  // sales. Negative reduces what the rep is owed. Normally 0.
+  commissionAdjustment       Decimal   @default(0) @db.Decimal(14, 2)
+  commissionAdjustmentNote   String?
+  commissionAdjustedAt       DateTime?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

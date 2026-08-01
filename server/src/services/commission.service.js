@@ -200,13 +200,27 @@ async function withdrawalTotals(salesRepId) {
 
 async function computeForRep(salesRepId) {
   const rule = await getRule();
-  const [earnedData, wt, penaltyData, rates] = await Promise.all([
+  const [earnedData, wt, penaltyData, rates, rep] = await Promise.all([
     earnedForRep(salesRepId, rule.perBox),
     withdrawalTotals(salesRepId),
     penaltyBreakdownForRep(salesRepId),
     currentRates(),
+    prisma.salesRepresentative.findUnique({
+      where: { id: salesRepId },
+      select: { withdrawalThreshold: true, commissionAdjustment: true, commissionAdjustmentNote: true, commissionAdjustedAt: true },
+    }).catch(() => null),
   ]);
-  const { earned, boxes } = earnedData;
+  const { boxes } = earnedData;
+  // A one-off correction to a squared-up account. Kept separate from the
+  // derived figure so the boxes that produced it stay untouched and visible.
+  const adjustment = round2(toNumber(rep?.commissionAdjustment));
+  const grossEarned = earnedData.earned;
+  const earned = round2(grossEarned + adjustment);
+  // This rep's own minimum, where one has been agreed; otherwise the business
+  // default. Everything downstream must quote THIS, never rule.amountPerThreshold.
+  const minWithdrawal = rep?.withdrawalThreshold != null
+    ? round2(toNumber(rep.withdrawalThreshold))
+    : rule.amountPerThreshold;
   // Penalties are REAL applied deductions (persisted transactions). The balance
   // is earned − paid − pending withdrawals − penalties, and is NOT clamped, so a
   // rep with more fines than earnings goes negative (owes The Lab). Future
@@ -217,8 +231,16 @@ async function computeForRep(salesRepId) {
   return {
     rule,
     rates,
+    minWithdrawal,
+    // True when this rep is on terms of their own, so the UI can say so rather
+    // than silently showing a number that differs from every other rep's.
+    hasCustomThreshold: rep?.withdrawalThreshold != null,
     boxesSettled: round2(boxes),
     earnedByBrand: earnedData.byBrand,
+    grossEarned,
+    adjustment,
+    adjustmentNote: rep?.commissionAdjustmentNote || null,
+    adjustedAt: rep?.commissionAdjustedAt || null,
     earned,
     paid: wt.paid,
     pending,
@@ -260,7 +282,7 @@ async function requestWithdrawal(salesRepId, amount, notes, actor) {
   const amt = round2(amount);
   if (amt <= 0) throw ApiError.badRequest('Amount must be greater than zero');
   const c = await computeForRep(salesRepId);
-  const minWithdrawal = c.rule.amountPerThreshold;
+  const minWithdrawal = c.minWithdrawal;
   if (c.available < minWithdrawal) {
     throw ApiError.badRequest(`Minimum withdrawal is TZS ${minWithdrawal.toLocaleString()}. Your available balance is TZS ${c.available.toLocaleString()}.`);
   }

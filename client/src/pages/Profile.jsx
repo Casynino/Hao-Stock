@@ -228,7 +228,7 @@ export default function Profile() {
                 {commission.rates?.perBrand?.length
                   ? commission.rates.perBrand.map((r) => `${r.brand} ${formatCurrency(r.perBox)}/box`).join(' · ')
                   : `Rate: ${formatCurrency(commission.rule.perBox)} per box`}
-                {' · '}Minimum withdrawal {formatCurrency(commission.rule.amountPerThreshold)}
+                {' · '}Minimum withdrawal {formatCurrency(commission.minWithdrawal)}
               </p>
             </div>
           )}

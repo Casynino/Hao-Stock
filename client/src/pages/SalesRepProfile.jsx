@@ -134,11 +134,11 @@ function EditRepModal({ rep, onClose }) {
             commission earned, deadline reminders, fines) are pushed to their phone.
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="WhatsApp number" hint="With country code, e.g. 255740093806">
+            <Field label="WhatsApp number" hint="With country code, starting 255">
               <Input value={form.whatsappPhone} onChange={set('whatsappPhone')} placeholder="2557.." />
             </Field>
             <Field label="CallMeBot API key">
-              <Input value={form.whatsappApiKey} onChange={set('whatsappApiKey')} placeholder="e.g. 7539443" />
+              <Input value={form.whatsappApiKey} onChange={set('whatsappApiKey')} placeholder="From CallMeBot" />
             </Field>
           </div>
         </div>
@@ -461,7 +461,13 @@ export default function SalesRepProfile() {
                   <div key={p.settlementId} className="flex items-center justify-between gap-2 rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2 text-sm">
                     <div>
                       <div className="font-medium text-foreground">{p.settlementNumber}</div>
-                      <div className="text-xs text-faint">{p.daysOverdue} day{p.daysOverdue !== 1 ? 's' : ''} overdue{p.exemptPendingReturn ? ' · exempt (return under review)' : ''}</div>
+                      <div className="text-xs text-faint">
+                        {/* A manual deduction and a return-expiry fine are not late — say what they are. */}
+                        {p.daysOverdue > 0
+                          ? `${p.daysOverdue} day${p.daysOverdue !== 1 ? 's' : ''} overdue`
+                          : `${p.fines} charge${p.fines !== 1 ? 's' : ''}`}
+                        {p.exemptPendingReturn ? ' · exempt (return under review)' : ''}
+                      </div>
                     </div>
                     <div className={`font-bold ${p.exemptPendingReturn ? 'text-faint line-through' : 'text-rose-500'}`}>{formatCurrency(p.totalPenalty)}</div>
                   </div>

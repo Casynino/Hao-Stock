@@ -141,7 +141,9 @@ async function penaltyBreakdownForRep(salesRepId) {
       return {
         settlementId: g.settlementId,
         settlementNumber: s?.settlementNumber || (g.settlementId ? '—' : 'Manual deduction'),
-        daysOverdue: g._max.daysOverdue || g._count,
+        // 0 for manual deductions and return-expiry fines — they are not late,
+        // so callers must not render them as overdue days.
+        daysOverdue: g._max.daysOverdue || 0,
         fines: g._count,
         penaltyPerDay: dailyRateFor(s),
         totalPenalty: amt,

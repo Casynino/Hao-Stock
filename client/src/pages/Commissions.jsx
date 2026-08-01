@@ -127,7 +127,11 @@ function FinesHistory({ admin }) {
   if (!items.length) return null;
   return (
     <Card className="mt-6">
-      <CardHeader title="Penalty transactions" subtitle="Every late-settlement fine — a permanent record. Forgiven fines stay listed but no longer reduce the balance." />
+      <CardHeader
+        title="Penalty transactions"
+        subtitle={admin
+          ? 'Every late-settlement fine — a permanent record. Forgiven fines stay listed but no longer reduce the balance.'
+          : 'Late-settlement fines currently charged to you. Forgiven fines are written off and are not shown.'} />
       <Table>
         <THead><TR>{admin && <TH>Rep</TH>}<TH>Type</TH><TH>Order</TH><TH className="text-right">Amount</TH><TH>Status</TH><TH>Date</TH>{admin && <TH />}</TR></THead>
         <TBody>

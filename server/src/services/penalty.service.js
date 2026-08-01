@@ -241,10 +241,16 @@ async function waivePenalty(id, actor, reason) {
 }
 
 // Stored penalty transactions (history), most recent first.
-async function listPenalties({ salesRepId, settlementId, page = 1, limit = 20 }) {
+// `includeWaived` is false for a rep looking at their own fines: a forgiven
+// fine has been written off, and listing it only leaves the rep staring at a
+// debt that is no longer theirs. The row itself must survive — the sweep counts
+// rows to know which penalty-days it already charged — so it is hidden, never
+// deleted. Admins still see everything, forgiven rows included.
+async function listPenalties({ salesRepId, settlementId, page = 1, limit = 20, includeWaived = true }) {
   const where = {};
   if (salesRepId) where.salesRepId = salesRepId;
   if (settlementId) where.settlementId = settlementId;
+  if (!includeWaived) where.status = 'APPLIED';
   const skip = (page - 1) * limit;
   const [items, total] = await Promise.all([
     prisma.settlementPenalty.findMany({

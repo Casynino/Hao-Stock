@@ -26,6 +26,7 @@ const list = asyncHandler(async (req, res) => {
   const filters = {};
   if (req.user.role === ROLES.SALES_REP) {
     filters.salesRepId = req.user.salesRepId;
+    filters.includeWaived = false; // a written-off fine is not the rep's to carry
   } else if (q.salesRepId) {
     filters.salesRepId = q.salesRepId;
   }
